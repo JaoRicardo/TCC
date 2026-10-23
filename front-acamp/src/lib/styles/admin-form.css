@@ -1,0 +1,490 @@
+/*
+ * Shared visual language for admin "create" forms (acampamentos, eventos).
+ * Keeps both wizards looking like the same product instead of two different ones.
+ * Class names are prefixed with "af-" (admin form) so they never collide with
+ * other pages' CSS once loaded globally.
+ */
+
+.admin-form-page {
+	--af-primary: #1c8b6b;
+	--af-primary-light: #6fdec2;
+	--af-primary-dark: #115843;
+	--af-primary-soft: rgba(111, 222, 194, 0.18);
+	--af-text: #111827;
+	--af-text-muted: #6b7280;
+	--af-border: #e5e7eb;
+	--af-border-strong: #d1d5db;
+	--af-bg-field: #f9fafb;
+	--af-radius: 10px;
+	--af-radius-lg: 16px;
+
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+}
+
+/* ---------- Header ---------- */
+
+.af-header {
+	display: flex;
+	justify-content: space-between;
+	align-items: flex-start;
+	gap: 1rem;
+	flex-wrap: wrap;
+}
+
+.af-header h2 {
+	margin: 0 0 0.35rem 0;
+	font-size: 1.6rem;
+	font-weight: 800;
+	color: var(--af-text);
+}
+
+.af-header p {
+	margin: 0;
+	color: var(--af-text-muted);
+	font-size: 0.95rem;
+	max-width: 46ch;
+}
+
+.af-back-link {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+	color: #374151;
+	background: #fff;
+	border: 1px solid var(--af-border-strong);
+	padding: 0.6rem 1.15rem;
+	border-radius: 999px;
+	text-decoration: none;
+	font-weight: 600;
+	font-size: 0.85rem;
+	transition: all 0.2s;
+	flex-shrink: 0;
+}
+
+.af-back-link:hover {
+	background: #f3f4f6;
+	border-color: #9ca3af;
+}
+
+/* ---------- Alerts ---------- */
+
+.af-alert {
+	padding: 1rem 1.5rem;
+	border-radius: 12px;
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+	font-size: 0.92rem;
+	border: 1px solid transparent;
+}
+
+.af-alert--success {
+	background: #ecfdf5;
+	color: #065f46;
+	border-color: #a7f3d0;
+}
+
+.af-alert--error {
+	background: #fef2f2;
+	color: #991b1b;
+	border-color: #fecaca;
+}
+
+.af-alert--info {
+	background: #eff6ff;
+	color: #1d4ed8;
+	border-color: #bfdbfe;
+}
+
+.af-alert-close {
+	background: none;
+	border: 1px solid currentColor;
+	color: inherit;
+	padding: 0.3rem 0.7rem;
+	border-radius: 999px;
+	cursor: pointer;
+	font-weight: 700;
+	font-size: 0.75rem;
+	flex-shrink: 0;
+}
+
+/* ---------- Tabs (segmented control) + progress ---------- */
+
+.af-tabs {
+	display: flex;
+	gap: 0.3rem;
+	background: #eef1f4;
+	padding: 0.35rem;
+	border-radius: 999px;
+	overflow-x: auto;
+}
+
+.af-tab {
+	flex: 1;
+	white-space: nowrap;
+	background: transparent;
+	border: none;
+	padding: 0.7rem 1.1rem;
+	border-radius: 999px;
+	font-weight: 600;
+	font-size: 0.88rem;
+	color: #6b7280;
+	cursor: pointer;
+	transition: all 0.2s;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.4rem;
+}
+
+.af-tab:hover:not(.active) {
+	color: #374151;
+}
+
+.af-tab.active {
+	background: #fff;
+	color: var(--af-primary);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.af-progress {
+	height: 4px;
+	background: #e5e7eb;
+	border-radius: 999px;
+	overflow: hidden;
+}
+
+.af-progress-fill {
+	height: 100%;
+	background: linear-gradient(90deg, var(--af-primary-light), var(--af-primary));
+	border-radius: 999px;
+	transition: width 0.3s ease;
+}
+
+/* ---------- Form + sections ---------- */
+
+.af-form {
+	display: flex;
+	flex-direction: column;
+	gap: 1.5rem;
+}
+
+.af-section {
+	background: #fff;
+	padding: 2rem 2.25rem;
+	border-radius: var(--af-radius-lg);
+	border: 1px solid var(--af-border);
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+.af-section--highlight {
+	background: linear-gradient(180deg, #fbfdfc 0%, #f7faf9 100%);
+	border-color: #dcefe8;
+}
+
+.af-section-title {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+	margin: 0 0 1.5rem 0;
+	padding-bottom: 0.75rem;
+	border-bottom: 2px solid #f3f4f6;
+}
+
+.af-section-title h3 {
+	margin: 0;
+	font-size: 1.15rem;
+	font-weight: 700;
+	color: var(--af-text);
+}
+
+.af-sub-title {
+	font-size: 0.78rem;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+	color: var(--af-primary);
+	margin: 0 0 1rem 0;
+	display: flex;
+	align-items: center;
+	gap: 0.45rem;
+}
+
+.af-sub-title::before {
+	content: '';
+	width: 0.4rem;
+	height: 0.4rem;
+	border-radius: 50%;
+	background: var(--af-primary-light);
+}
+
+.af-divider {
+	border: 0;
+	border-top: 1px dashed var(--af-border);
+	margin: 1.75rem 0;
+}
+
+.af-mt {
+	margin-top: 1rem;
+}
+
+/* ---------- Grids ---------- */
+
+.af-grid-2 {
+	display: grid;
+	grid-template-columns: repeat(2, 1fr);
+	gap: 1.5rem;
+}
+
+.af-grid-3 {
+	display: grid;
+	grid-template-columns: repeat(3, 1fr);
+	gap: 1.5rem;
+}
+
+.af-grid-4 {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 1.5rem;
+}
+
+@media (max-width: 720px) {
+	.af-grid-2,
+	.af-grid-3,
+	.af-grid-4 {
+		grid-template-columns: 1fr;
+	}
+}
+
+/* ---------- Fields ---------- */
+
+.af-field {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.af-field label {
+	font-size: 0.78rem;
+	font-weight: 700;
+	color: #4b5563;
+	text-transform: uppercase;
+	letter-spacing: 0.04em;
+}
+
+.af-field .af-optional {
+	text-transform: none;
+	font-weight: 500;
+	color: #9ca3af;
+	letter-spacing: normal;
+}
+
+.af-field input,
+.af-field select,
+.af-field textarea {
+	width: 100%;
+	padding: 0.8rem 1rem;
+	border: 1.5px solid var(--af-border);
+	border-radius: var(--af-radius);
+	background: var(--af-bg-field);
+	font-family: inherit;
+	font-size: 0.95rem;
+	color: var(--af-text);
+	transition:
+		border-color 0.18s ease,
+		box-shadow 0.18s ease,
+		background 0.18s ease;
+}
+
+.af-field input::placeholder,
+.af-field textarea::placeholder {
+	color: #adb3bc;
+}
+
+.af-field input:hover,
+.af-field select:hover,
+.af-field textarea:hover {
+	border-color: var(--af-border-strong);
+}
+
+.af-field input:focus,
+.af-field select:focus,
+.af-field textarea:focus {
+	outline: none;
+	background: #fff;
+	border-color: var(--af-primary-light);
+	box-shadow: 0 0 0 4px var(--af-primary-soft);
+}
+
+.af-field select {
+	appearance: none;
+	background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+	background-repeat: no-repeat;
+	background-position: right 0.9rem center;
+	background-size: 1.1em;
+	padding-right: 2.6rem;
+}
+
+.af-field input[readonly] {
+	background: #f3f4f6;
+	color: #6b7280;
+	border-style: dashed;
+	cursor: not-allowed;
+}
+
+.af-field input[disabled],
+.af-field select[disabled] {
+	background: #f3f4f6;
+	color: #9ca3af;
+	cursor: not-allowed;
+}
+
+.af-field input[type='file'] {
+	padding: 0.55rem;
+	cursor: pointer;
+}
+
+.af-field input[type='file']::file-selector-button {
+	border: none;
+	background: var(--af-primary-dark);
+	color: #fff;
+	padding: 0.55rem 1rem;
+	border-radius: 999px;
+	font-weight: 600;
+	font-size: 0.82rem;
+	margin-right: 0.85rem;
+	cursor: pointer;
+	transition: background 0.2s;
+}
+
+.af-field input[type='file']::file-selector-button:hover {
+	background: #0d3f30;
+}
+
+.af-field--error input,
+.af-field--error select,
+.af-field--error textarea {
+	border-color: #ef4444 !important;
+	background: #fef2f2;
+}
+
+/* Explicação curta embaixo de um campo (ex.: o que acontece ao vencer o prazo). */
+.af-hint {
+	font-size: 0.75rem;
+	color: #6b7280;
+	line-height: 1.4;
+}
+
+.af-error-text {
+	color: #ef4444;
+	font-size: 0.8rem;
+	font-weight: 500;
+}
+
+/* ---------- Toggle switch (replaces bare checkboxes) ---------- */
+
+.af-toggle {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.7rem;
+	font-weight: 600;
+	color: #374151;
+	cursor: pointer;
+	font-size: 0.92rem;
+	user-select: none;
+}
+
+.af-toggle input[type='checkbox'] {
+	appearance: none;
+	-webkit-appearance: none;
+	width: 2.6rem;
+	height: 1.45rem;
+	background: #d1d5db;
+	border-radius: 999px;
+	position: relative;
+	flex-shrink: 0;
+	cursor: pointer;
+	transition: background 0.2s ease;
+}
+
+.af-toggle input[type='checkbox']::before {
+	content: '';
+	position: absolute;
+	width: 1.05rem;
+	height: 1.05rem;
+	top: 0.2rem;
+	left: 0.2rem;
+	background: #fff;
+	border-radius: 50%;
+	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+	transition: transform 0.2s ease;
+}
+
+.af-toggle input[type='checkbox']:checked {
+	background: var(--af-primary-light);
+}
+
+.af-toggle input[type='checkbox']:checked::before {
+	transform: translateX(1.15rem);
+}
+
+/* ---------- Buttons ---------- */
+
+.af-actions {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 1rem;
+	padding-top: 1.5rem;
+	border-top: 1px solid var(--af-border);
+}
+
+.af-actions-spacer {
+	flex: 1;
+}
+
+.af-btn {
+	padding: 0.85rem 1.85rem;
+	border-radius: 999px;
+	font-weight: 700;
+	font-size: 0.92rem;
+	cursor: pointer;
+	border: none;
+	transition: all 0.2s;
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.af-btn--primary {
+	background: var(--af-primary-light);
+	color: var(--af-primary-dark);
+	box-shadow: 0 4px 14px rgba(111, 222, 194, 0.35);
+}
+
+.af-btn--primary:hover:not(:disabled) {
+	background: #5bcaa9;
+	transform: translateY(-1px);
+}
+
+.af-btn--secondary {
+	background: #fff;
+	border: 1.5px solid var(--af-border-strong);
+	color: #374151;
+}
+
+.af-btn--secondary:hover {
+	background: #f9fafb;
+	border-color: #9ca3af;
+}
+
+.af-btn:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+	transform: none;
+	box-shadow: none;
+}
