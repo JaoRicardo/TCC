@@ -10,6 +10,8 @@ use Migrations\BaseSeed;
  * sexo, endereço, estado civil) não estão aqui porque o formulário já os mostra como
  * confirmação, a partir do cadastro do usuário.
  *
+ * '{categoria}' no texto é trocado pelo nome da categoria (FAC ou Juvenil).
+ *
  * Perguntas com 'depende_de' só aparecem quando a pergunta indicada é respondida com "Sim".
  */
 class FormulariosSeed extends BaseSeed
@@ -54,9 +56,9 @@ class FormulariosSeed extends BaseSeed
         'Acampamento' => [
             ['chave' => 'ja_fez', 'texto' => 'Você já fez algum Acampamento?', 'tipo' => 'sim_nao', 'obrigatoria' => true],
             ['texto' => 'Qual e quando?', 'tipo' => 'texto_curto', 'obrigatoria' => false, 'depende_de' => 'ja_fez'],
-            ['chave' => 'conhece_campista', 'texto' => 'Você conhece algum amigo/parente que vai fazer o 6° Acampamento FAC de Primavera do Leste?', 'tipo' => 'sim_nao', 'obrigatoria' => true],
+            ['chave' => 'conhece_campista', 'texto' => 'Você conhece algum amigo/parente que vai fazer o Acampamento {categoria}?', 'tipo' => 'sim_nao', 'obrigatoria' => true],
             ['texto' => 'Quem?', 'tipo' => 'texto_curto', 'obrigatoria' => false, 'depende_de' => 'conhece_campista'],
-            ['chave' => 'conhece_servo', 'texto' => 'Você conhece algum amigo/parente que vai servir no 6° Acampamento FAC de Primavera do Leste?', 'tipo' => 'sim_nao', 'obrigatoria' => true],
+            ['chave' => 'conhece_servo', 'texto' => 'Você conhece algum amigo/parente que vai servir no Acampamento {categoria}?', 'tipo' => 'sim_nao', 'obrigatoria' => true],
             ['texto' => 'Quem?', 'tipo' => 'texto_curto', 'obrigatoria' => false, 'depende_de' => 'conhece_servo'],
         ],
         'Informações de Saúde' => [
@@ -112,7 +114,7 @@ class FormulariosSeed extends BaseSeed
                     $conn->insert('questions', [
                         'category_id' => $categoriaId,
                         'subscription_type' => self::TIPO_INSCRICAO,
-                        'text' => $p['texto'],
+                        'text' => str_replace('{categoria}', $nomeCategoria, $p['texto']),
                         'order' => $i + 1,
                         'type' => $p['tipo'],
                         'is_required' => (int)$p['obrigatoria'],
