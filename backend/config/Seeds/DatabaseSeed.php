@@ -12,6 +12,7 @@ class DatabaseSeed extends BaseSeed
         $this->call('SelectionMethodsSeed');
         $this->call('CategoriesSeed');
         $this->call('SectionsSeed');
+        $this->call('FormulariosSeed');
         $this->call('UsersSeed');
     }
 }
