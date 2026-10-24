@@ -89,6 +89,11 @@ class SorteioService
      */
     public function executarSorteiosPendentes(): array
     {
+        return TravaExecucao::executar('sorteios_pendentes', fn() => $this->sorteiosPendentes(), []);
+    }
+
+    private function sorteiosPendentes(): array
+    {
         $log = [];
         $now = time();
 
@@ -102,26 +107,46 @@ class SorteioService
                 ->first();
             if (!$camping) continue;
 
-            $raffleCamperTs   = $camping->raffle_camper_date?->getTimestamp();
-            $raffleServantTs  = $camping->raffle_servant_date?->getTimestamp();
-
-            if ($raffleCamperTs !== null && $raffleCamperTs <= $now && !$this->campistasJaRealizado((int)$activity->id)) {
-                $this->realizarCampistas(
-                    (int)$activity->id,
-                    (int)$camping->raffle_man_vacancies,
-                    (int)$camping->raffle_woman_vacancies,
-                    (int)$camping->raffle_couple_vacancies,
-                );
-                $log[] = "Sorteio de campistas realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
+            // Cada data de sorteio é tratada uma vez só: depois de chegar, roda (se
+            // ninguém tiver sorteado à mão antes) e fica marcada. Assim um
+            // acampamento sem ninguém para sortear não "sorteia" a cada visita, e
+            // resetar o sorteio depois da data não faz ele disparar sozinho de novo.
+            if ($this->sorteioAutomaticoPendente($camping->raffle_camper_date, $camping->camper_raffle_auto_ran_at, $now)) {
+                if (!$this->campistasJaRealizado((int)$activity->id)) {
+                    $this->realizarCampistas(
+                        (int)$activity->id,
+                        (int)$camping->raffle_man_vacancies,
+                        (int)$camping->raffle_woman_vacancies,
+                        (int)$camping->raffle_couple_vacancies,
+                    );
+                    $log[] = "Sorteio de campistas realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
+                }
+                $this->Campings->updateAll(['camper_raffle_auto_ran_at' => date('Y-m-d H:i:s', $now)], ['id' => $camping->id]);
             }
 
-            if ($raffleServantTs !== null && $raffleServantTs <= $now && !$this->servosJaRealizado((int)$activity->id)) {
-                $this->realizarServos((int)$activity->id);
-                $log[] = "Sorteio de servos realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
+            if ($this->sorteioAutomaticoPendente($camping->raffle_servant_date, $camping->servant_raffle_auto_ran_at, $now)) {
+                if (!$this->servosJaRealizado((int)$activity->id)) {
+                    $this->realizarServos((int)$activity->id);
+                    $log[] = "Sorteio de servos realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
+                }
+                $this->Campings->updateAll(['servant_raffle_auto_ran_at' => date('Y-m-d H:i:s', $now)], ['id' => $camping->id]);
             }
         }
 
         return $log;
+    }
+
+    /**
+     * A data do sorteio já chegou e ainda não foi tratada. Se a data for mudada
+     * para depois da última vez que rodou, conta como pendente de novo.
+     */
+    private function sorteioAutomaticoPendente(mixed $dataSorteio, mixed $rodouEm, int $now): bool
+    {
+        if ($dataSorteio === null || $dataSorteio->getTimestamp() > $now) {
+            return false;
+        }
+
+        return $rodouEm === null || $rodouEm->getTimestamp() < $dataSorteio->getTimestamp();
     }
 
     public function campistasJaRealizado(int $activityId): bool

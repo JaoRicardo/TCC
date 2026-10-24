@@ -67,3 +67,8 @@ ConnectionHelper::addTestAliases();
 // (new SchemaLoader())->loadSqlFiles('./tests/schema.sql', 'test');
 
 (new Migrator())->run();
+
+// O CakePHP guarda a estrutura das tabelas em cache (tmp/cache/models). Depois de
+// uma migration nova, o cache do banco de teste ficava com a estrutura antiga e
+// as colunas novas eram ignoradas nos testes. Limpa a cada execução.
+\Cake\Cache\Cache::clear('_cake_model_');

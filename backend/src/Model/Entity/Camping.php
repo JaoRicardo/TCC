@@ -18,9 +18,11 @@ use Cake\ORM\Entity;
  * @property int $raffle_woman_vacancies
  * @property int $raffle_couple_vacancies
  * @property \Cake\I18n\DateTime $raffle_camper_date
+ * @property \Cake\I18n\DateTime|null $camper_raffle_auto_ran_at Quando o sorteio automático tratou a data acima.
  * @property \Cake\I18n\DateTime $raffle_servant_subscription_start_date
  * @property \Cake\I18n\DateTime $raffle_servant_subscription_end_date
  * @property \Cake\I18n\DateTime $raffle_servant_date
+ * @property \Cake\I18n\DateTime|null $servant_raffle_auto_ran_at Quando o sorteio automático tratou a data acima.
  * @property \Cake\I18n\DateTime $camper_registration_start_date
  * @property \Cake\I18n\DateTime $camper_registration_end_date
  * @property \Cake\I18n\DateTime $created

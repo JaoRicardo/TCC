@@ -10,9 +10,10 @@ use Cake\Console\ConsoleIo;
 use Cake\Console\ConsoleOptionParser;
 
 /**
- * Aplica o prazo do formulário: desclassifica quem foi selecionado e não enviou o
- * formulário até a data-limite cadastrada no acampamento, e promove o primeiro
- * suplente da fila para cada vaga liberada.
+ * Aplica os prazos do acampamento: tira a vaga de quem foi selecionado e não
+ * enviou o formulário até a data-limite, ou enviou mas não pagou até a data de
+ * pagamento. A vaga fica aberta até um administrador ou conselheiro chamar o
+ * próximo suplente pela tela do sorteio.
  *
  * Pensado para rodar periodicamente via agendador do sistema operacional
  * (Agendador de Tarefas no Windows, cron no Linux):
@@ -32,7 +33,7 @@ class ExecutarPrazosFormularioCommand extends Command
 
     public static function getDescription(): string
     {
-        return 'Desclassifica quem perdeu o prazo do formulário e chama os suplentes das vagas liberadas.';
+        return 'Tira a vaga de quem perdeu o prazo do formulário ou do pagamento (o próximo suplente é chamado pela tela do sorteio).';
     }
 
     public function buildOptionParser(ConsoleOptionParser $parser): ConsoleOptionParser
@@ -49,7 +50,7 @@ class ExecutarPrazosFormularioCommand extends Command
         $log = $service->executarPrazosVencidos();
 
         if (empty($log)) {
-            $io->out('Nenhum prazo de formulário vencido no momento.');
+            $io->out('Nenhum prazo de formulário ou pagamento vencido no momento.');
 
             return static::CODE_SUCCESS;
         }

@@ -117,6 +117,11 @@ class PrazoFormularioService
      */
     public function executarPrazosVencidos(): array
     {
+        return TravaExecucao::executar('prazos_vencidos', fn() => $this->prazosVencidos(), []);
+    }
+
+    private function prazosVencidos(): array
+    {
         $log = [];
 
         $activities = $this->Activities->find()
