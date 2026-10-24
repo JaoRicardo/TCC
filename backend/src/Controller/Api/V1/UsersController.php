@@ -6,7 +6,6 @@ namespace App\Controller\Api\V1;
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Service\JwtService;
-use App\Service\PermissoesService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -32,16 +31,12 @@ class UsersController extends ApiController
 
         $data = $this->request->getData();
 
-        // Segurança: novos usuários nunca chegam como admin ou conselheiro
-        $data['is_admin'] = false;
-        $data['is_counselor'] = false;
         unset($data['access_token'], $data['refresh_token']);
 
         $user = $this->Users->newEntity($data, [
             'fields' => [
                 'cpf', 'name', 'birthday', 'sex', 'phone',
                 'email', 'password', 'photo', 'marital_status_id',
-                'is_admin', 'is_counselor',
             ],
         ]);
 
@@ -87,7 +82,16 @@ class UsersController extends ApiController
             ->all()
             ->toArray();
 
-        return $this->apiResponse(['data' => array_map([$this, 'serializeUserAdmin'], $users)]);
+        $data = array_map([$this, 'serializeUserAdmin'], $users);
+
+        // Quem gerencia permissões vê quantas telas do painel cada pessoa tem.
+        if ($this->temPermissao($identity, 'permissoes')) {
+            foreach ($users as $i => $user) {
+                $data[$i]['telas_liberadas'] = count($this->permissoes()->daPessoa($user));
+            }
+        }
+
+        return $this->apiResponse(['data' => $data]);
     }
 
     // -------------------------------------------------------------------------
@@ -117,36 +121,10 @@ class UsersController extends ApiController
         if (isset($data['sex']))              $patch['sex']              = $data['sex'];
         if (isset($data['marital_status_id'])) $patch['marital_status_id'] = intval($data['marital_status_id']);
 
-        // Cargo decide quem entra no painel, então só quem gerencia permissões mexe nele.
-        $mudaCargo = isset($data['is_admin']) || isset($data['is_counselor']);
-        if ($mudaCargo) {
-            if (!$this->temPermissao($identity, 'permissoes')) {
-                return $this->apiError('Não foi possível concluir esta ação.', 403);
-            }
-            if ((int)$identity->id === $id) {
-                return $this->apiError('Você não pode mudar o seu próprio cargo.', 403);
-            }
-            if (isset($data['is_admin']))     $patch['is_admin']     = (bool)$data['is_admin'];
-            if (isset($data['is_counselor'])) $patch['is_counselor'] = (bool)$data['is_counselor'];
-        }
-        $eraAdmin = (bool)$user->is_admin;
-
         $this->Users->patchEntity($user, $patch, ['validate' => false]);
-
-        $ficouSemCargo = !$user->is_admin && !$user->is_counselor;
-        if ($mudaCargo && $ficouSemCargo && $this->permissoes()->ehUltimoGestor($id)) {
-            return $this->apiError('Esta é a única pessoa que gerencia permissões. Dê essa permissão a outra pessoa antes.', 422);
-        }
 
         if (!$this->Users->save($user)) {
             return $this->apiResponse(['errors' => $user->getErrors()], 422);
-        }
-
-        // Virar administrador liga tudo; ficar sem cargo nenhum desliga tudo.
-        if ($mudaCargo && $user->is_admin && !$eraAdmin) {
-            $this->permissoes()->definir($id, PermissoesService::todas());
-        } elseif ($mudaCargo && $ficouSemCargo) {
-            $this->permissoes()->definir($id, []);
         }
 
         $updated = $this->Users->find()->contain(['MaritalStatuses'])->where(['Users.id' => $id])->first();
@@ -199,9 +177,8 @@ class UsersController extends ApiController
         if (!$user) return $this->apiError('Usuário não encontrado', 404);
 
         return $this->apiResponse(['data' => [
-            'catalogo'  => $this->permissoes()->catalogo(),
-            'ativas'    => $this->permissoes()->daPessoa($user),
-            'tem_cargo' => (bool)($user->is_admin || $user->is_counselor),
+            'catalogo' => $this->permissoes()->catalogo(),
+            'ativas'   => $this->permissoes()->daPessoa($user),
         ]]);
     }
 
@@ -217,10 +194,6 @@ class UsersController extends ApiController
 
         $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
         if (!$user) return $this->apiError('Usuário não encontrado', 404);
-
-        if (!$user->is_admin && !$user->is_counselor) {
-            return $this->apiError('Marque a pessoa como administradora ou conselheira antes de escolher o que ela acessa.', 422);
-        }
 
         $chaves = array_map('strval', (array)($this->request->getData('permissoes') ?? []));
 
@@ -257,8 +230,6 @@ class UsersController extends ApiController
 
         return $this->apiResponse([
             'user' => array_merge($this->serializeUser($user), [
-                // Telas do painel que a pessoa pode ver (o menu é montado só com elas).
-                'permissoes' => $this->permissoes()->daPessoa($user),
                 'marital_status' => $user->marital_status
                     ? ['id' => $user->marital_status->id, 'title' => $user->marital_status->title]
                     : null,
@@ -286,8 +257,6 @@ class UsersController extends ApiController
             'sex'             => $user->sex === 'M' ? 'Masculino' : 'Feminino',
             'marital_status'  => $user->marital_status?->title ?? '',
             'marital_status_id' => $user->marital_status_id,
-            'is_admin'        => $user->is_admin,
-            'is_counselor'    => $user->is_counselor,
             'created'         => $user->created?->format('Y-m-d H:i:s'),
         ];
     }

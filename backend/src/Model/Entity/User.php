@@ -15,8 +15,6 @@ class User extends Entity
         'phone' => true,
         'email' => true,
         'photo' => true,
-        'is_counselor' => true,
-        'is_admin' => true,
         'password' => true,
         'access_token' => true,
         'refresh_token' => true,

@@ -61,7 +61,6 @@
 					<div class="avatar">{auth.user.name?.charAt(0).toUpperCase()}</div>
 					<div class="details">
 						<span class="name">{auth.user.name?.split(' ')[0]}</span>
-						<span class="role">{auth.user.is_admin ? 'Administrador' : 'Conselheiro'}</span>
 					</div>
 				</div>
 			</div>
@@ -213,11 +212,6 @@
 		font-size: 0.9rem;
 		font-weight: 600;
 		color: #fff;
-	}
-
-	.details .role {
-		font-size: 0.75rem;
-		color: #9ca3af;
 	}
 
 	/* Main Content */

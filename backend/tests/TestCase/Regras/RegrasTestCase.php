@@ -105,8 +105,6 @@ abstract class RegrasTestCase extends TestCase
             'phone' => '6599' . str_pad((string)$n, 7, '0', STR_PAD_LEFT),
             'email' => "teste{$n}@exemplo.com",
             'password' => 'senha123',
-            'is_admin' => $admin,
-            'is_counselor' => false,
             'marital_status_id' => $this->estadosCivis[$estadoCivil],
         ]);
 

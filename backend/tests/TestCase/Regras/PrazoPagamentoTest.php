@@ -222,8 +222,6 @@ class PrazoPagamentoTest extends RegrasTestCase
 
         // Conselheiro sem a tela Inscritos e Sorteios liberada também não chama.
         $conselheiro = $this->criarUsuario('Conselheiro', idade: 50);
-        $conselheiro->is_counselor = true;
-        $this->fetchTable('Users')->saveOrFail($conselheiro);
         (new PermissoesService())->definir((int)$conselheiro->id, ['formularios']);
         $this->chamarProximo($fac, $chamar, $conselheiro);
         $this->assertResponseCode(403);

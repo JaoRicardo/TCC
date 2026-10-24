@@ -72,8 +72,7 @@
 		auth.setToken("temp_token_123");
 		auth.user = {
 			name: "Admin Temporário",
-			is_admin: true,
-			is_counselor: true,
+			permissoes: [],
 		};
 		await goto("/dashboard");
 	}

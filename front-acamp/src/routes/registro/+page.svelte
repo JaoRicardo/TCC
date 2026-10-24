@@ -111,7 +111,6 @@
 					password,
 					password_confirmation,
 					photo: "https://example.com/foto.jpg",
-					is_counselor: false,
 				}),
 			});
 

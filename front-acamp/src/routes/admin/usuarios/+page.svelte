@@ -2,7 +2,6 @@
 	import { onMount } from 'svelte';
 	import {
 		getUsers,
-		toggleUserRole,
 		deactivateUser,
 		getPermissoes,
 		salvarPermissoes,
@@ -12,7 +11,7 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import { pode } from '$lib/permissoes';
 
-	// Cargos e a janela de permissões só aparecem para quem gerencia permissões.
+	// A coluna "Painel" e a janela de permissões só aparecem para quem gerencia permissões.
 	let gerenciaPermissoes = $derived(pode('permissoes'));
 
 	// Janela "Permissões" de uma pessoa.
@@ -77,8 +76,10 @@
 			erroPermissoes = res.error;
 			return;
 		}
+		const id = editando.id;
+		users = users.map((u) => (u.id === id ? { ...u, telas_liberadas: res.ativas?.length ?? 0 } : u));
 		// Mudou as próprias permissões: atualiza o menu na hora.
-		if (editando.id === auth.user?.id) {
+		if (id === auth.user?.id) {
 			await auth.verifyToken();
 		}
 		editando = null;
@@ -108,28 +109,6 @@
 		fetchUsers();
 	});
 
-	async function toggleRole(userId: number, roleType: 'is_admin' | 'is_counselor', currentValue: boolean) {
-		try {
-			const res = await toggleUserRole(userId, roleType, currentValue);
-			
-			if (res.success) {
-				users = users.map(u => {
-					if (u.id === userId) {
-						return { ...u, [roleType]: !currentValue };
-					}
-					return u;
-				});
-			} else {
-				alert(res.error || 'Erro ao atualizar privilégio');
-				// Force table re-render to reset toggle state
-				users = [...users];
-			}
-		} catch (e) {
-			alert('Falha na comunicação com o servidor');
-			users = [...users];
-		}
-	}
-
 	async function handleDeactivate(userId: number, userName: string) {
 		if (confirm(`Tem certeza que deseja desativar a conta de ${userName}? Essa ação não pode ser desfeita.`)) {
 			try {
@@ -149,7 +128,7 @@
 <div class="page-header">
 	<div>
 		<h2>Gestão de Usuários</h2>
-		<p class="text-muted">Gerencie quem tem permissão para administrar ou aconselhar no sistema.</p>
+		<p class="text-muted">Contas cadastradas no sistema.</p>
 	</div>
 </div>
 
@@ -175,8 +154,7 @@
 					<th>Nascimento</th>
 					<th>Cadastro</th>
 					{#if gerenciaPermissoes}
-						<th class="center">Conselheiro</th>
-						<th class="center">Admin</th>
+						<th class="center">Painel</th>
 					{/if}
 					<th class="center">Ações</th>
 				</tr>
@@ -198,31 +176,17 @@
 						<td><span class="date">{user.birthday ? new Date(user.birthday + 'T12:00:00Z').toLocaleDateString('pt-BR') : '-'}</span></td>
 						<td><span class="date">{user.created ? new Date(user.created).toLocaleDateString('pt-BR') : '-'}</span></td>
 						{#if gerenciaPermissoes}
-						<td class="center">
-							<label class="toggle-switch" class:disabled={user.id === auth.user?.id}>
-								<input 
-									type="checkbox" 
-									checked={user.is_counselor} 
-									disabled={user.id === auth.user?.id}
-									onchange={() => toggleRole(user.id, 'is_counselor', user.is_counselor)}
-								/>
-								<span class="slider"></span>
-							</label>
-						</td>
-						<td class="center">
-							<label class="toggle-switch admin-toggle" class:disabled={user.id === auth.user?.id}>
-								<input 
-									type="checkbox" 
-									checked={user.is_admin} 
-									disabled={user.id === auth.user?.id}
-									onchange={() => toggleRole(user.id, 'is_admin', user.is_admin)}
-								/>
-								<span class="slider"></span>
-							</label>
-						</td>
+							<!-- Quantas telas do painel a pessoa acessa; sem nenhuma, não entra no painel. -->
+							<td class="center">
+								{#if user.telas_liberadas}
+									<span class="badge-painel">{user.telas_liberadas} {user.telas_liberadas === 1 ? 'tela' : 'telas'}</span>
+								{:else}
+									<span class="date">—</span>
+								{/if}
+							</td>
 						{/if}
 						<td class="center actions-cell">
-							{#if gerenciaPermissoes && (user.is_admin || user.is_counselor)}
+							{#if gerenciaPermissoes}
 								<button class="perm-btn" onclick={() => abrirPermissoes(user)} title="Escolher as telas que a pessoa acessa">
 									Permissões
 								</button>
@@ -241,7 +205,7 @@
 				
 				{#if users.length === 0}
 					<tr>
-						<td colspan={gerenciaPermissoes ? 9 : 7} class="empty-state">Nenhum usuário encontrado.</td>
+						<td colspan={gerenciaPermissoes ? 8 : 7} class="empty-state">Nenhum usuário encontrado.</td>
 					</tr>
 				{/if}
 			</tbody>
@@ -449,66 +413,13 @@
 		font-style: italic;
 	}
 
-	/* Toggle Switches */
-	.toggle-switch {
-		position: relative;
-		display: inline-block;
-		width: 44px;
-		height: 24px;
-	}
-
-	.toggle-switch input {
-		opacity: 0;
-		width: 0;
-		height: 0;
-	}
-
-	.slider {
-		position: absolute;
-		cursor: pointer;
-		top: 0; left: 0; right: 0; bottom: 0;
-		background-color: #e5e7eb;
-		transition: .3s;
-		border-radius: 34px;
-	}
-
-	.slider:before {
-		position: absolute;
-		content: "";
-		height: 18px;
-		width: 18px;
-		left: 3px;
-		bottom: 3px;
-		background-color: white;
-		transition: .3s;
-		border-radius: 50%;
-		box-shadow: 0 1px 2px rgba(0,0,0,0.1);
-	}
-
-	input:checked + .slider {
-		background-color: #10b981; /* Verde Conselheiro */
-	}
-
-	input:focus + .slider {
-		box-shadow: 0 0 1px #10b981;
-	}
-
-	input:checked + .slider:before {
-		transform: translateX(20px);
-	}
-
-	/* Toggle para Admin com cor diferente */
-	.admin-toggle input:checked + .slider {
-		background-color: #3b82f6; /* Azul Admin */
-	}
-
-	.admin-toggle.disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-	}
-	
-	.admin-toggle.disabled .slider {
-		cursor: not-allowed;
+	.badge-painel {
+		background: #ecfdf5;
+		color: #047857;
+		font-size: 0.8rem;
+		font-weight: 600;
+		padding: 0.15rem 0.5rem;
+		border-radius: 6px;
 	}
 
 	.delete-btn {

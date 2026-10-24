@@ -7,18 +7,17 @@ use App\Service\PermissoesService;
 use Cake\Datasource\EntityInterface;
 
 /**
- * Permissões por tela do painel: administrador e conselheiro são só cargos, e
- * cada pessoa acessa as telas que estiverem ligadas para ela. Virar admin liga
- * tudo; ficar sem cargo desliga tudo; ninguém tira de si mesmo a permissão de
- * gerenciar permissões.
+ * Permissões por tela do painel: são a única regra de acesso. Entra no painel
+ * quem tem pelo menos uma tela liberada, e cada pessoa só usa as telas que
+ * estiverem ligadas para ela. Ninguém tira de si mesmo a permissão de gerenciar
+ * permissões, e o último gestor não pode ser excluído.
  */
 class PermissoesTest extends RegrasTestCase
 {
-    private function conselheiro(string $nome, array $permissoes): EntityInterface
+    /** Pessoa com algumas telas liberadas (como um conselheiro do acampamento). */
+    private function comTelas(string $nome, array $permissoes): EntityInterface
     {
         $pessoa = $this->criarUsuario($nome, idade: 60);
-        $pessoa->is_counselor = true;
-        $this->fetchTable('Users')->saveOrFail($pessoa);
         (new PermissoesService())->definir((int)$pessoa->id, $permissoes);
 
         return $pessoa;
@@ -31,9 +30,9 @@ class PermissoesTest extends RegrasTestCase
         return (new PermissoesService())->daPessoa($atual);
     }
 
-    public function testConselheiroSoAcessaAsTelasLiberadas(): void
+    public function testSoAcessaAsTelasLiberadas(): void
     {
-        $dona = $this->conselheiro('Dona Maria', ['formularios']);
+        $dona = $this->comTelas('Dona Maria', ['formularios']);
         $categoria = $this->categorias['FAC'];
 
         $this->autenticarComo($dona);
@@ -47,21 +46,18 @@ class PermissoesTest extends RegrasTestCase
         }
     }
 
-    public function testQuemFicouSemCargoNaoAcessaNadaMesmoComPermissaoGravada(): void
+    public function testQuemNaoTemNenhumaTelaNaoAcessaOPainel(): void
     {
-        $ex = $this->conselheiro('Ex-conselheiro', ['formularios']);
-        $ex->is_counselor = false;
-        $this->fetchTable('Users')->saveOrFail($ex);
+        $comum = $this->criarUsuario('Usuário comum', idade: 30);
 
-        $this->assertSame([], $this->permissoesDe($ex));
-        $this->autenticarComo($ex);
+        $this->autenticarComo($comum);
         $this->get('/api/v1/admin/perguntas?category_id=' . $this->categorias['FAC'] . '&subscription_type=Campista');
         $this->assertResponseCode(403);
     }
 
     public function testMeuCadastroTrazAsTelasLiberadas(): void
     {
-        $dona = $this->conselheiro('Dona Maria', ['setores', 'formularios']);
+        $dona = $this->comTelas('Dona Maria', ['setores', 'formularios']);
         $this->autenticarComo($dona);
         $this->get('/api/v1/users/me');
         $this->assertSame(['setores', 'formularios'], $this->respostaJson()['user']['permissoes']);
@@ -72,26 +68,40 @@ class PermissoesTest extends RegrasTestCase
         $this->assertSame([], $this->respostaJson()['user']['permissoes']);
     }
 
-    public function testVirarAdminLigaTudoEFicarSemCargoDesligaTudo(): void
+    public function testLoginTrazAsTelasLiberadas(): void
     {
+        // A tela usa os dados que voltam do login para montar o botão do painel;
+        // sem as permissões ali, o admin entrava e não via o painel.
+        $admin = $this->criarUsuario('Admin', idade: 40, admin: true);
+
+        $this->configRequest(['headers' => ['Accept' => 'application/json']]);
+        $this->post('/api/v1/auth/login', ['cpf' => $admin->cpf, 'password' => 'senha123']);
+        $this->assertResponseOk();
+        $this->assertSame(PermissoesService::todas(), $this->respostaJson()['user']['permissoes']);
+    }
+
+    public function testLiberarTelasParaQualquerPessoaAbreOPainelParaEla(): void
+    {
+        // Não existe mais "tornar conselheiro": basta liberar alguma tela.
         $gestor = $this->criarUsuario('Gestor', idade: 40, admin: true);
-        $novo = $this->criarUsuario('Novo admin', idade: 30);
+        $novo = $this->criarUsuario('Novo conselheiro', idade: 60);
 
         $this->autenticarComo($gestor);
-        $this->patch("/api/v1/admin/users/{$novo->id}", ['is_admin' => true]);
+        $this->put("/api/v1/admin/users/{$novo->id}/permissoes", ['permissoes' => ['formularios']]);
         $this->assertResponseOk();
-        $this->assertSame(PermissoesService::todas(), $this->permissoesDe($novo));
+        $this->assertSame(['formularios'], $this->permissoesDe($novo));
 
+        // "Desativar tudo" fecha o painel de novo.
         $this->autenticarComo($gestor);
-        $this->patch("/api/v1/admin/users/{$novo->id}", ['is_admin' => false]);
+        $this->put("/api/v1/admin/users/{$novo->id}/permissoes", ['permissoes' => []]);
         $this->assertResponseOk();
-        $this->assertSame([], $this->fetchTable('UserPermissions')->find()->where(['user_id' => $novo->id])->all()->toArray());
+        $this->assertSame([], $this->permissoesDe($novo));
     }
 
     public function testAoLigarUmaTelaQueSoAbrePelaListaAListaVemJunto(): void
     {
         $gestor = $this->criarUsuario('Gestor', idade: 40, admin: true);
-        $dona = $this->conselheiro('Dona Maria', []);
+        $dona = $this->criarUsuario('Dona Maria', idade: 60);
 
         $this->autenticarComo($gestor);
         $this->put("/api/v1/admin/users/{$dona->id}/permissoes", ['permissoes' => ['inscricoes', 'tela-que-nao-existe']]);
@@ -99,20 +109,23 @@ class PermissoesTest extends RegrasTestCase
         $this->assertSame(['atividades', 'inscricoes'], $this->permissoesDe($dona));
     }
 
-    public function testSoQuemGerenciaPermissoesMudaCargos(): void
+    public function testSoQuemGerenciaPermissoesMexeNelas(): void
     {
-        $secretaria = $this->conselheiro('Secretária', ['usuarios']);
+        $secretaria = $this->comTelas('Secretária', ['usuarios']);
         $outro = $this->criarUsuario('Outro', idade: 30);
 
-        // Gestão de Usuários sem "Cargos e permissões": edita dados, mas não cargo.
-        $this->autenticarComo($secretaria);
-        $this->patch("/api/v1/admin/users/{$outro->id}", ['is_admin' => true]);
-        $this->assertResponseCode(403);
-        $this->assertFalse((bool)$this->fetchTable('Users')->get($outro->id)->is_admin);
+        foreach (['get', 'put'] as $metodo) {
+            $this->autenticarComo($secretaria);
+            $this->{$metodo}("/api/v1/admin/users/{$outro->id}/permissoes", ['permissoes' => PermissoesService::todas()]);
+            $this->assertResponseCode(403);
+        }
+        $this->assertSame([], $this->permissoesDe($outro));
 
+        // A lista de usuários não mostra a quem não gerencia quantas telas cada um tem.
         $this->autenticarComo($secretaria);
-        $this->get("/api/v1/admin/users/{$outro->id}/permissoes");
-        $this->assertResponseCode(403);
+        $this->get('/api/v1/admin/users');
+        $this->assertResponseOk();
+        $this->assertArrayNotHasKey('telas_liberadas', $this->respostaJson()['data'][0]);
     }
 
     public function testNinguemTiraDeSiMesmoAPermissaoDeGerenciar(): void
@@ -123,17 +136,13 @@ class PermissoesTest extends RegrasTestCase
         $this->put("/api/v1/admin/users/{$gestor->id}/permissoes", ['permissoes' => ['formularios']]);
         $this->assertResponseCode(422);
 
-        $this->autenticarComo($gestor);
-        $this->patch("/api/v1/admin/users/{$gestor->id}", ['is_admin' => false]);
-        $this->assertResponseCode(403);
-
         $this->assertSame(PermissoesService::todas(), $this->permissoesDe($gestor));
     }
 
     public function testNaoDaParaExcluirAUnicaPessoaQueGerenciaPermissoes(): void
     {
         $gestor = $this->criarUsuario('Único gestor', idade: 40, admin: true);
-        $secretaria = $this->conselheiro('Secretária', ['usuarios']);
+        $secretaria = $this->comTelas('Secretária', ['usuarios']);
 
         $this->autenticarComo($secretaria);
         $this->delete("/api/v1/admin/users/{$gestor->id}");
@@ -146,8 +155,8 @@ class PermissoesTest extends RegrasTestCase
         $atividade = $this->criarAcampamento('FAC');
         $servo = $this->criarUsuario('Servo', idade: 25);
         $this->inscrever($servo, $atividade, 'Servo');
-        $semEquipes = $this->conselheiro('Sem equipes', ['formularios']);
-        $comEquipes = $this->conselheiro('Com equipes', ['equipes']);
+        $semEquipes = $this->comTelas('Sem equipes', ['formularios']);
+        $comEquipes = $this->comTelas('Com equipes', ['equipes']);
 
         $this->autenticarComo($semEquipes);
         $this->post("/api/v1/activities/{$atividade->id}/general-servants", ['user_id' => $servo->id]);

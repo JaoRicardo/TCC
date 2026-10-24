@@ -32,9 +32,10 @@ abstract class ApiController extends AppController
             'phone' => $this->maskPhone((string)$user->phone),
             'birthday' => $user->birthday?->format('Y-m-d'),
             'sex' => $user->sex,
-            'is_admin' => $user->is_admin,
-            'is_counselor' => $user->is_counselor,
             'photo' => $user->photo,
+            // Telas do painel liberadas (o menu é montado só com elas). Só vai nas
+            // respostas sobre a própria pessoa logada: login, cadastro e /users/me.
+            'permissoes' => $this->permissoes()->daPessoa($user),
         ];
     }
 

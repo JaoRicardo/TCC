@@ -3,10 +3,10 @@ export interface User {
     name: string;
     email: string;
     cpf: string;
-    is_admin: boolean;
-    is_counselor: boolean;
     /** Telas do painel liberadas (só vem no cadastro da própria pessoa). */
     permissoes?: string[];
+    /** Quantas telas do painel a pessoa acessa (só para quem gerencia permissões). */
+    telas_liberadas?: number;
     birthday?: string;
     phone?: string;
     created?: string;

@@ -9,10 +9,9 @@ use Cake\ORM\Locator\TableLocator;
  * Permissões por tela do painel administrativo (decidido com o usuário em
  * 2026-10-24):
  *
- * - Administrador e conselheiro são só cargos. O que cada um acessa no painel é
- *   a lista abaixo, ligada ou desligada pessoa a pessoa. Quem não tem cargo
- *   nenhum não acessa o painel, mesmo que tenha sobrado alguma permissão.
- * - Virar administrador liga tudo de uma vez; perder os dois cargos desliga tudo.
+ * - É a única regra de acesso ao painel: não existem mais os campos de
+ *   administrador/conselheiro. Entra no painel quem tem pelo menos uma tela
+ *   liberada; "Ativar tudo" faz o papel do antigo "tornar administrador".
  * - Quem tem "permissoes" gerencia as permissões dos outros. Ninguém tira essa
  *   permissão de si mesmo, então o sistema nunca fica sem quem a gerencie.
  * - A pessoa com acesso limitado não deve perceber: as telas que ela não pode
@@ -62,8 +61,7 @@ class PermissoesService
     }
 
     /**
-     * Permissões que valem para a pessoa agora. Sem cargo (nem administrador nem
-     * conselheiro), nenhuma.
+     * Permissões que valem para a pessoa agora.
      *
      * @return string[]
      */
@@ -72,10 +70,6 @@ class PermissoesService
         $id = (int)$user->id;
         if (isset($this->cache[$id])) {
             return $this->cache[$id];
-        }
-
-        if (!$user->is_admin && !$user->is_counselor) {
-            return $this->cache[$id] = [];
         }
 
         $gravadas = $this->UserPermissions->find()
@@ -143,7 +137,7 @@ class PermissoesService
         return $itens;
     }
 
-    /** A pessoa é a única (com cargo e conta ativa) que gerencia permissões? */
+    /** A pessoa é a única (com conta ativa) que gerencia permissões? */
     public function ehUltimoGestor(int $userId): bool
     {
         $gestores = $this->UserPermissions->find()
@@ -151,7 +145,6 @@ class PermissoesService
             ->where([
                 'UserPermissions.permission' => 'permissoes',
                 'Users.deleted IS'           => null,
-                'OR' => ['Users.is_admin' => true, 'Users.is_counselor' => true],
             ])
             ->all()
             ->extract('user_id')

@@ -10,9 +10,9 @@ export async function getUsers(): Promise<{ users: User[], error?: string }> {
         await new Promise(resolve => setTimeout(resolve, 500));
         return {
             users: [
-                { id: 1, name: 'Admin Mock', email: 'admin@mock.com', cpf: '111.111.111-11', is_admin: true, is_counselor: true, created: new Date().toISOString() },
-                { id: 2, name: 'Conselheiro Mock', email: 'cons@mock.com', cpf: '222.222.222-22', is_admin: false, is_counselor: true, created: new Date().toISOString() },
-                { id: 3, name: 'User Mock', email: 'user@mock.com', cpf: '333.333.333-33', is_admin: false, is_counselor: false, created: new Date().toISOString() },
+                { id: 1, name: 'Admin Mock', email: 'admin@mock.com', cpf: '111.111.111-11', telas_liberadas: 10, created: new Date().toISOString() },
+                { id: 2, name: 'Conselheiro Mock', email: 'cons@mock.com', cpf: '222.222.222-22', telas_liberadas: 2, created: new Date().toISOString() },
+                { id: 3, name: 'User Mock', email: 'user@mock.com', cpf: '333.333.333-33', telas_liberadas: 0, created: new Date().toISOString() },
             ]
         };
     }
@@ -23,27 +23,6 @@ export async function getUsers(): Promise<{ users: User[], error?: string }> {
         return { users: data.data || [] };
     }
     return { users: [], error: data.error || 'Erro ao carregar usuários' };
-}
-
-export async function toggleUserRole(userId: number, roleType: 'is_admin' | 'is_counselor', currentValue: boolean): Promise<{ success: boolean, error?: string }> {
-    if (USE_MOCKS) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        return { success: true };
-    }
-
-    const body: any = {};
-    body[roleType] = !currentValue;
-
-    const res = await apiFetch(`/admin/users/${userId}`, {
-        method: 'PATCH',
-        body: JSON.stringify(body)
-    });
-
-    const data = await res.json();
-    if (res.ok) {
-        return { success: true };
-    }
-    return { success: false, error: data.error || 'Erro ao atualizar privilégio' };
 }
 
 export interface ItemPermissao {

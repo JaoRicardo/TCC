@@ -15,8 +15,6 @@ class UsersSeed extends BaseSeed
                 'sex' => 'M',
                 'phone' => '65999999999',
                 'email' => 'admin@acampamento.com',
-                'is_counselor' => false,
-                'is_admin' => true,
                 'password' => password_hash('Admin@123', PASSWORD_DEFAULT),
                 'marital_status_id' => 1,
                 'created' => date('Y-m-d H:i:s'),
