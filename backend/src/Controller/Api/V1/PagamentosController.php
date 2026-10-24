@@ -15,6 +15,7 @@ use Cake\Log\Log;
  * Rotas:
  *   POST /api/v1/inscricoes/{id}/pagamento   → cria a cobrança e devolve a URL de pagamento
  *   GET  /api/v1/inscricoes/{id}/pagamento   → situação atual do pagamento da inscrição
+ *   POST /api/v1/inscricoes/{id}/pagamento/confirmar → confirma na volta do checkout (consulta a API)
  *   POST /api/v1/webhooks/mercadopago        → notificação do Mercado Pago (pública)
  *
  * Ordem do processo: primeiro o formulário (sorteados, indicados E suplentes
@@ -117,6 +118,11 @@ class PagamentosController extends ApiController
             return $this->apiError('Inscrição não encontrada', 404);
         }
 
+        return $this->respostaSituacao($preReg);
+    }
+
+    private function respostaSituacao(object $preReg): Response
+    {
         $activity = $this->Activities->find()->where(['id' => $preReg->activity_id])->first();
         if (!$activity) {
             return $this->apiError('Atividade não encontrada', 404);
@@ -135,6 +141,39 @@ class PagamentosController extends ApiController
                 'url_pagamento'    => $preReg->is_fee_paid ? null : ($ultimo->init_point ?? null),
             ],
         ]);
+    }
+
+    /**
+     * POST /api/v1/inscricoes/{id}/pagamento/confirmar — chamada pela tela de retorno
+     * do checkout, com o `payment_id` que o Mercado Pago coloca na URL de volta.
+     *
+     * Não confia em nada da URL além do id: consulta o pagamento na API do Mercado
+     * Pago, como o webhook faz. Serve para confirmar na hora (e em ambiente local,
+     * onde o webhook não chega), sem esperar a notificação.
+     */
+    public function confirmarRetorno(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $preReg = $this->buscarInscricaoDoUsuario($id, (int)$identity->id);
+        if (!$preReg) {
+            return $this->apiError('Inscrição não encontrada', 404);
+        }
+
+        $paymentId = preg_replace('/\D/', '', (string)$this->request->getData('payment_id'));
+        if ($paymentId === '') {
+            return $this->apiError('Pagamento não informado.', 422);
+        }
+
+        $resultado = $this->mercadoPago->sincronizarPagamento($paymentId, (int)$preReg->id);
+        if (!$resultado['ok']) {
+            return $this->apiError($resultado['error'] ?? 'Não foi possível confirmar o pagamento.', 422);
+        }
+
+        return $this->respostaSituacao($this->PreRegistrations->get($preReg->id));
     }
 
     /**

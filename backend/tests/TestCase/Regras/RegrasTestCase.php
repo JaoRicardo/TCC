@@ -122,7 +122,7 @@ abstract class RegrasTestCase extends TestCase
     }
 
     /** Acampamento (atividade + dados do acampamento) de uma categoria. */
-    protected function criarAcampamento(string $categoria, array $dadosAcampamento = []): EntityInterface
+    protected function criarAcampamento(string $categoria, array $dadosAcampamento = [], array $dadosAtividade = []): EntityInterface
     {
         // Valores neutros para as colunas obrigatórias; cada teste sobrescreve o que importa.
         $camping = $this->salvar('Campings', $dadosAcampamento + [
@@ -143,7 +143,7 @@ abstract class RegrasTestCase extends TestCase
         ]);
         $n = ++$this->sequencia;
 
-        return $this->salvar('Activities', [
+        return $this->salvar('Activities', $dadosAtividade + [
             'name' => "Acampamento {$categoria} teste {$n}",
             'image' => '',
             'place' => 'Sítio Teste',

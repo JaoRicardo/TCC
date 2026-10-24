@@ -21,14 +21,17 @@ use Cake\ORM\Locator\TableLocator;
  *      `init_point`, que é a URL da tela de pagamento.
  *   3. Redirecionamos o campista para essa URL. Ele paga com Pix, cartão ou boleto
  *      e volta para o nosso site pelas `back_urls`.
- *   4. Quem confirma o pagamento de verdade é o webhook: o Mercado Pago chama
- *      `notification_url` com `data.id` (o id do pagamento), consultamos
- *      GET /v1/payments/{id} e, se vier `status: approved`, marcamos
- *      `pre_registrations.is_fee_paid = true`.
+ *   4. Quem confirma o pagamento de verdade é a consulta GET /v1/payments/{id} à
+ *      API do Mercado Pago: se vier `status: approved`, marcamos
+ *      `pre_registrations.is_fee_paid = true`. Ela é disparada por dois caminhos:
+ *      - o webhook (`notification_url`), que o Mercado Pago chama com `data.id`;
+ *      - a volta do checkout: as `back_urls` chegam com `payment_id` na URL, e a
+ *        tela de retorno pede ao backend para consultar esse id. É o que faz o
+ *        pagamento funcionar em ambiente local, onde o webhook não chega.
  *
- * A volta pelas `back_urls` NUNCA é usada como prova de pagamento: ela é só
- * navegação e pode ser forjada digitando a URL. A fonte da verdade é sempre a
- * consulta à API feita a partir do webhook.
+ * A volta pelas `back_urls` NUNCA é usada como prova de pagamento: o status e o
+ * resto da URL podem ser forjados digitando o endereço. Dela só se aproveita o
+ * id, e a fonte da verdade é sempre a resposta da API.
  *
  * Credenciais (nenhuma fica no código — todas vêm do config/.env):
  *   MERCADOPAGO_ACCESS_TOKEN   — token privado, usado nas chamadas de servidor
@@ -238,9 +241,12 @@ class MercadoPagoService
      * Consulta um pagamento no Mercado Pago e guarda o resultado, marcando a
      * inscrição como paga quando o status for aprovado.
      *
+     * Com `$inscricaoEsperada` (confirmação na volta do checkout), recusa um
+     * pagamento que pertença a outra inscrição, antes de gravar qualquer coisa.
+     *
      * @return array{ok: bool, error?: string, status?: string, pre_registration_id?: int}
      */
-    public function sincronizarPagamento(string $paymentId): array
+    public function sincronizarPagamento(string $paymentId, ?int $inscricaoEsperada = null): array
     {
         if (!self::configurado()) {
             return ['ok' => false, 'error' => 'Integração do Mercado Pago não configurada.'];
@@ -260,6 +266,9 @@ class MercadoPagoService
         }
         if ($preRegId <= 0) {
             return ['ok' => false, 'error' => 'Pagamento sem external_reference — não deu para identificar a inscrição.'];
+        }
+        if ($inscricaoEsperada !== null && $preRegId !== $inscricaoEsperada) {
+            return ['ok' => false, 'error' => 'Este pagamento não pertence a esta inscrição.'];
         }
 
         $preReg = $this->PreRegistrations->find()

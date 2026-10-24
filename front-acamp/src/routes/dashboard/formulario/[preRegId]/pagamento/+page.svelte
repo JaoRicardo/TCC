@@ -4,13 +4,19 @@
 	 * para cá depois do checkout, com ?resultado=sucesso|pendente|falha.
 	 *
 	 * Esse retorno é só navegação: ele NÃO é prova de pagamento e pode ser aberto
-	 * digitando a URL. Quem confirma é o webhook no backend, então aqui a tela
-	 * consulta a situação real da inscrição algumas vezes até o webhook chegar.
+	 * digitando a URL. Da URL só se aproveita o payment_id, que o backend consulta
+	 * na API do Mercado Pago (é o que confirma em ambiente local, onde o webhook
+	 * não chega). Depois a tela consulta a situação algumas vezes, para o caso de
+	 * Pix/boleto que ainda vão ser aprovados.
 	 */
 	import { onMount, onDestroy } from 'svelte';
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth.svelte';
-	import { getSituacaoPagamento, type SituacaoPagamento } from '$lib/services/formularioService';
+	import {
+		confirmarPagamentoRetorno,
+		getSituacaoPagamento,
+		type SituacaoPagamento
+	} from '$lib/services/formularioService';
 
 	const preRegId = $page.params.preRegId as string;
 	const resultado = $derived($page.url.searchParams.get('resultado') ?? 'pendente');
@@ -47,7 +53,16 @@
 		}
 	}
 
-	onMount(consultar);
+	onMount(async () => {
+		// O Mercado Pago devolve o id como payment_id (e collection_id, no formato antigo).
+		const params = $page.url.searchParams;
+		const paymentId = params.get('payment_id') || params.get('collection_id');
+		if (paymentId && paymentId !== 'null') {
+			// Se a confirmação falhar, segue para a consulta normal: o webhook ainda pode chegar.
+			await confirmarPagamentoRetorno(preRegId, paymentId);
+		}
+		await consultar();
+	});
 	onDestroy(() => {
 		if (timer) clearTimeout(timer);
 	});

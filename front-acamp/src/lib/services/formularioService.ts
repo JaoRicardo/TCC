@@ -112,8 +112,8 @@ export async function salvarFormulario(
 
 /**
  * Cria a cobrança no Mercado Pago e devolve a URL da tela de pagamento
- * (Checkout Pro). Quem confirma o pagamento é o webhook do backend, não o
- * retorno dessa navegação.
+ * (Checkout Pro). Quem confirma o pagamento é o backend consultando a API do
+ * Mercado Pago, não o retorno dessa navegação.
  */
 export async function iniciarPagamento(
 	preRegId: number | string
@@ -132,6 +132,23 @@ export interface SituacaoPagamento {
 	metodo: string | null;
 	pago_em: string | null;
 	url_pagamento: string | null;
+}
+
+/**
+ * Na volta do checkout: pede ao backend para consultar no Mercado Pago o
+ * pagamento cujo id veio na URL. Só o id é usado; o status vem da API.
+ */
+export async function confirmarPagamentoRetorno(
+	preRegId: number | string,
+	paymentId: string
+): Promise<{ data?: SituacaoPagamento; error?: string }> {
+	const res = await apiFetch(`/inscricoes/${preRegId}/pagamento/confirmar`, {
+		method: 'POST',
+		body: JSON.stringify({ payment_id: paymentId })
+	});
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Erro ao confirmar o pagamento' };
 }
 
 export async function getSituacaoPagamento(

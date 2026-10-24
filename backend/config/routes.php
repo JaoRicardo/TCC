@@ -160,6 +160,7 @@ return function (RouteBuilder $routes): void {
             // --- Pagamento da inscrição (Mercado Pago / Checkout Pro) ---
             $builder->post('/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'criar'])->setPass(['id']);
             $builder->get('/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'situacao'])->setPass(['id']);
+            $builder->post('/inscricoes/{id}/pagamento/confirmar', ['controller' => 'Pagamentos', 'action' => 'confirmarRetorno'])->setPass(['id']);
             // Notificação do Mercado Pago: rota pública (quem chama é o servidor
             // deles, não o usuário), autenticada pela assinatura do header x-signature.
             $builder->post('/webhooks/mercadopago', ['controller' => 'Pagamentos', 'action' => 'webhookMercadoPago']);
