@@ -4,11 +4,13 @@ declare(strict_types=1);
 namespace App\Test\TestCase\Regras;
 
 use App\Service\PrazoFormularioService;
+use Cake\Datasource\EntityInterface;
 
 /**
  * Prazo do formulário: quem foi selecionado e não enviou o formulário até a data
- * do acampamento perde a vaga, e o próximo suplente do mesmo grupo assume — mas
- * só suplente que já entregou o formulário. Suplente sem formulário sai da fila.
+ * do acampamento perde a vaga sozinho. A vaga fica aberta até um administrador ou
+ * conselheiro chamar o próximo suplente do mesmo grupo. Suplente sem formulário
+ * sai da fila.
  */
 class PrazoFormularioTest extends RegrasTestCase
 {
@@ -37,11 +39,20 @@ class PrazoFormularioTest extends RegrasTestCase
         ];
     }
 
-    public function testQuemNaoRespondeuPerdeAVagaEOSuplenteComFormularioAssume(): void
+    /** Clica em "Chamar próximo" na tela do sorteio, como administrador. */
+    private function chamarProximo(EntityInterface $atividade, string $grupo): void
+    {
+        $this->autenticarComo($this->criarUsuario('Admin', idade: 40, admin: true));
+        $this->post("/api/v1/activities/{$atividade->id}/sorteio/chamar-proximo", ['tipo' => 'Campista', 'grupo' => $grupo]);
+        $this->assertResponseOk();
+    }
+
+    public function testQuemNaoRespondeuPerdeAVagaEOProximoSoEntraQuandoChamado(): void
     {
         $p = $this->cenarioFac($this->ontem());
+        $prazos = new PrazoFormularioService();
 
-        (new PrazoFormularioService())->executarPrazosVencidos();
+        $prazos->executarPrazosVencidos();
 
         // Titular que não respondeu: perde a vaga, mas o registro de como foi escolhido fica.
         $perdeu = $this->recarregar($p['titularSemFormulario']);
@@ -59,7 +70,13 @@ class PrazoFormularioTest extends RegrasTestCase
         $this->assertNotNull($suplente1->disqualified_at);
         $this->assertNull($suplente1->selection_method_id);
 
-        // Próximo homem da fila, com formulário: assume a vaga.
+        // Ninguém entra sozinho: a vaga de Homem fica aberta.
+        $this->assertSame(3, $this->recarregar($p['suplenteHomemComFormulario'])->substitute_position);
+        $atividade = $this->fetchTable('Activities')->get($perdeu->activity_id);
+        $this->assertSame(['Homem' => 1, 'Mulher' => 0, 'Casado' => 0], $prazos->vagasAbertasCampistas((int)$atividade->id));
+
+        // Chamado pelo botão: entra o próximo homem da fila.
+        $this->chamarProximo($atividade, 'Homem');
         $promovido = $this->recarregar($p['suplenteHomemComFormulario']);
         $this->assertSame($this->metodos['Sorteio'], $promovido->selection_method_id);
         $this->assertNull($promovido->substitute_position);
@@ -70,6 +87,12 @@ class PrazoFormularioTest extends RegrasTestCase
         $mulher = $this->recarregar($p['suplenteMulher']);
         $this->assertNull($mulher->selection_method_id);
         $this->assertSame(2, $mulher->substitute_position);
+
+        // A vaga foi preenchida: um segundo clique não chama mais ninguém.
+        $this->assertSame(0, $prazos->vagasAbertasCampistas((int)$atividade->id)['Homem']);
+        $this->autenticarComo($this->criarUsuario('Admin 2', idade: 40, admin: true));
+        $this->post("/api/v1/activities/{$atividade->id}/sorteio/chamar-proximo", ['tipo' => 'Campista', 'grupo' => 'Homem']);
+        $this->assertResponseCode(422);
     }
 
     public function testSemPrazoCadastradoNinguemPerdeAVaga(): void
@@ -127,6 +150,10 @@ class PrazoFormularioTest extends RegrasTestCase
         foreach ([$titularMarido, $titularEsposa] as $insc) {
             $this->assertNotNull($this->recarregar($insc)->disqualified_at, 'O casal titular deveria perder a vaga junto.');
         }
+        $this->assertSame(1, (new PrazoFormularioService())->vagasAbertasCampistas((int)$casais->id)['Casado'], 'Casal conta como uma vaga só.');
+        $this->assertSame(1, $this->recarregar($suplenteMarido)->substitute_position, 'O casal suplente não pode entrar sozinho.');
+
+        $this->chamarProximo($casais, 'Casado');
         foreach ([$suplenteMarido, $suplenteEsposa] as $insc) {
             $agora = $this->recarregar($insc);
             $this->assertSame($sorteio, $agora->selection_method_id, 'O casal suplente deveria assumir a vaga completo.');

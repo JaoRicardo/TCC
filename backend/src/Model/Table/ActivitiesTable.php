@@ -147,6 +147,27 @@ class ActivitiesTable extends Table
     {
         $rules->add($rules->existsIn(['category_id'], 'Categories'), ['errorField' => 'category_id']);
 
+        // Pagamento tem que fechar antes de o acampamento começar.
+        foreach (['participant_payment_date', 'servant_payment_date'] as $campo) {
+            $rules->add(
+                fn($activity) => self::pagamentoAntesDoInicio($activity->get($campo), $activity->start_date),
+                "{$campo}_antes_do_inicio",
+                [
+                    'errorField' => $campo,
+                    'message'    => 'O prazo de pagamento não pode ser depois do início do acampamento.',
+                ]
+            );
+        }
+
         return $rules;
+    }
+
+    private static function pagamentoAntesDoInicio(mixed $pagamento, mixed $inicio): bool
+    {
+        if (!$pagamento instanceof \DateTimeInterface || !$inicio instanceof \DateTimeInterface) {
+            return true;
+        }
+
+        return $pagamento <= $inicio;
     }
 }

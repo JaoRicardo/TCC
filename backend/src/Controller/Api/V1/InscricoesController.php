@@ -472,7 +472,8 @@ class InscricoesController extends ApiController
                     $prazoVencido,
                     $prazo,
                     (bool)$preReg->form_submitted,
-                    $preReg->substitute_position !== null
+                    $preReg->substitute_position !== null,
+                    (string)$preReg->disqualification_reason
                 ),
                 'respondido'            => (bool)$preReg->form_submitted,
                 'total_perguntas'       => count($questions),
@@ -509,11 +510,16 @@ class InscricoesController extends ApiController
         bool $prazoVencido,
         mixed $prazo,
         bool $jaEnviado,
-        bool $eraSuplente
+        bool $eraSuplente,
+        string $motivoDesclassificacao = ''
     ): ?string {
         $prazoFmt = $prazo !== null ? $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i') : null;
 
         if (!$statusPermite) {
+            if ($status === 'Prazo Perdido' && $motivoDesclassificacao === PrazoFormularioService::MOTIVO_PRAZO_PAGAMENTO) {
+                return 'O prazo para pagar a inscrição terminou e sua vaga ficou aberta para um suplente. '
+                    . 'Procure a organização se achar que houve algum erro.';
+            }
             if ($status === 'Prazo Perdido') {
                 // A consequência é diferente para titular e suplente: um perde a
                 // vaga, o outro perde o lugar na fila.
@@ -524,7 +530,7 @@ class InscricoesController extends ApiController
                         . 'Procure a organização se achar que houve algum erro.'
                     : 'O prazo para responder o formulário terminou'
                         . ($prazoFmt ? " em {$prazoFmt}" : '')
-                        . ' e sua vaga foi liberada para um suplente. Procure a organização se achar que houve algum erro.';
+                        . ' e sua vaga ficou aberta para um suplente. Procure a organização se achar que houve algum erro.';
             }
             if ($status === 'Desistência') {
                 return 'Esta inscrição foi cancelada, então não há formulário para responder.';

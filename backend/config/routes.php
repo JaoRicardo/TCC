@@ -146,6 +146,7 @@ return function (RouteBuilder $routes): void {
             $builder->delete('/activities/{id}/sorteio/campistas', ['controller' => 'Sorteio', 'action' => 'resetarCampistas'])->setPass(['id']);
             $builder->post('/activities/{id}/sorteio/servos', ['controller' => 'Sorteio', 'action' => 'realizarServos'])->setPass(['id']);
             $builder->delete('/activities/{id}/sorteio/servos', ['controller' => 'Sorteio', 'action' => 'resetarServos'])->setPass(['id']);
+            $builder->post('/activities/{id}/sorteio/chamar-proximo', ['controller' => 'Sorteio', 'action' => 'chamarProximo'])->setPass(['id']);
 
             // Inscrições
             $builder->get('/activities/{id}/subscriptions', ['controller' => 'Inscricoes', 'action' => 'adminList'])->setPass(['id']);

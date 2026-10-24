@@ -684,8 +684,10 @@ class SorteioService
             'sorteados'               => $sorteados,
             'suplentes'               => $suplentes,
             'nao_sorteados'           => $naoSorteados,
-            // Quem foi selecionado e perdeu a vaga por não responder o formulário.
+            // Quem foi selecionado e perdeu a vaga (formulário ou pagamento fora do prazo).
             'desclassificados'        => $desclassificados,
+            // Vagas perdidas que ainda esperam alguém chamar o próximo suplente.
+            'vagas_abertas'           => (new PrazoFormularioService())->vagasAbertasCampistas($activityId),
         ];
 
         if ($homem !== null) {
@@ -825,9 +827,10 @@ class SorteioService
         // Quem já entregou o formulário, para marcar na lista de suplentes: suplente
         // sem formulário entregue não pode ser chamado para uma vaga liberada.
         $formEnviadoPorUsuario = [];
+        $desclassificadoPorUsuario = [];
         foreach (
             $this->PreRegistrations->find()
-                ->select(['user_id', 'form_submitted'])
+                ->select(['user_id', 'form_submitted', 'disqualified_at'])
                 ->where([
                     'activity_id'       => $activityId,
                     'subscription_type' => 'Servo',
@@ -836,7 +839,9 @@ class SorteioService
                 ->all() as $prServo
         ) {
             $formEnviadoPorUsuario[$prServo->user_id] = (bool)$prServo->form_submitted;
+            $desclassificadoPorUsuario[$prServo->user_id] = $prServo->disqualified_at !== null;
         }
+        $prazos = new PrazoFormularioService();
 
         $setores      = [];
         $drawnUserIds = [];
@@ -871,6 +876,8 @@ class SorteioService
             $suplentes = [];
             foreach ($members as $m) {
                 if (isset($indicatedUserIds[$m->user_id])) continue;
+                // Suplente que saiu da fila por prazo não pode ser chamado.
+                if (!empty($desclassificadoPorUsuario[$m->user_id])) continue;
 
                 $anyDrawn = true;
                 $item     = $this->serializeServoItem($m->user, (int)$m->raffle_position);
@@ -889,6 +896,8 @@ class SorteioService
                 'vacancies'    => $n,
                 'sorteados'    => $sorteados,
                 'suplentes'    => $suplentes,
+                // Vagas do setor sem ninguém (quem perdeu o prazo saiu da equipe).
+                'vagas_abertas' => $prazos->vagasAbertasSetor($acs),
             ];
         }
 
@@ -923,6 +932,8 @@ class SorteioService
                 && !isset($indicatedUserIds[$pr->user_id])
                 && !isset($manuallyPlacedUserIds[$pr->user_id])
                 && !isset($generalServantUserIds[$pr->user_id])
+                // Quem perdeu a vaga por prazo aparece na própria lista, abaixo.
+                && empty($desclassificadoPorUsuario[$pr->user_id])
             ) {
                 $naoSorteados[] = $this->serializeServoItem($pr->user, 0);
             }

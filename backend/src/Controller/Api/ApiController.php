@@ -94,4 +94,18 @@ abstract class ApiController extends AppController
         }
         return $identity;
     }
+
+    // Conselheiro (`is_counselor`) acompanha o sorteio e chama suplentes para vagas
+    // abertas. Os demais cargos ainda vão ser revistos.
+    protected function requireAdminOrCounselor(): mixed
+    {
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) {
+            return $identity;
+        }
+        if (!$identity->is_admin && !$identity->is_counselor) {
+            return $this->apiError('Acesso restrito a administradores e conselheiros', 403);
+        }
+        return $identity;
+    }
 }

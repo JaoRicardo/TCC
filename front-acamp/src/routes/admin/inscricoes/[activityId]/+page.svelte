@@ -120,7 +120,7 @@
 		if (status === 'Sorteado' || status === 'Indicado') return 'badge-drawn';
 		if (status === 'Formulário Enviado') return 'badge-form';
 		if (status === 'Suplente') return 'badge-reserve';
-		// Perdeu o prazo do formulário: a vaga já foi repassada a um suplente.
+		// Perdeu o prazo do formulário ou do pagamento.
 		if (status === 'Desistência' || status === 'Prazo Perdido') return 'badge-cancelled';
 		return 'badge-waiting';
 	}
@@ -188,6 +188,47 @@
 		} finally {
 			isBusy = false;
 		}
+	}
+
+	// Vaga aberta (alguém perdeu o prazo do formulário ou do pagamento): chama o
+	// próximo suplente da fila — sempre o próximo na ordem, nunca um escolhido.
+	async function chamarProximo(dados: Record<string, unknown>, quem: string) {
+		if (!confirm(`Chamar ${quem} para a vaga aberta?`)) return;
+		isBusy = true;
+		try {
+			const res = await apiFetch(`/activities/${activityId}/sorteio/chamar-proximo`, {
+				method: 'POST',
+				body: JSON.stringify(dados)
+			});
+			const data = await res.json();
+			if (res.ok) {
+				await refreshAfterAction();
+			} else {
+				alert(data.error || 'Não foi possível chamar o próximo suplente.');
+			}
+		} catch (e) {
+			alert('Erro de comunicação.');
+		} finally {
+			isBusy = false;
+		}
+	}
+
+	const GRUPOS_CAMPISTA = ['Homem', 'Mulher', 'Casado'];
+	const NOME_GRUPO: Record<string, string> = { Homem: 'Homens', Mulher: 'Mulheres', Casado: 'Casais' };
+
+	// Próximo da fila de um grupo — para casal, os dois que dividem a posição.
+	function proximosDoGrupo(grupo: string): any[] {
+		const fila = (sorteio?.campistas.suplentes ?? []).filter((p: any) => p.categoria === grupo);
+		if (fila.length === 0) return [];
+		return fila.filter((p: any) => p.posicao === fila[0].posicao);
+	}
+
+	let gruposComVagaAberta = $derived(
+		GRUPOS_CAMPISTA.filter((g) => (sorteio?.campistas.vagas_abertas?.[g] ?? 0) > 0)
+	);
+
+	function textoMotivo(motivo: string) {
+		return motivo === 'prazo_pagamento' ? 'não pagou' : 'sem formulário';
 	}
 
 	async function submitIndication() {
@@ -420,9 +461,9 @@
 						{#if sorteio.campistas.suplentes.length === 0}
 							<p class="text-muted">Sem suplentes.</p>
 						{:else}
-							<!-- Suplente só pode ser chamado para uma vaga liberada se já
-							     tiver entregado o formulário dentro do prazo. -->
-							<p class="text-muted mini-empty">Só é chamado quem já entregou o formulário.</p>
+							<!-- Suplente que não entrega o formulário no prazo sai da fila;
+							     quem fica é chamado pelo botão quando uma vaga abre. -->
+							<p class="text-muted mini-empty">Quando uma vaga abrir, o próximo da fila é chamado pelo botão.</p>
 						{/if}
 						<ul class="raffle-list">
 							{#each sorteio.campistas.suplentes as p}
@@ -449,20 +490,55 @@
 					</div>
 				</div>
 
-				<!-- Quem foi selecionado e perdeu a vaga por não enviar o formulário
-				     até o prazo. A vaga já foi repassada ao suplente da vez. -->
+				{#if gruposComVagaAberta.length > 0}
+					<div class="vagas-abertas">
+						<h4>🔓 Vagas abertas</h4>
+						<p class="text-muted">
+							Alguém perdeu a vaga por não enviar o formulário ou não pagar no prazo. Chame o
+							próximo suplente da fila do mesmo grupo — ele terá 3 dias para pagar (nunca depois
+							do início do acampamento).
+						</p>
+						<ul class="raffle-list">
+							{#each gruposComVagaAberta as grupo}
+								{@const proximos = proximosDoGrupo(grupo)}
+								<li class="vaga-aberta-item">
+									<span>
+										<strong>{NOME_GRUPO[grupo]}</strong>: {sorteio.campistas.vagas_abertas[grupo]}
+										{sorteio.campistas.vagas_abertas[grupo] === 1 ? 'vaga aberta' : 'vagas abertas'}
+										{#if proximos.length > 0}
+											<span class="text-muted">— próximo da fila: #{proximos[0].posicao} {proximos.map((p) => p.nome).join(' e ')}</span>
+										{:else}
+											<span class="text-muted">— não há suplente na fila</span>
+										{/if}
+									</span>
+									{#if proximos.length > 0}
+										<button
+											class="btn-primary btn-sm"
+											onclick={() => chamarProximo({ tipo: 'Campista', grupo }, proximos.map((p) => p.nome).join(' e '))}
+											disabled={isBusy}
+										>Chamar próximo</button>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
+
+				<!-- Quem tinha vaga e perdeu por prazo (formulário ou pagamento), e
+				     suplente que saiu da fila por não enviar o formulário. -->
 				{#if (sorteio.campistas.desclassificados?.length ?? 0) > 0}
 					<div class="raffle-disqualified">
-						<h4>⏳ Perderam o prazo do formulário ({sorteio.campistas.desclassificados.length})</h4>
+						<h4>⏳ Perderam a vaga por prazo ({sorteio.campistas.desclassificados.length})</h4>
 						<p class="text-muted">
-							Titular que não entregou teve a vaga oferecida ao próximo suplente com formulário
-							enviado; suplente que não entregou saiu da fila.
+							Quem não enviou o formulário ou não pagou até o prazo saiu sozinho; a vaga fica
+							aberta até alguém chamar o próximo suplente. Suplente sem formulário saiu da fila.
 						</p>
 						<ul class="raffle-list muted-list">
 							{#each sorteio.campistas.desclassificados as p}
 								<li>
 									{p.nome}
 									<span class="tag-mini">{p.categoria}</span>
+									<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>
 									<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
 								</li>
 							{/each}
@@ -567,6 +643,20 @@
 									{/each}
 								</ul>
 							</div>
+							{#if sorteio.servos.realizado && setor.vagas_abertas > 0}
+								<div class="vaga-aberta-setor">
+									<strong>🔓 {setor.vagas_abertas} {setor.vagas_abertas === 1 ? 'vaga aberta' : 'vagas abertas'}</strong>
+									{#if setor.suplentes.length > 0}
+										<button
+											class="btn-primary btn-sm"
+											onclick={() => chamarProximo({ tipo: 'Servo', setor: setor.id }, setor.suplentes[0].nome)}
+											disabled={isBusy}
+										>Chamar próximo: {setor.suplentes[0].nome}</button>
+									{:else}
+										<span class="text-muted">Não há suplente na fila deste setor.</span>
+									{/if}
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>
@@ -586,14 +676,18 @@
 			<!-- Servos que perderam a vaga por não enviar o formulário no prazo. -->
 			{#if (sorteio.servos.desclassificados?.length ?? 0) > 0}
 				<div class="raffle-disqualified">
-					<h4>⏳ Perderam o prazo do formulário ({sorteio.servos.desclassificados.length})</h4>
+					<h4>⏳ Perderam a vaga por prazo ({sorteio.servos.desclassificados.length})</h4>
 					<p class="text-muted">
-						Titular que não entregou teve a vaga oferecida ao próximo suplente do setor com
-						formulário enviado; suplente que não entregou saiu da fila.
+						Quem não enviou o formulário ou não pagou até o prazo saiu da equipe; a vaga do setor
+						fica aberta até alguém chamar o próximo suplente. Suplente sem formulário saiu da fila.
 					</p>
 					<ul class="raffle-list muted-list">
 						{#each sorteio.servos.desclassificados as p}
-							<li>{p.nome} <span class="text-muted">— {formatDate(p.desclassificado_em)}</span></li>
+							<li>
+								{p.nome}
+								<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>
+								<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
+							</li>
 						{/each}
 					</ul>
 				</div>
@@ -997,6 +1091,45 @@
 	.raffle-disqualified h4 {
 		margin: 0 0 0.3rem;
 		color: #9a3412;
+	}
+
+	.vagas-abertas {
+		margin-top: 1.2rem;
+		padding: 1rem 1.2rem;
+		border: 1px solid #bfdbfe;
+		background: #eff6ff;
+		border-radius: 10px;
+	}
+
+	.vagas-abertas h4 {
+		margin: 0 0 0.3rem;
+		color: #1e40af;
+	}
+
+	.vaga-aberta-item {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.75rem;
+		flex-wrap: wrap;
+		background: #fff !important;
+	}
+
+	.vaga-aberta-setor {
+		margin-top: 0.9rem;
+		padding-top: 0.8rem;
+		border-top: 1px dashed #bfdbfe;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.45rem;
+		font-size: 0.88rem;
+		color: #1e40af;
+	}
+
+	.btn-sm {
+		padding: 0.4rem 0.8rem;
+		font-size: 0.82rem;
 	}
 
 	.raffle-list {

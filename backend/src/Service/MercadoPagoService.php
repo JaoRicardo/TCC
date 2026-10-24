@@ -53,6 +53,9 @@ class MercadoPagoService
     /** Status que ainda podem virar pagos (Pix/boleto aguardando). */
     public const STATUS_PENDENTES = ['pending', 'in_process', 'authorized'];
 
+    /** Dias que o suplente chamado para uma vaga tem para pagar (ver prazoPagamento). */
+    public const DIAS_PARA_PAGAR_APOS_CHAMADO = 3;
+
     private $PreRegistrations;
     private $Payments;
     private $Activities;
@@ -393,12 +396,39 @@ class MercadoPagoService
         return $link !== null && trim((string)$link) !== '' ? (string)$link : null;
     }
 
-    /** Prazo de pagamento cadastrado na atividade, se houver. */
+    /**
+     * Prazo de pagamento desta inscrição: a data cadastrada na atividade. Suplente
+     * chamado para uma vaga tem pelo menos DIAS_PARA_PAGAR_APOS_CHAMADO dias a
+     * partir de quando foi chamado — senão quem é chamado depois da data já
+     * entraria com o prazo vencido.
+     *
+     * Nunca passa do início do acampamento: se muita gente seguida deixar de pagar,
+     * os 3 dias de cada chamado iriam empurrando o prazo para depois do início.
+     */
     public function prazoPagamento(object $preReg, object $activity): mixed
     {
-        return $preReg->subscription_type === 'Servo'
+        $prazo = $preReg->subscription_type === 'Servo'
             ? ($activity->servant_payment_date ?? null)
             : ($activity->participant_payment_date ?? null);
+
+        if ($prazo === null) {
+            return null;
+        }
+
+        if (($preReg->promoted_at ?? null) !== null) {
+            $prazoDoChamado = (new DateTime($preReg->promoted_at->format('Y-m-d H:i:s')))
+                ->addDays(self::DIAS_PARA_PAGAR_APOS_CHAMADO);
+            if ($prazoDoChamado->getTimestamp() > $prazo->getTimestamp()) {
+                $prazo = $prazoDoChamado;
+            }
+        }
+
+        $inicio = $activity->start_date ?? null;
+        if ($inicio !== null && $prazo->getTimestamp() > $inicio->getTimestamp()) {
+            return new DateTime($inicio->format('Y-m-d H:i:s'));
+        }
+
+        return $prazo;
     }
 
     /** Última cobrança registrada para a inscrição. */
