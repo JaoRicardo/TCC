@@ -717,6 +717,8 @@ class ActivitiesController extends ApiController
             return $this->apiError("Usuário já está no setor \"{$setorAtual}\" desta atividade. Remova-o de lá primeiro para movê-lo.", 409);
         }
 
+        $this->tirarDaFilaDeSuplentes($activityId, $userId);
+
         $record = $this->AcsSectorsUsers->newEntity([
             'activities_categories_sector_id' => $acsId,
             'user_id'                         => $userId,
@@ -789,6 +791,8 @@ class ActivitiesController extends ApiController
         if ($setorAtual !== null) {
             return $this->apiError("Usuário já faz parte da equipe do setor \"{$setorAtual}\" e não pode virar servo geral ao mesmo tempo. Remova-o de lá primeiro.", 422);
         }
+
+        $this->tirarDaFilaDeSuplentes($id, $userId);
 
         $record = $this->ActivitiesGeneralServants->newEntity([
             'activity_id' => $id,
@@ -903,12 +907,8 @@ class ActivitiesController extends ApiController
     // exclusivos — quem é geral não entra numa equipe, e vice-versa.
     private function findSectorTeamOf(int $activityId, int $userId): ?string
     {
-        $acsIdsDaAtividade = $this->ActivitiesCategoriesSectors->find()
-            ->select(['id'])
-            ->where(['activity_id' => $activityId, 'deleted IS' => null])
-            ->all()
-            ->extract('id')
-            ->toArray();
+        $acsIdsDaAtividade = $this->acsIdsDaAtividade($activityId);
+        if (empty($acsIdsDaAtividade)) return null;
 
         $existing = $this->AcsSectorsUsers->find()
             ->contain(['ActivitiesCategoriesSectors' => ['CategoriesSectors' => ['Sectors']]])
@@ -925,6 +925,43 @@ class ActivitiesController extends ApiController
         if (!$existing) return null;
 
         return $existing->activities_categories_sector->categories_sector->sector->name ?? 'outro setor';
+    }
+
+    // Suplente do sorteio ainda não tem lugar em equipe nenhuma, então pode ser
+    // colocado à mão em outro setor (ou virar servo geral). Ao ser colocado, sai
+    // da fila de suplentes — senão, se fosse chamado depois, ficaria em dois
+    // lugares na mesma atividade.
+    private function tirarDaFilaDeSuplentes(int $activityId, int $userId): void
+    {
+        $acsIdsDaAtividade = $this->acsIdsDaAtividade($activityId);
+        if (empty($acsIdsDaAtividade)) return;
+
+        $removidas = $this->AcsSectorsUsers->deleteAll([
+            'activities_categories_sector_id IN' => $acsIdsDaAtividade,
+            'user_id'                            => $userId,
+            'is_substitute'                      => true,
+        ]);
+        if ($removidas === 0) return;
+
+        $this->PreRegistrations->updateAll(
+            ['substitute_position' => null],
+            [
+                'activity_id'       => $activityId,
+                'user_id'           => $userId,
+                'subscription_type' => 'Servo',
+                'deleted IS'        => null,
+            ]
+        );
+    }
+
+    private function acsIdsDaAtividade(int $activityId): array
+    {
+        return $this->ActivitiesCategoriesSectors->find()
+            ->select(['id'])
+            ->where(['activity_id' => $activityId, 'deleted IS' => null])
+            ->all()
+            ->extract('id')
+            ->toArray();
     }
 
     // Admin ou servo geral daquela atividade

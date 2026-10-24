@@ -171,4 +171,64 @@ class SorteioServosTest extends RegrasTestCase
         $this->assertSame(3, $titularesLouvor + $titularesRecepcao, 'Os 3 inscritos deveriam ser sorteados.');
         $this->assertSame(3, $this->fetchTable('ActivitiesCategoriesSectorsUsers')->find()->count(), 'Ninguém pode cair em duas equipes.');
     }
+
+    public function testQuemJaEstaNumSetorNaoPodeSerColocadoEmOutro(): void
+    {
+        $louvor = $this->criarSetor('Louvor', 5);
+        $recepcao = $this->criarSetor('Recepção', 5);
+        $servo = $this->servoInscrito('Servo');
+        $this->colocarNaEquipe($louvor, $servo);
+
+        foreach ([false, true] as $comoLider) {
+            $this->autenticarComo($this->admin);
+            $this->post("/api/v1/activities/{$this->atividade->id}/sectors/{$recepcao->id}/members", [
+                'user_id' => $servo->id,
+                'is_coordinator' => $comoLider ? '1' : '0',
+            ]);
+            $this->assertResponseCode(409);
+        }
+
+        $this->assertSame(1, $this->fetchTable('ActivitiesCategoriesSectorsUsers')->find()
+            ->where(['user_id' => $servo->id])->count());
+    }
+
+    public function testSuplenteColocadoEmOutroSetorSaiDaFilaDeSuplentes(): void
+    {
+        // Louvor: 1 vaga e 2 inscritos → 1 titular e 1 suplente.
+        $louvor = $this->criarSetor('Louvor', 1);
+        $this->servoInscrito('Servo 1');
+        $this->servoInscrito('Servo 2');
+        (new SorteioService())->realizarServos((int)$this->atividade->id);
+
+        $equipe = $this->fetchTable('ActivitiesCategoriesSectorsUsers');
+        $suplente = $this->fetchTable('Users')->get(
+            $equipe->find()->where(['activities_categories_sector_id' => $louvor->id, 'is_substitute' => true])->firstOrFail()->user_id
+        );
+
+        $recepcao = $this->criarSetor('Recepção', 3);
+        $this->colocarNaEquipe($recepcao, $suplente);
+
+        $linhas = $equipe->find()->where(['user_id' => $suplente->id])->all()->toArray();
+        $this->assertCount(1, $linhas, 'Ficou na Recepção e continuou na fila de suplentes do Louvor.');
+        $this->assertSame($recepcao->id, $linhas[0]->activities_categories_sector_id);
+        $this->assertNull($this->fetchTable('PreRegistrations')->find()
+            ->where(['user_id' => $suplente->id])->firstOrFail()->substitute_position, 'A inscrição continua marcada como suplente.');
+    }
+
+    public function testSuplenteQueViraServoGeralSaiDaFilaDeSuplentes(): void
+    {
+        $louvor = $this->criarSetor('Louvor', 1);
+        $this->servoInscrito('Servo 1');
+        $this->servoInscrito('Servo 2');
+        (new SorteioService())->realizarServos((int)$this->atividade->id);
+
+        $equipe = $this->fetchTable('ActivitiesCategoriesSectorsUsers');
+        $suplenteId = $equipe->find()->where(['activities_categories_sector_id' => $louvor->id, 'is_substitute' => true])->firstOrFail()->user_id;
+
+        $this->autenticarComo($this->admin);
+        $this->post("/api/v1/activities/{$this->atividade->id}/general-servants", ['user_id' => $suplenteId]);
+        $this->assertResponseSuccess();
+
+        $this->assertSame(0, $equipe->find()->where(['user_id' => $suplenteId])->count(), 'Virou servo geral e continuou suplente do Louvor.');
+    }
 }
