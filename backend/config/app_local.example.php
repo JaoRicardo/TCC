@@ -67,13 +67,14 @@ return [
          * The test connection is used during the test suite.
          */
         'test' => [
-            'host' => 'localhost',
-            //'port' => 'non_standard_port_number',
-            'username' => 'my_app',
-            'password' => 'secret',
-            'database' => 'test_myapp',
-            //'schema' => 'myapp',
-            'url' => env('DATABASE_TEST_URL', 'sqlite://127.0.0.1/tmp/tests.sqlite'),
+            // Mesmo MySQL do .env, num banco separado (por padrão <DATABASE_NAME>_test).
+            // Os testes recriam esse banco à vontade; nunca aponte para o banco real.
+            'host' => env('DATABASE_HOST', 'localhost'),
+            'port' => env('DATABASE_PORT', null),
+            'username' => env('DATABASE_USERNAME', null),
+            'password' => env('DATABASE_PASSWORD', null),
+            'database' => env('DATABASE_TEST_NAME', env('DATABASE_NAME', 'camping') . '_test'),
+            'url' => env('DATABASE_TEST_URL', null),
         ],
     ],
 

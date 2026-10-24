@@ -42,6 +42,15 @@ Chronos::setTestNow(Chronos::now());
 // has been written to.
 session_id('cli');
 
+// Trava de segurança: os testes apagam e recriam o banco de teste. Se ele estiver
+// apontando para o mesmo banco da aplicação, para aqui antes de mexer em qualquer coisa.
+$bancoReal = \Cake\Datasource\ConnectionManager::getConfig('default')['database'] ?? null;
+$bancoTeste = \Cake\Datasource\ConnectionManager::getConfig('test')['database'] ?? null;
+if ($bancoTeste === null || $bancoTeste === $bancoReal) {
+    fwrite(STDERR, "Testes abortados: o banco de teste ('{$bancoTeste}') não pode ser o banco da aplicação ('{$bancoReal}'). Veja DATABASE_TEST_NAME no config/.env.\n");
+    exit(1);
+}
+
 // Connection aliasing needs to happen before migrations are run.
 // Otherwise, table objects inside migrations would use the default datasource
 ConnectionHelper::addTestAliases();

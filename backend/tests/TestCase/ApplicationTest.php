@@ -18,8 +18,10 @@ namespace App\Test\TestCase;
 
 use App\Application;
 use App\Middleware\HostHeaderMiddleware;
+use App\Middleware\JwtAuthMiddleware;
 use Cake\Core\Configure;
 use Cake\Error\Middleware\ErrorHandlerMiddleware;
+use Cake\Http\Middleware\BodyParserMiddleware;
 use Cake\Http\MiddlewareQueue;
 use Cake\Routing\Middleware\AssetMiddleware;
 use Cake\Routing\Middleware\RoutingMiddleware;
@@ -80,9 +82,14 @@ class ApplicationTest extends TestCase
         $this->assertInstanceOf(ErrorHandlerMiddleware::class, $middleware->current());
         $middleware->seek(1);
         $this->assertInstanceOf(HostHeaderMiddleware::class, $middleware->current());
-        $middleware->seek(2);
-        $this->assertInstanceOf(AssetMiddleware::class, $middleware->current());
+        // Posição 2 é o middleware de CORS (uma closure) — ver Application::middleware().
         $middleware->seek(3);
+        $this->assertInstanceOf(AssetMiddleware::class, $middleware->current());
+        $middleware->seek(4);
         $this->assertInstanceOf(RoutingMiddleware::class, $middleware->current());
+        $middleware->seek(5);
+        $this->assertInstanceOf(BodyParserMiddleware::class, $middleware->current());
+        $middleware->seek(6);
+        $this->assertInstanceOf(JwtAuthMiddleware::class, $middleware->current());
     }
 }
