@@ -361,8 +361,15 @@ class ActivitiesController extends ApiController
                           'camper_form_deadline', 'servant_form_deadline'] as $f) {
                     if (isset($cd[$f])) $patch[$f] = $cd[$f];
                 }
-                if ($cd['notice_base64'] ?? null) $patch['notice'] = $this->saveBase64File($cd['notice_base64'], 'campings/notices');
-                if ($cd['term_base64']   ?? null) $patch['term']   = $this->saveBase64File($cd['term_base64'],   'campings/terms');
+                // Edital e termo: só troca o arquivo quando um novo é enviado (mesmas formas aceitas no add()).
+                $noticePath = ($cd['notice_base64'] ?? null)
+                    ? $this->saveBase64File($cd['notice_base64'], 'campings/notices')
+                    : $this->saveFile($files['camping']['notice'] ?? null, 'campings/notices');
+                $termPath = ($cd['term_base64'] ?? null)
+                    ? $this->saveBase64File($cd['term_base64'], 'campings/terms')
+                    : $this->saveFile($files['camping']['term'] ?? null, 'campings/terms');
+                if ($noticePath) $patch['notice'] = $noticePath;
+                if ($termPath)   $patch['term']   = $termPath;
                 $this->Campings->patchEntity($camping, $patch);
                 $this->Campings->save($camping);
             }

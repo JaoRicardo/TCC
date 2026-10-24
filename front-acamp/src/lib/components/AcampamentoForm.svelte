@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, tick } from "svelte";
-	import { apiFetch } from "$lib/api";
+	import { apiFetch, API_HOST } from "$lib/api";
 	import "$lib/styles/admin-form.css";
 
 	// Sem activityId a tela cria um acampamento; com activityId carrega e edita.
@@ -63,9 +63,9 @@
 		start_date: "",
 		duration_days: 1,
 
-		// Camping General
-		notice: "",
-		term: "",
+		// Camping General (edital e termo são arquivos, enviados à parte)
+		notice: null as File | null,
+		term: null as File | null,
 		minimal_age: 0,
 		maximal_age: 99,
 		camper_fee: 0,
@@ -130,8 +130,6 @@
 		servant_payment_date: ['activity', 'servant_payment_date'],
 		servant_payment_link: ['activity', 'servant_payment_link'],
 
-		notice: ['camping', 'notice'],
-		term: ['camping', 'term'],
 		planned_man_vacancies: ['camping', 'planned_man_vacancies'],
 		planned_woman_vacancies: ['camping', 'planned_woman_vacancies'],
 		planned_couple_vacancies: ['camping', 'planned_couple_vacancies'],
@@ -164,6 +162,9 @@
 		['servant_payment_date', 'camper_payment_date'],
 		['servant_payment_link', 'camper_payment_link'],
 	];
+
+	// Na edição: link do edital/termo já enviados (sem arquivo, o banco guarda "#").
+	let arquivosAtuais: Record<'notice' | 'term', string | null> = $state({ notice: null, term: null });
 
 	let raffleTotal = $derived(
 		(Number(formData.raffle_man_vacancies) || 0) +
@@ -200,9 +201,12 @@
 			const origem = { activity: data.data.activity || {}, camping: data.data.camping || {} };
 			for (const [campo, [tabela, coluna]] of Object.entries(DESTINO)) {
 				const valor = origem[tabela][coluna];
-				// Edital e termo sem arquivo ficam gravados como "#".
-				if (valor === null || valor === undefined || valor === "#") continue;
+				if (valor === null || valor === undefined) continue;
 				formData[campo] = valor;
+			}
+			for (const campo of ['notice', 'term'] as const) {
+				const caminho = origem.camping[campo];
+				arquivosAtuais[campo] = caminho && caminho !== '#' ? `${API_HOST}/${caminho}` : null;
 			}
 
 			// Só deixa marcado "usar mesmos dados" se os dados dos servos já forem iguais aos dos campistas.
@@ -295,6 +299,8 @@
 		const body = new FormData();
 		body.append("type", "Camping");
 		if (formData.cover_image) body.append("activity[image]", formData.cover_image);
+		if (formData.notice) body.append("camping[notice]", formData.notice);
+		if (formData.term) body.append("camping[term]", formData.term);
 		body.append("activity[total_vacancies]", plannedTotal.toString());
 
 		for (const [campo, [tabela, coluna]] of Object.entries(DESTINO)) {
@@ -455,16 +461,19 @@
 					{#if editando}<span class="af-hint">Deixe em branco para manter a imagem atual.</span>{/if}
 					{#if fieldErrors.cover_image}<span class="af-error-text">{fieldErrors.cover_image}</span>{/if}
 				</div>
-				<div class="af-field" class:af-field--error={fieldErrors.notice}>
-					<label for="notice">Título/Link do Edital {editando ? "" : "*"}</label>
-					<input type="text" id="notice" bind:value={formData.notice} required={!editando} />
-					{#if fieldErrors.notice}<span class="af-error-text">{fieldErrors.notice}</span>{/if}
-				</div>
-				<div class="af-field" class:af-field--error={fieldErrors.term}>
-					<label for="term">Link do Termo de Responsabilidade {editando ? "" : "*"}</label>
-					<input type="text" id="term" bind:value={formData.term} required={!editando} />
-					{#if fieldErrors.term}<span class="af-error-text">{fieldErrors.term}</span>{/if}
-				</div>
+				{#each [{ campo: 'notice', rotulo: 'Edital' }, { campo: 'term', rotulo: 'Termo de Responsabilidade' }] as arq}
+					{@const atual = arquivosAtuais[arq.campo as 'notice' | 'term']}
+					<div class="af-field" class:af-field--error={fieldErrors[arq.campo]}>
+						<label for={arq.campo}>{arq.rotulo} (PDF ou imagem)</label>
+						<input type="file" id={arq.campo} accept=".pdf,image/*" onchange={(e) => (formData[arq.campo] = e.currentTarget.files?.[0] || null)} />
+						{#if atual}
+							<span class="af-hint"><a href={atual} target="_blank">Ver arquivo atual</a>. Envie outro só se quiser substituir.</span>
+						{:else}
+							<span class="af-hint">Aparece na página do acampamento para os inscritos. Pode ser enviado depois, na edição.</span>
+						{/if}
+						{#if fieldErrors[arq.campo]}<span class="af-error-text">{fieldErrors[arq.campo]}</span>{/if}
+					</div>
+				{/each}
 			</div>
 
 			<div class="af-grid-3 af-mt">

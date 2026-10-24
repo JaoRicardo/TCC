@@ -23,6 +23,13 @@ class AuthStore {
 		}
 	}
 
+	// Sai da sessão só nesta página; o token continua salvo para a próxima tentativa.
+	forgetSession() {
+		this.user = null;
+		this.token = null;
+		this.isAuthenticated = false;
+	}
+
 	async verifyToken() {
 		this.isLoading = true;
 		try {
@@ -40,12 +47,16 @@ class AuthStore {
 			if (response.ok) {
 				const data = await response.json();
 				this.user = data.user;
-			} else {
+			} else if (response.status === 401) {
 				this.clearToken();
+			} else {
+				this.forgetSession();
 			}
 		} catch (error) {
+			// Falha de rede ou requisição interrompida (ex.: trocou de página no meio).
+			// Não prova que o login é inválido, então o token salvo é mantido.
 			console.error("Erro ao verificar token:", error);
-			this.clearToken();
+			this.forgetSession();
 		} finally {
 			this.isLoading = false;
 		}
