@@ -89,6 +89,44 @@ class ActivitiesController extends ApiController
 
     // ─── Admin ─────────────────────────────────────────────────────────────
 
+    /**
+     * Dados crus (nomes de coluna do banco) para preencher a tela de edição.
+     * O `view()` devolve um resumo formatado para o público e não tem todos os campos.
+     */
+    public function editData(int $id): Response
+    {
+        $this->request->allowMethod(['get']);
+
+        $identity = $this->requireAdmin();
+        if ($identity instanceof Response) return $identity;
+
+        $activity = $this->Activities->find()
+            ->where(['Activities.id' => $id, 'Activities.deleted IS' => null])
+            ->first();
+
+        if (!$activity) return $this->apiError('Atividade não encontrada', 404);
+
+        $camping = $activity->camping_id
+            ? $this->Campings->find()->where(['id' => $activity->camping_id])->first()
+            : null;
+
+        return $this->apiResponse(['data' => [
+            'activity' => $this->entityToFormArray($activity),
+            'camping'  => $camping ? $this->entityToFormArray($camping) : null,
+        ]]);
+    }
+
+    /** Datas no formato do <input type="datetime-local">, sem conversão de fuso. */
+    private function entityToFormArray(object $entity): array
+    {
+        $out = [];
+        foreach ($entity->toArray() as $field => $value) {
+            $out[$field] = $value instanceof \DateTimeInterface ? $value->format('Y-m-d\TH:i') : $value;
+        }
+
+        return $out;
+    }
+
     public function add(): Response
     {
         $this->request->allowMethod(['post']);
@@ -160,7 +198,7 @@ class ActivitiesController extends ApiController
             $ad           = $data['activity'] ?? [];
             $startDate    = $ad['start_date'] ?? null;
             $fimEvento    = $ad['end_date']   ?? null;
-            $durationDays = 1;
+            $durationDays = max(1, intval($ad['duration_days'] ?? 1));
             if ($startDate && $fimEvento) {
                 $durationDays = max(1, (int)ceil((strtotime($fimEvento) - strtotime($startDate)) / 86400));
             }
@@ -251,7 +289,7 @@ class ActivitiesController extends ApiController
 
         $startDate    = $ad['start_date'] ?? $activity->start_date?->format('Y-m-d H:i:s');
         $fimEvento    = $ad['end_date'] ?? null;
-        $durationDays = $activity->duration_days;
+        $durationDays = isset($ad['duration_days']) ? max(1, intval($ad['duration_days'])) : $activity->duration_days;
         if ($startDate && $fimEvento) {
             $durationDays = max(1, (int)ceil((strtotime($fimEvento) - strtotime($startDate)) / 86400));
         }
