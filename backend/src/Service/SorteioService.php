@@ -294,8 +294,10 @@ class SorteioService
 
     /**
      * Sorteia só as vagas que sobraram em cada setor, depois de descontar quem já
-     * está garantido (indicado no nível geral via Base/Forania/Conselho, ou já
-     * colocado manualmente numa equipe pelo líder/servo geral/admin). O pool do
+     * está na equipe (líder do setor e quem foi colocado manualmente pelo líder,
+     * servo geral ou admin). Indicados no nível geral (Base/Forania/Conselho) e o
+     * servo geral também ficam fora do sorteio. Regra confirmada com o usuário:
+     * a organização monta as equipes à mão, e o sorteio completa o que faltar. O pool do
      * sorteio é todo servo inscrito nesta atividade que ainda não está em nenhuma
      * das duas situações acima — não depende de a pessoa ter "escolhido" um setor,
      * o sorteio distribui quem sobrou entre os setores com vaga aberta, do mesmo
@@ -396,13 +398,17 @@ class SorteioService
         ));
         shuffle($pool);
 
-        // Vagas restantes por setor (total do setor menos quem já está garantido nele).
+        // Vagas restantes por setor: total do setor menos quem já está nele (líderes e
+        // membros colocados à mão). É a mesma conta do "faltam N vagas" da tela da
+        // equipe (ActivitiesController::sectors) — o sorteio preenche exatamente o
+        // que a tela mostra como faltando.
         $setoresComVaga = [];
         foreach ($acsRecords as $sector) {
+            // is_substitute fica NULL em quem foi colocado à mão — e NULL não é suplente.
             $jaGarantidosNoSetor = $this->AcsSectorsUsers->find()
                 ->where([
                     'activities_categories_sector_id' => $sector->id,
-                    'is_coordinator'                  => false,
+                    'OR' => ['is_substitute IS' => null, 'is_substitute' => false],
                 ])
                 ->count();
             $n = (int)$sector->actual_vacancies - $jaGarantidosNoSetor;
