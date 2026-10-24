@@ -20,7 +20,7 @@ class SectorsController extends ApiController
     public function index(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $sectors = $this->Sectors->find()
@@ -64,7 +64,7 @@ class SectorsController extends ApiController
     public function add(): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $data   = $this->request->getData();
@@ -89,7 +89,7 @@ class SectorsController extends ApiController
     public function edit(int $id): Response
     {
         $this->request->allowMethod(['patch', 'put']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $sector = $this->Sectors->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -112,7 +112,7 @@ class SectorsController extends ApiController
     public function delete(int $id): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $sector = $this->Sectors->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -129,7 +129,7 @@ class SectorsController extends ApiController
     public function addCategory(int $id): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $sector = $this->Sectors->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -169,7 +169,7 @@ class SectorsController extends ApiController
     public function editCategory(int $csId): Response
     {
         $this->request->allowMethod(['patch', 'put']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $cs = $this->CategoriesSectors->find()
@@ -200,7 +200,7 @@ class SectorsController extends ApiController
     public function deleteCategory(int $csId): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
         $cs = $this->CategoriesSectors->find()

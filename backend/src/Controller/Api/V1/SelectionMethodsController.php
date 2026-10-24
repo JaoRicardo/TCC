@@ -3,9 +3,11 @@ declare(strict_types=1);
 
 namespace App\Controller\Api\V1;
 
+use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use Cake\Http\Response;
 
+#[AllowDynamicProperties]
 class SelectionMethodsController extends ApiController
 {
     public function initialize(): void
@@ -21,7 +23,7 @@ class SelectionMethodsController extends ApiController
     {
         $this->request->allowMethod(['get']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $type = $this->request->getQuery('type');

@@ -26,7 +26,7 @@ class SorteioController extends ApiController
     public function resultado(int $activityId): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requireAdminOrCounselor();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         // Oportunista: se a data configurada na criação do acampamento já chegou
@@ -46,7 +46,7 @@ class SorteioController extends ApiController
     public function chamarProximo(int $activityId): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdminOrCounselor();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         // Aplica os prazos antes, para não chamar alguém que já devia ter saído da fila.
@@ -78,7 +78,7 @@ class SorteioController extends ApiController
     public function realizarCampistas(int $activityId): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $homem  = (int)($this->request->getData('homem')  ?? 0);
@@ -98,7 +98,7 @@ class SorteioController extends ApiController
     public function resetarCampistas(int $activityId): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $this->sorteioService->resetarCampistas($activityId);
@@ -110,7 +110,7 @@ class SorteioController extends ApiController
     public function realizarServos(int $activityId): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $result = $this->sorteioService->realizarServos($activityId);
@@ -122,7 +122,7 @@ class SorteioController extends ApiController
     public function resetarServos(int $activityId): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $this->sorteioService->resetarServos($activityId);

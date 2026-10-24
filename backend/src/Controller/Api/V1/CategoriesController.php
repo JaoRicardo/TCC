@@ -35,7 +35,7 @@ class CategoriesController extends ApiController
     public function add(): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('acampamentos');
         if ($identity instanceof Response) return $identity;
 
         $data = $this->request->getData();
@@ -81,7 +81,7 @@ class CategoriesController extends ApiController
     public function edit(int $id): Response
     {
         $this->request->allowMethod(['patch']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('acampamentos');
         if ($identity instanceof Response) return $identity;
 
         $cat = $this->Categories->find()->where(['id' => $id, 'deleted IS' => null])->first();

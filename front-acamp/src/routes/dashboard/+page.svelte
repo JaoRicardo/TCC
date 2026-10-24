@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { auth } from "$lib/stores/auth.svelte";
+	import { acessaPainel, primeiraTela } from "$lib/permissoes";
 	import { getActivities } from "$lib/services/activityService";
 	import { getMinhasInscricoes } from "$lib/services/inscricaoService";
 	import { API_HOST } from "$lib/api";
@@ -97,8 +98,8 @@
 					/>
 				</div>
 				<div class="user-actions">
-					{#if auth.user?.is_admin}
-						<a href="/admin/usuarios" class="admin-link-btn"
+					{#if acessaPainel()}
+						<a href={primeiraTela()} class="admin-link-btn"
 							>Painel Admin</a
 						>
 					{/if}

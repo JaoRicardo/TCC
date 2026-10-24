@@ -25,5 +25,13 @@ class UsersSeed extends BaseSeed
         ];
 
         $this->table('users')->insert($data)->saveData();
+
+        // O administrador inicial acessa todas as telas do painel.
+        $admin = $this->fetchRow("SELECT id FROM users WHERE cpf = '00000000000'");
+        $permissoes = [];
+        foreach (\App\Service\PermissoesService::todas() as $permissao) {
+            $permissoes[] = ['user_id' => $admin['id'], 'permission' => $permissao, 'created' => date('Y-m-d H:i:s')];
+        }
+        $this->table('user_permissions')->insert($permissoes)->saveData();
     }
 }

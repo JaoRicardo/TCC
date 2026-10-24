@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Test\TestCase\Regras;
 
 use App\Service\JwtService;
+use App\Service\PermissoesService;
 use Cake\Database\Connection;
 use Cake\Datasource\ConnectionManager;
 use Cake\Datasource\EntityInterface;
@@ -108,6 +109,11 @@ abstract class RegrasTestCase extends TestCase
             'is_counselor' => false,
             'marital_status_id' => $this->estadosCivis[$estadoCivil],
         ]);
+
+        // Administrador acessa todas as telas do painel, como no sistema de verdade.
+        if ($admin) {
+            (new PermissoesService())->definir((int)$usuario->id, PermissoesService::todas());
+        }
 
         $this->salvar('Addresses', [
             'user_id' => $usuario->id,

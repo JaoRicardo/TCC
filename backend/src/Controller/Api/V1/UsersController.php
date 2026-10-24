@@ -6,6 +6,7 @@ namespace App\Controller\Api\V1;
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Service\JwtService;
+use App\Service\PermissoesService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -76,7 +77,7 @@ class UsersController extends ApiController
     {
         $this->request->allowMethod(['get']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('usuarios');
         if ($identity instanceof Response) return $identity;
 
         $users = $this->Users->find()
@@ -96,7 +97,7 @@ class UsersController extends ApiController
     {
         $this->request->allowMethod(['patch']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('usuarios');
         if ($identity instanceof Response) return $identity;
 
         $user = $this->Users->find()
@@ -116,13 +117,36 @@ class UsersController extends ApiController
         if (isset($data['sex']))              $patch['sex']              = $data['sex'];
         if (isset($data['marital_status_id'])) $patch['marital_status_id'] = intval($data['marital_status_id']);
 
-        if (isset($data['is_admin']))         $patch['is_admin']         = (bool)$data['is_admin'];
-        if (isset($data['is_counselor']))     $patch['is_counselor']     = (bool)$data['is_counselor'];
+        // Cargo decide quem entra no painel, então só quem gerencia permissões mexe nele.
+        $mudaCargo = isset($data['is_admin']) || isset($data['is_counselor']);
+        if ($mudaCargo) {
+            if (!$this->temPermissao($identity, 'permissoes')) {
+                return $this->apiError('Não foi possível concluir esta ação.', 403);
+            }
+            if ((int)$identity->id === $id) {
+                return $this->apiError('Você não pode mudar o seu próprio cargo.', 403);
+            }
+            if (isset($data['is_admin']))     $patch['is_admin']     = (bool)$data['is_admin'];
+            if (isset($data['is_counselor'])) $patch['is_counselor'] = (bool)$data['is_counselor'];
+        }
+        $eraAdmin = (bool)$user->is_admin;
 
         $this->Users->patchEntity($user, $patch, ['validate' => false]);
 
+        $ficouSemCargo = !$user->is_admin && !$user->is_counselor;
+        if ($mudaCargo && $ficouSemCargo && $this->permissoes()->ehUltimoGestor($id)) {
+            return $this->apiError('Esta é a única pessoa que gerencia permissões. Dê essa permissão a outra pessoa antes.', 422);
+        }
+
         if (!$this->Users->save($user)) {
             return $this->apiResponse(['errors' => $user->getErrors()], 422);
+        }
+
+        // Virar administrador liga tudo; ficar sem cargo nenhum desliga tudo.
+        if ($mudaCargo && $user->is_admin && !$eraAdmin) {
+            $this->permissoes()->definir($id, PermissoesService::todas());
+        } elseif ($mudaCargo && $ficouSemCargo) {
+            $this->permissoes()->definir($id, []);
         }
 
         $updated = $this->Users->find()->contain(['MaritalStatuses'])->where(['Users.id' => $id])->first();
@@ -137,7 +161,7 @@ class UsersController extends ApiController
     {
         $this->request->allowMethod(['delete']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('usuarios');
         if ($identity instanceof Response) return $identity;
 
         if ((int)$identity->id === $id) {
@@ -150,10 +174,65 @@ class UsersController extends ApiController
 
         if (!$user) return $this->apiError('Usuário não encontrado', 404);
 
+        if ($this->permissoes()->ehUltimoGestor($id)) {
+            return $this->apiError('Esta é a única pessoa que gerencia permissões. Dê essa permissão a outra pessoa antes.', 422);
+        }
+
         $user->deleted = new \DateTime();
         $this->Users->save($user);
 
         return $this->apiResponse(['message' => 'Usuário removido com sucesso']);
+    }
+
+    // -------------------------------------------------------------------------
+    // GET /api/v1/admin/users/{id}/permissoes  (quem gerencia permissões)
+    // A lista de telas e quais estão ligadas para a pessoa.
+    // -------------------------------------------------------------------------
+    public function adminPermissoes(int $id): Response
+    {
+        $this->request->allowMethod(['get']);
+
+        $identity = $this->requirePermissao('permissoes');
+        if ($identity instanceof Response) return $identity;
+
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
+        if (!$user) return $this->apiError('Usuário não encontrado', 404);
+
+        return $this->apiResponse(['data' => [
+            'catalogo'  => $this->permissoes()->catalogo(),
+            'ativas'    => $this->permissoes()->daPessoa($user),
+            'tem_cargo' => (bool)($user->is_admin || $user->is_counselor),
+        ]]);
+    }
+
+    // -------------------------------------------------------------------------
+    // PUT /api/v1/admin/users/{id}/permissoes  body: { permissoes: [...] }
+    // -------------------------------------------------------------------------
+    public function adminSalvarPermissoes(int $id): Response
+    {
+        $this->request->allowMethod(['put']);
+
+        $identity = $this->requirePermissao('permissoes');
+        if ($identity instanceof Response) return $identity;
+
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
+        if (!$user) return $this->apiError('Usuário não encontrado', 404);
+
+        if (!$user->is_admin && !$user->is_counselor) {
+            return $this->apiError('Marque a pessoa como administradora ou conselheira antes de escolher o que ela acessa.', 422);
+        }
+
+        $chaves = array_map('strval', (array)($this->request->getData('permissoes') ?? []));
+
+        // Ninguém tira de si mesmo a permissão de gerenciar permissões — assim o
+        // sistema nunca fica sem quem possa devolvê-la.
+        if ((int)$identity->id === $id && !in_array('permissoes', $chaves, true)) {
+            return $this->apiError('Você não pode tirar de si mesmo a permissão de gerenciar permissões.', 422);
+        }
+
+        $ativas = $this->permissoes()->definir($id, $chaves);
+
+        return $this->apiResponse(['data' => ['ativas' => $ativas]]);
     }
 
     // -------------------------------------------------------------------------
@@ -178,6 +257,8 @@ class UsersController extends ApiController
 
         return $this->apiResponse([
             'user' => array_merge($this->serializeUser($user), [
+                // Telas do painel que a pessoa pode ver (o menu é montado só com elas).
+                'permissoes' => $this->permissoes()->daPessoa($user),
                 'marital_status' => $user->marital_status
                     ? ['id' => $user->marital_status->id, 'title' => $user->marital_status->title]
                     : null,

@@ -97,7 +97,7 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['get']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('acampamentos');
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
@@ -131,12 +131,12 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['post']);
 
-        $identity = $this->requireAdmin();
-        if ($identity instanceof Response) return $identity;
-
         $data  = $this->request->getData();
         $files = $this->request->getUploadedFiles();
         $type  = $data['type'] ?? null;
+
+        $identity = $this->requirePermissao($type === 'Event' ? 'eventos' : 'acampamentos');
+        if ($identity instanceof Response) return $identity;
 
         if (!in_array($type, ['Camping', 'Event'], true)) {
             return $this->apiError('Tipo inválido. Use "Camping" ou "Event"', 422);
@@ -268,13 +268,19 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['patch', 'put']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
             ->contain(['Categories'])
             ->where(['Activities.id' => $id, 'Activities.deleted IS' => null])
             ->first();
+
+        // Permissão de acordo com o tipo — mesma resposta para "não existe" e "não
+        // pode", para não revelar nada a quem não tem acesso.
+        $permissao = ($activity->camping_id ?? null) !== null ? 'acampamentos' : 'eventos';
+        $identity = $this->requirePermissao($permissao);
+        if ($identity instanceof Response) return $identity;
 
         if (!$activity) return $this->apiError('Atividade não encontrada', 404);
 
@@ -387,7 +393,7 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['delete']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('excluir_atividades');
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
@@ -411,7 +417,7 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['patch']);
 
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('atividades');
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
@@ -570,7 +576,8 @@ class ActivitiesController extends ApiController
             'servo_geral'  => $servoGeralData,
             'servos_inscritos' => $servosInscritos,
             'meu_papel'    => [
-                'is_admin'           => (bool)$identity->is_admin,
+                // "Admin" desta tela = quem tem a permissão Equipes de Servos no painel.
+                'is_admin'           => $this->temPermissao($identity, 'equipes'),
                 'is_servo_geral'     => $souGeral,
                 'lidera_setores_ids' => $myAcsCoordIds,
             ],
@@ -581,7 +588,7 @@ class ActivitiesController extends ApiController
     public function addSector(int $id): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('equipes');
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
@@ -631,7 +638,7 @@ class ActivitiesController extends ApiController
     public function updateSector(int $activityId, int $acsId): Response
     {
         $this->request->allowMethod(['patch', 'put']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('equipes');
         if ($identity instanceof Response) return $identity;
 
         $acs = $this->ActivitiesCategoriesSectors->find()
@@ -658,7 +665,7 @@ class ActivitiesController extends ApiController
     public function deleteSector(int $activityId, int $acsId): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('equipes');
         if ($identity instanceof Response) return $identity;
 
         $acs = $this->ActivitiesCategoriesSectors->find()
@@ -752,7 +759,7 @@ class ActivitiesController extends ApiController
         $identity = $this->requireCanManageSector($activityId, $acsId);
         if ($identity instanceof Response) return $identity;
 
-        if (!$identity->is_admin && $identity->id === $userId) {
+        if (!$this->temPermissao($identity, 'equipes') && $identity->id === $userId) {
             return $this->apiError('Você não pode remover a si mesmo desta equipe. Peça para outro líder, o servo geral ou um administrador fazer isso.', 403);
         }
 
@@ -778,7 +785,7 @@ class ActivitiesController extends ApiController
     public function addGeneralServant(int $id): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('equipes');
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -825,7 +832,7 @@ class ActivitiesController extends ApiController
     public function removeGeneralServant(int $id, int $userId): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('equipes');
         if ($identity instanceof Response) return $identity;
 
         $this->ActivitiesGeneralServants->deleteAll(['activity_id' => $id, 'user_id' => $userId]);
@@ -1006,30 +1013,30 @@ class ActivitiesController extends ApiController
             ->toArray();
     }
 
-    // Admin ou servo geral daquela atividade
+    // Quem tem a permissão "Equipes de Servos" no painel, ou o servo geral daquela atividade
     private function requireAdminOrGeneral(int $activityId): mixed
     {
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
-        if ($identity->is_admin || $this->isGeneralServant($activityId, $identity->id)) {
+        if ($this->temPermissao($identity, 'equipes') || $this->isGeneralServant($activityId, $identity->id)) {
             return $identity;
         }
-        return $this->apiError('Acesso restrito a administradores ou ao servo geral desta atividade', 403);
+        return $this->apiError('Acesso restrito ao servo geral desta atividade', 403);
     }
 
-    // Admin, servo geral da atividade, ou líder do setor específico
+    // Permissão "Equipes de Servos", servo geral da atividade, ou líder do setor específico
     private function requireCanManageSector(int $activityId, int $acsId): mixed
     {
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
         if (
-            $identity->is_admin
+            $this->temPermissao($identity, 'equipes')
             || $this->isGeneralServant($activityId, $identity->id)
             || $this->isSectorCoordinator($acsId, $identity->id)
         ) {
             return $identity;
         }
-        return $this->apiError('Acesso restrito a administradores, servo geral ou líder deste setor', 403);
+        return $this->apiError('Acesso restrito ao servo geral ou ao líder deste setor', 403);
     }
 
     // ─── Helpers privados ──────────────────────────────────────────────────

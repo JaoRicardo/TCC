@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controller\Api;
 
 use App\Controller\AppController;
+use App\Service\PermissoesService;
 use Cake\Http\Response;
 
 abstract class ApiController extends AppController
@@ -83,29 +84,32 @@ abstract class ApiController extends AppController
         return $identity;
     }
 
-    protected function requireAdmin(): mixed
+    /**
+     * Exige a permissão de uma tela do painel (ver PermissoesService::TELAS).
+     * A mensagem é neutra de propósito: quem tem acesso limitado não deve
+     * perceber que existe algo que ele não pode ver.
+     */
+    protected function requirePermissao(string $chave): mixed
     {
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) {
             return $identity;
         }
-        if (!$identity->is_admin) {
-            return $this->apiError('Acesso restrito a administradores', 403);
+        if (!$this->temPermissao($identity, $chave)) {
+            return $this->apiError('Não foi possível concluir esta ação.', 403);
         }
         return $identity;
     }
 
-    // Conselheiro (`is_counselor`) acompanha o sorteio e chama suplentes para vagas
-    // abertas. Os demais cargos ainda vão ser revistos.
-    protected function requireAdminOrCounselor(): mixed
+    protected function temPermissao(object $identity, string $chave): bool
     {
-        $identity = $this->requireIdentity();
-        if ($identity instanceof Response) {
-            return $identity;
-        }
-        if (!$identity->is_admin && !$identity->is_counselor) {
-            return $this->apiError('Acesso restrito a administradores e conselheiros', 403);
-        }
-        return $identity;
+        return $this->permissoes()->tem($identity, $chave);
     }
+
+    protected function permissoes(): PermissoesService
+    {
+        return $this->permissoesService ??= new PermissoesService();
+    }
+
+    private ?PermissoesService $permissoesService = null;
 }

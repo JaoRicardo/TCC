@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Test\TestCase\Regras;
 
 use App\Service\MercadoPagoService;
+use App\Service\PermissoesService;
 use App\Service\PrazoFormularioService;
 use App\Service\SorteioService;
 use Cake\Datasource\EntityInterface;
@@ -208,7 +209,7 @@ class PrazoPagamentoTest extends RegrasTestCase
         $this->assertContains($titularId, array_column($quadro['desclassificados'], 'user_id'));
     }
 
-    public function testSoAdministradorOuConselheiroChamaOProximo(): void
+    public function testSoQuemTemAcessoAInscritosESorteiosChamaOProximo(): void
     {
         $fac = $this->facComTaxa($this->ontem());
         $this->titular($fac, 'Não pagou');
@@ -219,9 +220,15 @@ class PrazoPagamentoTest extends RegrasTestCase
         $this->chamarProximo($fac, $chamar, $this->criarUsuario('Usuário comum', idade: 30));
         $this->assertResponseCode(403);
 
+        // Conselheiro sem a tela Inscritos e Sorteios liberada também não chama.
         $conselheiro = $this->criarUsuario('Conselheiro', idade: 50);
         $conselheiro->is_counselor = true;
         $this->fetchTable('Users')->saveOrFail($conselheiro);
+        (new PermissoesService())->definir((int)$conselheiro->id, ['formularios']);
+        $this->chamarProximo($fac, $chamar, $conselheiro);
+        $this->assertResponseCode(403);
+
+        (new PermissoesService())->definir((int)$conselheiro->id, ['inscricoes']);
         $this->chamarProximo($fac, $chamar, $conselheiro);
         $this->assertResponseOk();
     }

@@ -171,7 +171,7 @@ class InscricoesController extends ApiController
     public function adminList(int $activityId): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $subs = $this->PreRegistrations->find()
@@ -219,7 +219,7 @@ class InscricoesController extends ApiController
     public function indicate(int $activityId): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $preRegId = $this->request->getData('pre_registration_id');
@@ -268,7 +268,7 @@ class InscricoesController extends ApiController
     public function removeIndication(int $id): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
         $preReg = $this->PreRegistrations->find()

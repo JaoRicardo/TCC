@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { apiFetch } from '$lib/api';
+	import { pode } from '$lib/permissoes';
 	import {
 		getEquipesAtividade,
 		addSectorMember,
@@ -292,8 +293,10 @@
 			<section class="card">
 				<h3>Vincular setor a esta atividade</h3>
 				<p class="hint">
-					Setores já cadastrados para a categoria desta atividade, mas ainda não usados nesta edição. Cadastre novos
-					setores ou vincule-os a categorias em <a href="/admin/setores">Setores de Servos</a>.
+					Setores já cadastrados para a categoria desta atividade, mas ainda não usados nesta edição.
+					{#if pode('setores')}
+						Cadastre novos setores ou vincule-os a categorias em <a href="/admin/setores">Setores de Servos</a>.
+					{/if}
 				</p>
 				{#each equipes.setores.filter((s) => !s.linked) as setor}
 					<div class="add-row disponivel-row">

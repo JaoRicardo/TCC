@@ -6,6 +6,7 @@ namespace App\Controller\Api;
 use AllowDynamicProperties;
 use App\Controller\AppController;
 use App\Service\JwtService;
+use App\Service\PermissoesService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -167,6 +168,8 @@ class AuthController extends AppController
             'is_admin' => $user->is_admin,
             'is_counselor' => $user->is_counselor,
             'photo' => $user->photo,
+            // Telas do painel que a pessoa pode ver (o menu é montado só com elas).
+            'permissoes' => (new PermissoesService())->daPessoa($user),
         ];
     }
 }

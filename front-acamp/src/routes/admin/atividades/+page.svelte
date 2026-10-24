@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { getActivities, deleteActivity as apiDeleteActivity } from '$lib/services/activityService';
 	import type { Activity } from '$lib/types/models';
+	import { pode } from '$lib/permissoes';
 
 	let activities: Activity[] = $state([]);
 	let loading = $state(true);
@@ -107,19 +108,26 @@
 						<td>{activity.place || 'A definir'}</td>
 						<td class="actions-cell">
 							<a href="/dashboard/atividades/{activity.id}" class="action-btn view-btn" title="Ver Detalhes">👁️</a>
-							<a href="/admin/inscricoes/{activity.id}" class="action-btn subs-btn" title="Ver Inscritos">📋</a>
-							{#if activity.activitable_type === 'Campings'}
+							<!-- Cada ação só aparece para quem tem a tela liberada. -->
+							{#if pode('inscricoes')}
+								<a href="/admin/inscricoes/{activity.id}" class="action-btn subs-btn" title="Ver Inscritos">📋</a>
+							{/if}
+							{#if activity.activitable_type === 'Campings' && pode('equipes')}
 								<a href="/dashboard/equipes/{activity.id}" class="action-btn team-btn" title="Gerenciar Equipe de Servos">👥</a>
 							{/if}
 
 							{#if activity.activitable_type === 'Campings'}
-								<a href="/admin/acampamentos/editar/{activity.id}" class="action-btn edit-btn" title="Editar Acampamento">✏️</a>
-							{:else}
+								{#if pode('acampamentos')}
+									<a href="/admin/acampamentos/editar/{activity.id}" class="action-btn edit-btn" title="Editar Acampamento">✏️</a>
+								{/if}
+							{:else if pode('eventos')}
 								<!-- Futuro: Editar Evento genérico -->
 								<button class="action-btn edit-btn disabled" title="Em breve" disabled>✏️</button>
 							{/if}
-							
-							<button class="action-btn delete-btn" title="Excluir Atividade" onclick={() => deleteActivity(activity.id, activity.name)}>🗑️</button>
+
+							{#if pode('excluir_atividades')}
+								<button class="action-btn delete-btn" title="Excluir Atividade" onclick={() => deleteActivity(activity.id, activity.name)}>🗑️</button>
+							{/if}
 						</td>
 					</tr>
 				{/each}

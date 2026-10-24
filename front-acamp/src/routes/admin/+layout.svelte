@@ -1,16 +1,24 @@
 <script lang="ts">
 	import { auth } from '$lib/stores/auth.svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
+	import { MENU_DO_PAINEL, acessaPainel, pode, podeAbrir, primeiraTela } from '$lib/permissoes';
 	
 	let { children } = $props();
+
+	// A tela atual está liberada para a pessoa? Se não estiver, ela volta sem aviso
+	// para a primeira tela que pode ver — ninguém recebe "sem permissão".
+	let telaLiberada = $derived(!auth.isLoading && acessaPainel() && podeAbrir($page.url.pathname));
 
 	$effect(() => {
 		if (!auth.isLoading) {
 			if (!auth.isAuthenticated) {
 				window.location.href = '/login';
-			} else if (!auth.user?.is_admin) {
-				// Se não for admin, chuta de volta pro dashboard comum
+			} else if (!acessaPainel()) {
+				// Sem nenhuma tela liberada, o painel não existe para a pessoa.
 				window.location.href = '/dashboard';
+			} else if (!podeAbrir($page.url.pathname)) {
+				goto(primeiraTela() ?? '/dashboard', { replaceState: true });
 			}
 		}
 	});
@@ -25,7 +33,7 @@
 	<title>Administração | Acampamento São Miguel</title>
 </svelte:head>
 
-{#if auth.isLoading || !auth.isAuthenticated || !auth.user?.is_admin}
+{#if !telaLiberada}
 	<div class="loading-state">
 		<div class="spinner"></div>
 		<p>Verificando credenciais...</p>
@@ -41,12 +49,11 @@
 				<ul class="nav-list">
 					<li><a href="/dashboard" class="nav-item">← Voltar ao site</a></li>
 					<li class="divider"></li>
-					<li><a href="/admin/usuarios" class="nav-item {$page.url.pathname.includes('/usuarios') ? 'active' : ''}">Gestão de Usuários</a></li>
-					<li><a href="/admin/eventos/criar" class="nav-item {$page.url.pathname.includes('/eventos') ? 'active' : ''}">Criar Evento</a></li>
-					<li><a href="/admin/acampamentos/criar" class="nav-item {$page.url.pathname.includes('/acampamentos') ? 'active' : ''}">Criar Acampamento</a></li>
-					<li><a href="/admin/atividades" class="nav-item {$page.url.pathname.includes('/atividades') ? 'active' : ''}">Gestão de Atividades</a></li>
-					<li><a href="/admin/setores" class="nav-item {$page.url.pathname.includes('/setores') ? 'active' : ''}">Setores de Servos</a></li>
-					<li><a href="/admin/formularios" class="nav-item {$page.url.pathname.includes('/formularios') ? 'active' : ''}">Formulários</a></li>
+					{#each MENU_DO_PAINEL.filter((item) => pode(item.chave)) as item}
+						<li>
+							<a href={item.caminho} class="nav-item {$page.url.pathname.startsWith(item.caminho.replace('/criar', '')) ? 'active' : ''}">{item.nome}</a>
+						</li>
+					{/each}
 				</ul>
 			</nav>
 			<div class="sidebar-footer">
@@ -54,7 +61,7 @@
 					<div class="avatar">{auth.user.name?.charAt(0).toUpperCase()}</div>
 					<div class="details">
 						<span class="name">{auth.user.name?.split(' ')[0]}</span>
-						<span class="role">Administrador</span>
+						<span class="role">{auth.user.is_admin ? 'Administrador' : 'Conselheiro'}</span>
 					</div>
 				</div>
 			</div>

@@ -46,6 +46,35 @@ export async function toggleUserRole(userId: number, roleType: 'is_admin' | 'is_
     return { success: false, error: data.error || 'Erro ao atualizar privilégio' };
 }
 
+export interface ItemPermissao {
+    chave: string;
+    nome: string;
+    descricao: string;
+    /** Tela que precisa estar ligada junto (ex.: Inscritos e Sorteios abre pela lista de atividades). */
+    depende_de: string | null;
+}
+
+export async function getPermissoes(userId: number): Promise<{ catalogo?: ItemPermissao[], ativas?: string[], error?: string }> {
+    const res = await apiFetch(`/admin/users/${userId}/permissoes`);
+    const data = await res.json();
+    if (res.ok) {
+        return { catalogo: data.data.catalogo, ativas: data.data.ativas };
+    }
+    return { error: data.error || 'Erro ao carregar as permissões' };
+}
+
+export async function salvarPermissoes(userId: number, permissoes: string[]): Promise<{ ativas?: string[], error?: string }> {
+    const res = await apiFetch(`/admin/users/${userId}/permissoes`, {
+        method: 'PUT',
+        body: JSON.stringify({ permissoes })
+    });
+    const data = await res.json();
+    if (res.ok) {
+        return { ativas: data.data.ativas };
+    }
+    return { error: data.error || 'Erro ao salvar as permissões' };
+}
+
 export async function deactivateUser(userId: number): Promise<{ success: boolean, error?: string }> {
     if (USE_MOCKS) {
         await new Promise(resolve => setTimeout(resolve, 300));

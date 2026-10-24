@@ -5,6 +5,8 @@ export interface User {
     cpf: string;
     is_admin: boolean;
     is_counselor: boolean;
+    /** Telas do painel liberadas (só vem no cadastro da própria pessoa). */
+    permissoes?: string[];
     birthday?: string;
     phone?: string;
     created?: string;

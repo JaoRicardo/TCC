@@ -29,7 +29,7 @@ class QuestionsController extends ApiController
     public function index(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $categoryId       = intval($this->request->getQuery('category_id') ?? 0);
@@ -59,7 +59,7 @@ class QuestionsController extends ApiController
     public function add(): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $data             = $this->request->getData();
@@ -129,7 +129,7 @@ class QuestionsController extends ApiController
     public function edit(int $id): Response
     {
         $this->request->allowMethod(['patch', 'put']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $question = $this->Questions->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -178,7 +178,7 @@ class QuestionsController extends ApiController
     public function delete(int $id): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $question = $this->Questions->find()->contain(['Options'])->where(['Questions.id' => $id, 'Questions.deleted IS' => null])->first();
@@ -199,7 +199,7 @@ class QuestionsController extends ApiController
     public function secoes(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $secoes = $this->Sections->find()->where(['deleted IS' => null])->orderBy(['order' => 'ASC'])->all();
@@ -213,7 +213,7 @@ class QuestionsController extends ApiController
     public function criarSecao(): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $titulo = trim((string)($this->request->getData('titulo') ?? ''));
@@ -235,7 +235,7 @@ class QuestionsController extends ApiController
     public function editarSecao(int $id): Response
     {
         $this->request->allowMethod(['patch', 'put']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $secao = $this->Sections->find()->where(['id' => $id, 'deleted IS' => null])->first();
@@ -256,7 +256,7 @@ class QuestionsController extends ApiController
     public function excluirSecao(int $id): Response
     {
         $this->request->allowMethod(['delete']);
-        $identity = $this->requireAdmin();
+        $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
         $count = $this->Questions->find()->where(['section_id' => $id, 'deleted IS' => null])->count();

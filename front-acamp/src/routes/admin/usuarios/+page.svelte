@@ -1,8 +1,88 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { getUsers, toggleUserRole, deactivateUser } from '$lib/services/userService';
+	import {
+		getUsers,
+		toggleUserRole,
+		deactivateUser,
+		getPermissoes,
+		salvarPermissoes,
+		type ItemPermissao
+	} from '$lib/services/userService';
 	import type { User } from '$lib/types/models';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { pode } from '$lib/permissoes';
+
+	// Cargos e a janela de permissões só aparecem para quem gerencia permissões.
+	let gerenciaPermissoes = $derived(pode('permissoes'));
+
+	// Janela "Permissões" de uma pessoa.
+	let editando: User | null = $state(null);
+	let catalogo: ItemPermissao[] = $state([]);
+	let marcadas: string[] = $state([]);
+	let carregandoPermissoes = $state(false);
+	let salvandoPermissoes = $state(false);
+	let erroPermissoes = $state('');
+
+	async function abrirPermissoes(user: User) {
+		editando = user;
+		erroPermissoes = '';
+		carregandoPermissoes = true;
+		const res = await getPermissoes(user.id);
+		carregandoPermissoes = false;
+		if (res.error) {
+			erroPermissoes = res.error;
+			return;
+		}
+		catalogo = res.catalogo ?? [];
+		marcadas = res.ativas ?? [];
+	}
+
+	function fecharPermissoes() {
+		editando = null;
+	}
+
+	// A própria pessoa não pode tirar de si a permissão de gerenciar permissões.
+	function travada(chave: string) {
+		return editando?.id === auth.user?.id && (chave === 'permissoes' || chave === 'usuarios');
+	}
+
+	// Ligar uma tela liga também a tela por onde ela se abre; desligar essa tela
+	// desliga as que dependem dela.
+	function alternar(chave: string) {
+		if (travada(chave)) return;
+		if (marcadas.includes(chave)) {
+			const dependentes = catalogo.filter((i) => i.depende_de === chave).map((i) => i.chave);
+			marcadas = marcadas.filter((c) => c !== chave && !dependentes.includes(c));
+		} else {
+			const base = catalogo.find((i) => i.chave === chave)?.depende_de;
+			marcadas = [...marcadas, chave, ...(base && !marcadas.includes(base) ? [base] : [])];
+		}
+	}
+
+	function ativarTudo() {
+		marcadas = catalogo.map((i) => i.chave);
+	}
+
+	function desativarTudo() {
+		marcadas = catalogo.map((i) => i.chave).filter((c) => travada(c));
+	}
+
+	async function confirmarPermissoes() {
+		if (!editando) return;
+		salvandoPermissoes = true;
+		erroPermissoes = '';
+		const res = await salvarPermissoes(editando.id, marcadas);
+		salvandoPermissoes = false;
+		if (res.error) {
+			erroPermissoes = res.error;
+			return;
+		}
+		// Mudou as próprias permissões: atualiza o menu na hora.
+		if (editando.id === auth.user?.id) {
+			await auth.verifyToken();
+		}
+		editando = null;
+	}
 
 	let users: User[] = $state([]);
 	let loading = $state(true);
@@ -94,8 +174,10 @@
 					<th>Telefone</th>
 					<th>Nascimento</th>
 					<th>Cadastro</th>
-					<th class="center">Conselheiro</th>
-					<th class="center">Admin</th>
+					{#if gerenciaPermissoes}
+						<th class="center">Conselheiro</th>
+						<th class="center">Admin</th>
+					{/if}
 					<th class="center">Ações</th>
 				</tr>
 			</thead>
@@ -115,6 +197,7 @@
 						<td><span class="mono">{user.phone || '-'}</span></td>
 						<td><span class="date">{user.birthday ? new Date(user.birthday + 'T12:00:00Z').toLocaleDateString('pt-BR') : '-'}</span></td>
 						<td><span class="date">{user.created ? new Date(user.created).toLocaleDateString('pt-BR') : '-'}</span></td>
+						{#if gerenciaPermissoes}
 						<td class="center">
 							<label class="toggle-switch" class:disabled={user.id === auth.user?.id}>
 								<input 
@@ -137,8 +220,14 @@
 								<span class="slider"></span>
 							</label>
 						</td>
-						<td class="center">
-							<button 
+						{/if}
+						<td class="center actions-cell">
+							{#if gerenciaPermissoes && (user.is_admin || user.is_counselor)}
+								<button class="perm-btn" onclick={() => abrirPermissoes(user)} title="Escolher as telas que a pessoa acessa">
+									Permissões
+								</button>
+							{/if}
+							<button
 								class="delete-btn" 
 								disabled={user.id === auth.user?.id}
 								onclick={() => handleDeactivate(user.id, user.name)}
@@ -152,11 +241,70 @@
 				
 				{#if users.length === 0}
 					<tr>
-						<td colspan="9" class="empty-state">Nenhum usuário encontrado.</td>
+						<td colspan={gerenciaPermissoes ? 9 : 7} class="empty-state">Nenhum usuário encontrado.</td>
 					</tr>
 				{/if}
 			</tbody>
 		</table>
+	</div>
+{/if}
+
+{#if editando}
+	<div class="modal-fundo" role="presentation" onclick={fecharPermissoes}>
+		<div
+			class="modal"
+			role="dialog"
+			aria-modal="true"
+			aria-labelledby="titulo-permissoes"
+			tabindex="-1"
+			onclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => e.key === 'Escape' && fecharPermissoes()}
+		>
+			<h3 id="titulo-permissoes">Permissões de {editando.name}</h3>
+			<p class="text-muted">Marque as telas do painel que esta pessoa pode ver e usar.</p>
+
+			{#if carregandoPermissoes}
+				<p class="text-muted">Carregando...</p>
+			{:else}
+				<div class="perm-atalhos">
+					<button class="atalho" onclick={ativarTudo} disabled={salvandoPermissoes}>Ativar tudo</button>
+					<button class="atalho" onclick={desativarTudo} disabled={salvandoPermissoes}>Desativar tudo</button>
+				</div>
+
+				<ul class="perm-lista">
+					{#each catalogo as item}
+						<li>
+							<label class="perm-item" class:perm-item--travada={travada(item.chave)}>
+								<input
+									type="checkbox"
+									checked={marcadas.includes(item.chave)}
+									disabled={travada(item.chave) || salvandoPermissoes}
+									onchange={() => alternar(item.chave)}
+								/>
+								<span>
+									<strong>{item.nome}</strong>
+									<small>{item.descricao}</small>
+									{#if travada(item.chave)}
+										<small class="perm-aviso">Você não pode tirar esta de si mesmo.</small>
+									{/if}
+								</span>
+							</label>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
+			{#if erroPermissoes}
+				<p class="perm-erro">{erroPermissoes}</p>
+			{/if}
+
+			<div class="modal-acoes">
+				<button class="cancelar" onclick={fecharPermissoes} disabled={salvandoPermissoes}>Cancelar</button>
+				<button class="salvar" onclick={confirmarPermissoes} disabled={salvandoPermissoes || carregandoPermissoes}>
+					{salvandoPermissoes ? 'Salvando...' : 'Salvar'}
+				</button>
+			</div>
+		</div>
 	</div>
 {/if}
 
@@ -380,6 +528,158 @@
 	}
 	.delete-btn:disabled {
 		opacity: 0.5;
+		cursor: not-allowed;
+	}
+
+	.actions-cell {
+		white-space: nowrap;
+	}
+
+	.perm-btn {
+		background-color: #eff6ff;
+		color: #1d4ed8;
+		border: 1px solid #93c5fd;
+		padding: 0.4rem 0.8rem;
+		border-radius: 6px;
+		font-size: 0.8rem;
+		font-weight: 600;
+		cursor: pointer;
+		margin-right: 0.4rem;
+	}
+	.perm-btn:hover {
+		background-color: #dbeafe;
+	}
+
+	/* Janela de permissões */
+	.modal-fundo {
+		position: fixed;
+		inset: 0;
+		background: rgba(15, 23, 42, 0.45);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		padding: 1rem;
+		z-index: 50;
+	}
+
+	.modal {
+		background: #fff;
+		border-radius: 12px;
+		width: 100%;
+		max-width: 560px;
+		max-height: 90vh;
+		overflow-y: auto;
+		padding: 1.5rem;
+		box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+	}
+
+	.modal h3 {
+		margin: 0 0 0.3rem 0;
+		color: #111827;
+	}
+
+	.perm-atalhos {
+		display: flex;
+		gap: 0.5rem;
+		margin: 1rem 0 0.75rem;
+	}
+
+	.atalho {
+		background: #f3f4f6;
+		border: 1px solid #d1d5db;
+		color: #374151;
+		padding: 0.4rem 0.8rem;
+		border-radius: 6px;
+		font-size: 0.85rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.atalho:hover:not(:disabled) {
+		background: #e5e7eb;
+	}
+
+	.perm-lista {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+	}
+
+	.perm-item {
+		display: flex;
+		gap: 0.75rem;
+		align-items: flex-start;
+		padding: 0.7rem 0.85rem;
+		border: 1px solid #e5e7eb;
+		border-radius: 8px;
+		cursor: pointer;
+	}
+	.perm-item:hover {
+		background: #f9fafb;
+	}
+	.perm-item input {
+		margin-top: 0.2rem;
+		width: 18px;
+		height: 18px;
+		accent-color: #1c8b6b;
+		flex-shrink: 0;
+	}
+	.perm-item span {
+		display: flex;
+		flex-direction: column;
+		gap: 0.15rem;
+	}
+	.perm-item strong {
+		color: #111827;
+		font-size: 0.95rem;
+	}
+	.perm-item small {
+		color: #6b7280;
+		font-size: 0.82rem;
+	}
+	.perm-item--travada {
+		cursor: not-allowed;
+		background: #f9fafb;
+	}
+	.perm-aviso {
+		color: #92400e !important;
+	}
+
+	.perm-erro {
+		color: #dc2626;
+		margin: 0.75rem 0 0;
+	}
+
+	.modal-acoes {
+		display: flex;
+		justify-content: flex-end;
+		gap: 0.5rem;
+		margin-top: 1.25rem;
+	}
+
+	.cancelar,
+	.salvar {
+		padding: 0.55rem 1.1rem;
+		border-radius: 6px;
+		font-weight: 600;
+		cursor: pointer;
+		font-size: 0.9rem;
+	}
+	.cancelar {
+		background: #fff;
+		border: 1px solid #d1d5db;
+		color: #374151;
+	}
+	.salvar {
+		background: #1c8b6b;
+		border: 1px solid #1c8b6b;
+		color: #fff;
+	}
+	.salvar:disabled,
+	.cancelar:disabled {
+		opacity: 0.6;
 		cursor: not-allowed;
 	}
 </style>
