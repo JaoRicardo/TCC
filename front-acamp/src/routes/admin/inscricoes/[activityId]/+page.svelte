@@ -508,7 +508,7 @@
 					<ul class="raffle-list">
 						{#each sorteio.servos.alocados_manualmente as p}
 							<li class="indicado-item">
-								<span>{p.nome} <span class="tag-mini tag-metodo">{p.setor}</span></span>
+								<span>{p.nome} <span class="tag-mini tag-metodo">{p.lider ? `líder · ${p.setor}` : p.setor}</span></span>
 							</li>
 						{/each}
 					</ul>

@@ -757,13 +757,15 @@ class SorteioService
 
         // Servos colocados manualmente numa equipe (líder/geral/admin, via a tela de
         // montagem de equipe) já têm vaga garantida naquele setor — não devem aparecer
-        // como "não sorteados" aqui, mesmo sem terem passado pelo sorteio.
+        // como "não sorteados" aqui, mesmo sem terem passado pelo sorteio. Líderes de
+        // setor entram aqui também. Quem for removido da equipe sai desta lista e
+        // volta sozinho para "não sorteados" (ela é montada na hora, a cada consulta).
         $alocacoesManuais = $this->AcsSectorsUsers->find()
             ->contain(['Users', 'ActivitiesCategoriesSectors' => ['CategoriesSectors' => ['Sectors']]])
             ->where([
-                'ActivitiesCategoriesSectors.activity_id'    => $activityId,
-                'ActivitiesCategoriesSectorsUsers.is_coordinator' => false,
-                'ActivitiesCategoriesSectorsUsers.is_indicated'   => true,
+                'ActivitiesCategoriesSectors.activity_id'      => $activityId,
+                'ActivitiesCategoriesSectors.deleted IS'       => null,
+                'ActivitiesCategoriesSectorsUsers.is_indicated' => true,
             ])
             ->all()
             ->toArray();
@@ -773,6 +775,7 @@ class SorteioService
         foreach ($alocacoesManuais as $am) {
             $item          = $this->serializeServoItem($am->user, 0);
             $item['setor'] = $am->activities_categories_sector->categories_sector->sector->name ?? '';
+            $item['lider'] = (bool)$am->is_coordinator;
             $alocadosManualmente[] = $item;
             $manuallyPlacedUserIds[$am->user_id] = true;
         }
@@ -840,10 +843,10 @@ class SorteioService
         $anyDrawn     = false;
 
         foreach ($acsRecords as $acs) {
+            // Mesma conta do realizarServos(): líder também ocupa vaga.
             $jaIndicadosNoSetor = $this->AcsSectorsUsers->find()
                 ->where([
                     'activities_categories_sector_id' => $acs->id,
-                    'is_coordinator'                  => false,
                     'is_indicated'                     => true,
                 ])
                 ->count();

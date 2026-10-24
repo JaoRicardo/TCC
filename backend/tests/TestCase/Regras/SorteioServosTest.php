@@ -172,6 +172,115 @@ class SorteioServosTest extends RegrasTestCase
         $this->assertSame(3, $this->fetchTable('ActivitiesCategoriesSectorsUsers')->find()->count(), 'Ninguém pode cair em duas equipes.');
     }
 
+    /** Nomes que o quadro do sorteio (tela de Inscritos e Sorteios) mostra em cada lista. */
+    private function quadroDoSorteio(): array
+    {
+        $servos = (new SorteioService())->resultado((int)$this->atividade->id)['servos'];
+        $nomes = fn(array $lista) => array_column($lista, 'nome');
+
+        return [
+            'nao_sorteados' => $nomes($servos['nao_sorteados']),
+            'alocados' => $nomes($servos['alocados_manualmente']),
+            'vagas' => array_column($servos['setores'], 'vacancies', 'id'),
+        ];
+    }
+
+    public function testQuemFoiColocadoAMaoNaoApareceComoNaoSorteado(): void
+    {
+        $louvor = $this->criarSetor('Louvor', 4);
+        $this->colocarNaEquipe($louvor, $this->servoInscrito('Líder do louvor'), lider: true);
+        $this->colocarNaEquipe($louvor, $this->servoInscrito('Membro escolhido'));
+        for ($i = 1; $i <= 8; $i++) {
+            $this->servoInscrito("Servo {$i}");
+        }
+
+        (new SorteioService())->realizarServos((int)$this->atividade->id);
+
+        $quadro = $this->quadroDoSorteio();
+        $this->assertNotContains('Líder do louvor', $quadro['nao_sorteados']);
+        $this->assertNotContains('Membro escolhido', $quadro['nao_sorteados']);
+        $this->assertEqualsCanonicalizing(['Líder do louvor', 'Membro escolhido'], $quadro['alocados']);
+        // 4 vagas, 2 já ocupadas à mão: o quadro mostra as 2 que foram para sorteio.
+        $this->assertSame(2, $quadro['vagas'][$louvor->id]);
+        // 8 no sorteio: 2 titulares, 2 suplentes, sobram 4 não sorteados.
+        $this->assertCount(4, $quadro['nao_sorteados']);
+    }
+
+    public function testQuemERemovidoSemQuererVoltaParaNaoSorteados(): void
+    {
+        $louvor = $this->criarSetor('Louvor', 3);
+        $membro = $this->servoInscrito('Membro escolhido');
+        $geral = $this->servoInscrito('Servo geral');
+        $indicado = $this->servoInscrito('Indicado pela Base', ['selection_method_id' => $this->metodos['Base']]);
+        $this->colocarNaEquipe($louvor, $membro);
+        $this->autenticarComo($this->admin);
+        $this->post("/api/v1/activities/{$this->atividade->id}/general-servants", ['user_id' => $geral->id]);
+        $this->assertResponseSuccess();
+        for ($i = 1; $i <= 6; $i++) {
+            $this->servoInscrito("Servo {$i}");
+        }
+        (new SorteioService())->realizarServos((int)$this->atividade->id);
+
+        $equipe = $this->fetchTable('ActivitiesCategoriesSectorsUsers');
+        $sorteado = $this->fetchTable('Users')->get($equipe->find()
+            ->where(['activities_categories_sector_id' => $louvor->id, 'is_indicated' => false, 'is_substitute' => false])
+            ->firstOrFail()->user_id);
+        $inscricaoDoSorteado = $this->fetchTable('PreRegistrations')->find()->where(['user_id' => $sorteado->id])->firstOrFail();
+        $this->assertNotNull($inscricaoDoSorteado->selection_method_id);
+
+        $base = "/api/v1/activities/{$this->atividade->id}";
+        $this->autenticarComo($this->admin);
+        $this->delete("{$base}/sectors/{$louvor->id}/members/{$membro->id}");
+        $this->assertResponseSuccess();
+        $this->autenticarComo($this->admin);
+        $this->delete("{$base}/sectors/{$louvor->id}/members/{$sorteado->id}");
+        $this->assertResponseSuccess();
+        $this->autenticarComo($this->admin);
+        $this->delete("{$base}/general-servants/{$geral->id}");
+        $this->assertResponseSuccess();
+        $inscricaoDoIndicado = $this->fetchTable('PreRegistrations')->find()->where(['user_id' => $indicado->id])->firstOrFail();
+        $this->autenticarComo($this->admin);
+        $this->delete("/api/v1/inscricoes/{$inscricaoDoIndicado->id}/indicacao");
+        $this->assertResponseSuccess();
+
+        $naoSorteados = $this->quadroDoSorteio()['nao_sorteados'];
+        foreach ([$membro, $sorteado, $geral, $indicado] as $removido) {
+            $this->assertContains($removido->name, $naoSorteados, "{$removido->name} foi removido e sumiu do quadro.");
+        }
+        // A inscrição do sorteado removido não pode continuar dizendo "Sorteado".
+        $this->assertNull($this->recarregar($inscricaoDoSorteado)->selection_method_id);
+    }
+
+    public function testRemoverOSetorDevolveAsPessoasParaNaoSorteados(): void
+    {
+        $louvor = $this->criarSetor('Louvor', 2);
+        $recepcao = $this->criarSetor('Recepção', 2);
+        $membro = $this->servoInscrito('Membro escolhido');
+        $this->colocarNaEquipe($louvor, $membro);
+        for ($i = 1; $i <= 10; $i++) {
+            $this->servoInscrito("Servo {$i}");
+        }
+        (new SorteioService())->realizarServos((int)$this->atividade->id);
+
+        $sorteadosDoLouvor = $this->fetchTable('ActivitiesCategoriesSectorsUsers')->find()
+            ->where(['activities_categories_sector_id' => $louvor->id, 'is_indicated' => false])
+            ->all()->extract('user_id')->toArray();
+
+        $this->autenticarComo($this->admin);
+        $this->delete("/api/v1/activities/{$this->atividade->id}/sectors/{$louvor->id}");
+        $this->assertResponseSuccess();
+
+        $naoSorteados = $this->quadroDoSorteio()['nao_sorteados'];
+        $this->assertContains('Membro escolhido', $naoSorteados);
+        foreach ($sorteadosDoLouvor as $userId) {
+            $inscricao = $this->fetchTable('PreRegistrations')->find()->where(['user_id' => $userId])->firstOrFail();
+            $this->assertNull($inscricao->selection_method_id, 'Continua "Sorteado" num setor que não existe mais.');
+            $this->assertNull($inscricao->substitute_position, 'Continua "Suplente" num setor que não existe mais.');
+        }
+        $this->assertNotEmpty($sorteadosDoLouvor);
+        $this->assertArrayHasKey($recepcao->id, $this->quadroDoSorteio()['vagas']);
+    }
+
     public function testQuemJaEstaNumSetorNaoPodeSerColocadoEmOutro(): void
     {
         $louvor = $this->criarSetor('Louvor', 5);

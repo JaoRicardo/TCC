@@ -666,7 +666,15 @@ class ActivitiesController extends ApiController
             ->first();
         if (!$acs) return $this->apiError('Vínculo não encontrado', 404);
 
+        $pessoasDoSetor = $this->AcsSectorsUsers->find()
+            ->select(['user_id'])
+            ->where(['activities_categories_sector_id' => $acsId])
+            ->all()
+            ->extract('user_id')
+            ->toArray();
+
         $this->ActivitiesCategoriesSectors->updateAll(['deleted' => date('Y-m-d H:i:s')], ['id' => $acsId]);
+        $this->desfazerResultadoDoSorteio($activityId, $pessoasDoSetor);
 
         return $this->apiResponse(['deleted' => true]);
     }
@@ -753,10 +761,13 @@ class ActivitiesController extends ApiController
             ->first();
         if (!$acs) return $this->apiError('Setor não encontrado', 404);
 
-        $this->AcsSectorsUsers->deleteAll([
+        $removidas = $this->AcsSectorsUsers->deleteAll([
             'activities_categories_sector_id' => $acsId,
             'user_id'                         => $userId,
         ]);
+        if ($removidas > 0) {
+            $this->desfazerResultadoDoSorteio($activityId, [$userId]);
+        }
 
         return $this->apiResponse(['deleted' => true]);
     }
@@ -952,6 +963,37 @@ class ActivitiesController extends ApiController
                 'deleted IS'        => null,
             ]
         );
+    }
+
+    // Quem sai de uma equipe (removido, mesmo que sem querer, ou porque o setor
+    // foi tirado da atividade) volta para "não sorteados" no quadro do sorteio —
+    // e a inscrição também deixa de dizer "Sorteado"/"Suplente", senão a tabela
+    // de inscritos continuaria mostrando uma vaga que não existe mais. Indicação
+    // (Base/Forania/Conselho) não é mexida.
+    private function desfazerResultadoDoSorteio(int $activityId, array $userIds): void
+    {
+        if (empty($userIds)) return;
+
+        $inscricoes = [
+            'activity_id'       => $activityId,
+            'user_id IN'        => $userIds,
+            'subscription_type' => 'Servo',
+            'deleted IS'        => null,
+        ];
+        $this->PreRegistrations->updateAll(['substitute_position' => null], $inscricoes);
+
+        $metodoSorteio = $this->fetchTable('SelectionMethods')->find()
+            ->select(['id'])
+            ->where(['method' => 'Sorteio'])
+            ->all()
+            ->extract('id')
+            ->toArray();
+        if (!empty($metodoSorteio)) {
+            $this->PreRegistrations->updateAll(
+                ['selection_method_id' => null],
+                $inscricoes + ['selection_method_id IN' => $metodoSorteio]
+            );
+        }
     }
 
     private function acsIdsDaAtividade(int $activityId): array
