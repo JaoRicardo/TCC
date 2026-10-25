@@ -1,0 +1,691 @@
+/*
+ * Telas de acesso (login e criar conta), na identidade da São Miguel Arcanjo:
+ * a mesma da lista de acampamentos e eventos. Classes com prefixo "ac-"
+ * para não colidir com o CSS de outras telas depois de carregado.
+ */
+
+.ac-pagina {
+	--ouro: #b69e55;
+	--ouro-claro: #e2ce8a;
+	--ouro-texto: #7a6528;
+	--ouro-borda: #cdb878;
+	--azul: #1b2f5e;
+	--azul-noite: #0f1d3d;
+	--vermelho: #9b2c2c;
+	--marfim: #f7f2e7;
+	--pergaminho: #fffdf8;
+	--borda: #d9cca6;
+	--borda-suave: #e3d8bc;
+	--tinta: #1e2233;
+	--tinta-3: #4f5468;
+	--campo-borda: #a39363;
+	--anel-foco: rgba(182, 158, 85, 0.45);
+	--erro-fundo: #f6e2df;
+	--erro-borda: #e6bdb6;
+	--erro-texto: #842424;
+	--erro-campo-fundo: #fdf5f4;
+	--dourado-suave: #fbf6e6;
+	--botao-mostrar: #f4eedd;
+
+	min-height: 100vh;
+	display: flex;
+	flex-direction: column;
+	background: var(--marfim);
+	font-family: "Source Sans 3", system-ui, sans-serif;
+	color: var(--tinta);
+}
+
+.ac-pagina a,
+.ac-pagina button,
+.ac-pagina input,
+.ac-pagina select {
+	font-family: inherit;
+	box-sizing: border-box;
+}
+
+/* ─── Cabeçalho (igual ao da lista de eventos) ─────────────────── */
+.ac-cabecalho {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	flex-wrap: wrap;
+	padding: 10px clamp(16px, 3vw, 48px);
+	background: var(--pergaminho);
+	border-bottom: 1px solid var(--borda);
+	box-shadow:
+		0 3px 0 -1px #fffdf8,
+		0 4px 0 -1px #b69e55;
+}
+
+.ac-banner {
+	height: 56px;
+	width: auto;
+	display: block;
+}
+
+.ac-voltar {
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--azul);
+	text-decoration: none;
+	padding: 10px 4px;
+}
+
+.ac-voltar:hover {
+	text-decoration: underline;
+}
+
+/* ─── Card: formulário + painel de vitral ──────────────────────── */
+.ac-conteudo {
+	flex: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 40px 24px 56px;
+}
+
+.ac-card {
+	width: 100%;
+	display: grid;
+	background: var(--pergaminho);
+	border: 1px solid var(--borda-suave);
+	border-radius: 22px;
+	overflow: hidden;
+	box-shadow: 0 30px 60px -32px rgba(15, 29, 61, 0.5);
+}
+
+.ac-card--login {
+	max-width: 1040px;
+	grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr);
+}
+
+.ac-card--cadastro {
+	max-width: 1120px;
+	grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.75fr);
+}
+
+.ac-vitral {
+	position: relative;
+	min-height: 560px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background:
+		radial-gradient(circle at 20% 18%, rgba(214, 186, 104, 0.4), transparent 30%),
+		radial-gradient(circle at 75% 105%, rgba(31, 107, 110, 0.9), transparent 48%),
+		radial-gradient(circle at 100% 0%, rgba(155, 44, 44, 0.38), transparent 32%),
+		linear-gradient(160deg, #25407f 0%, #1b2f5e 48%, #0f1d3d 100%);
+	box-shadow:
+		inset 0 0 0 8px #0f1d3d,
+		inset 0 0 0 9px rgba(182, 158, 85, 0.75);
+}
+
+/* o "chumbo" que separa os vidros */
+.ac-vitral::before {
+	content: "";
+	position: absolute;
+	inset: 0;
+	background:
+		repeating-linear-gradient(45deg, transparent 0 46px, rgba(8, 14, 32, 0.34) 46px 48px),
+		repeating-linear-gradient(-45deg, transparent 0 46px, rgba(8, 14, 32, 0.34) 46px 48px);
+}
+
+.ac-arco {
+	position: relative;
+	width: 270px;
+	height: 340px;
+	border: 1px solid rgba(226, 206, 138, 0.8);
+	border-radius: 50% 50% 8px 8px / 36% 36% 8px 8px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: radial-gradient(circle at 50% 48%, rgba(226, 206, 138, 0.25), rgba(15, 29, 61, 0.55) 72%);
+	box-shadow:
+		inset 0 0 0 8px rgba(15, 29, 61, 0.45),
+		inset 0 0 0 9px rgba(226, 206, 138, 0.4),
+		0 0 0 6px rgba(15, 29, 61, 0.35);
+}
+
+.ac-arco img {
+	width: 250px;
+	height: auto;
+	display: block;
+	filter: brightness(1.2) drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
+}
+
+.ac-card--cadastro .ac-arco {
+	width: 240px;
+	height: 310px;
+}
+
+.ac-card--cadastro .ac-arco img {
+	width: 224px;
+}
+
+/* ─── Formulário ───────────────────────────────────────────────── */
+.ac-form {
+	display: flex;
+	flex-direction: column;
+	gap: 20px;
+	padding: 52px 56px 44px;
+}
+
+.ac-card--cadastro .ac-form {
+	gap: 18px;
+	padding: 44px 56px 40px;
+}
+
+.ac-titulos {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.ac-sobretitulo {
+	font-size: 13px;
+	font-weight: 700;
+	letter-spacing: 0.12em;
+	text-transform: uppercase;
+	color: var(--ouro-texto);
+}
+
+.ac-titulo {
+	margin: 0;
+	font: 600 48px / 1.05 "Cormorant Garamond", serif;
+	color: var(--azul);
+}
+
+.ac-card--cadastro .ac-titulo {
+	font-size: 44px;
+}
+
+.ac-subtitulo {
+	margin: 0;
+	font-size: 17px;
+	line-height: 1.45;
+	color: var(--tinta-3);
+}
+
+.ac-filete {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	margin-top: 6px;
+}
+
+.ac-filete::before {
+	content: "";
+	flex: 0 0 28px;
+	height: 1px;
+	background: var(--ouro);
+}
+
+.ac-filete span {
+	width: 6px;
+	height: 6px;
+	background: var(--ouro);
+	transform: rotate(45deg);
+}
+
+.ac-filete::after {
+	content: "";
+	flex: 1;
+	height: 1px;
+	background: var(--borda-suave);
+}
+
+/* "Inscrição em andamento": a pessoa veio do "Inscrever-se" */
+.ac-inscricao {
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+	padding: 12px 16px;
+	background: var(--dourado-suave);
+	border: 1px solid var(--ouro-claro);
+	border-radius: 10px;
+	font-size: 16px;
+	color: var(--tinta-3);
+}
+
+.ac-inscricao-rotulo {
+	font-size: 12px;
+	font-weight: 700;
+	letter-spacing: 0.1em;
+	text-transform: uppercase;
+	color: var(--ouro-texto);
+}
+
+.ac-inscricao-nome {
+	font: 600 22px / 1.15 "Cormorant Garamond", serif;
+	color: var(--azul);
+}
+
+.ac-erro {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+	background: var(--erro-fundo);
+	border: 1px solid var(--erro-borda);
+	color: var(--erro-texto);
+	border-radius: 10px;
+	padding: 12px 14px;
+	font-size: 16px;
+	font-weight: 600;
+}
+
+.ac-erro-icone {
+	flex: 0 0 24px;
+	height: 24px;
+	border-radius: 50%;
+	background: var(--vermelho);
+	color: var(--pergaminho);
+	font-size: 15px;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.ac-grade {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 18px 16px;
+}
+
+.ac-grade .ac-largo {
+	grid-column: 1 / -1;
+}
+
+.ac-campo {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	min-width: 0;
+}
+
+.ac-rotulo {
+	font-size: 16px;
+	font-weight: 600;
+	color: var(--tinta);
+}
+
+.ac-input {
+	width: 100%;
+	height: 56px;
+	padding: 0 16px;
+	font-size: 18px;
+	color: var(--tinta);
+	background: #ffffff;
+	border: 1.5px solid var(--campo-borda);
+	border-radius: 10px;
+	outline: none;
+}
+
+.ac-card--cadastro .ac-input {
+	height: 54px;
+}
+
+.ac-input::placeholder {
+	color: #8a8c99;
+}
+
+.ac-input:focus {
+	border-color: var(--azul);
+	box-shadow: 0 0 0 4px var(--anel-foco);
+}
+
+.ac-input[aria-invalid="true"] {
+	border-color: var(--vermelho);
+	background: var(--erro-campo-fundo);
+	box-shadow: 0 0 0 3px rgba(155, 44, 44, 0.12);
+}
+
+.ac-input[aria-invalid="true"]:focus {
+	box-shadow: 0 0 0 4px var(--anel-foco);
+}
+
+.ac-input:disabled {
+	opacity: 0.7;
+}
+
+/* select nativo com a seta desenhada em CSS */
+select.ac-input {
+	padding-right: 44px;
+	appearance: none;
+	-webkit-appearance: none;
+	cursor: pointer;
+	background-image:
+		linear-gradient(45deg, transparent 50%, #1b2f5e 50%),
+		linear-gradient(135deg, #1b2f5e 50%, transparent 50%);
+	background-position:
+		calc(100% - 24px) 50%,
+		calc(100% - 17px) 50%;
+	background-size: 7px 7px;
+	background-repeat: no-repeat;
+}
+
+select.ac-input.ac-vazio {
+	color: #6b6e7d;
+}
+
+.ac-msg-campo {
+	font-size: 15px;
+	font-weight: 600;
+	color: var(--vermelho);
+}
+
+.ac-msg-campo a {
+	color: var(--erro-texto);
+}
+
+/* Senha com o botão Mostrar/Ocultar dentro do campo */
+.ac-senha {
+	position: relative;
+}
+
+.ac-senha .ac-input {
+	padding-right: 104px;
+}
+
+.ac-mostrar {
+	position: absolute;
+	right: 6px;
+	top: 6px;
+	height: 44px;
+	min-width: 88px;
+	padding: 0 12px;
+	font-size: 15px;
+	font-weight: 700;
+	color: var(--azul);
+	background: var(--botao-mostrar);
+	border: none;
+	border-radius: 8px;
+	cursor: pointer;
+}
+
+.ac-card--cadastro .ac-mostrar {
+	right: 5px;
+	top: 5px;
+}
+
+.ac-mostrar:hover {
+	background: #ece2c6;
+}
+
+/* Sexo: dois botões em vez de select */
+.ac-opcoes {
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 8px;
+}
+
+.ac-opcao {
+	height: 54px;
+	font-size: 17px;
+	font-weight: 600;
+	color: var(--tinta);
+	background: #ffffff;
+	border: 1.5px solid var(--campo-borda);
+	border-radius: 10px;
+	cursor: pointer;
+}
+
+.ac-opcao:hover {
+	background: var(--dourado-suave);
+}
+
+.ac-opcao:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 4px var(--anel-foco);
+}
+
+.ac-opcao[aria-checked="true"] {
+	font-weight: 700;
+	color: var(--pergaminho);
+	background: var(--azul);
+	border-color: var(--azul);
+	box-shadow:
+		inset 0 0 0 2px #1b2f5e,
+		inset 0 0 0 3px rgba(226, 206, 138, 0.8);
+}
+
+.ac-opcoes.ac-com-erro .ac-opcao[aria-checked="false"] {
+	border-color: var(--vermelho);
+	background: var(--erro-campo-fundo);
+}
+
+/* ─── Botões ───────────────────────────────────────────────────── */
+.ac-btn-principal,
+.ac-btn-secundario {
+	height: 56px;
+	font-size: 18px;
+	border-radius: 999px;
+	cursor: pointer;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	transition: background 0.2s;
+}
+
+.ac-btn-principal {
+	margin-top: 6px;
+	font-weight: 700;
+	color: var(--azul-noite);
+	background: linear-gradient(180deg, #d6be72, #b69e55);
+	border: 1px solid #9c8642;
+	box-shadow: 0 6px 16px -8px rgba(122, 101, 40, 0.9);
+}
+
+.ac-btn-principal:hover {
+	background: var(--ouro);
+}
+
+/* carregando / enviando */
+.ac-btn-principal:disabled {
+	color: #3a3420;
+	background: #e3d6ae;
+	border-color: var(--ouro-borda);
+	box-shadow: none;
+	cursor: wait;
+}
+
+.ac-btn-secundario {
+	font-weight: 600;
+	color: var(--azul);
+	background: transparent;
+	border: 1.5px solid var(--azul);
+}
+
+.ac-btn-secundario:hover {
+	background: #eef1f7;
+}
+
+.ac-btn-secundario:disabled {
+	opacity: 0.6;
+	cursor: not-allowed;
+}
+
+.ac-botoes {
+	display: grid;
+	grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+	gap: 12px;
+	margin-top: 6px;
+}
+
+.ac-botoes .ac-btn-principal {
+	margin-top: 0;
+}
+
+.ac-spinner {
+	width: 18px;
+	height: 18px;
+	border-radius: 50%;
+	border: 2.5px solid rgba(15, 29, 61, 0.2);
+	border-top-color: #0f1d3d;
+	animation: ac-girar 0.9s linear infinite;
+}
+
+@keyframes ac-girar {
+	to {
+		transform: rotate(360deg);
+	}
+}
+
+.ac-rodape {
+	margin: 4px 0 0;
+	text-align: center;
+	font-size: 16px;
+	color: var(--tinta-3);
+}
+
+.ac-rodape a {
+	font-weight: 700;
+	color: var(--azul);
+	text-decoration: underline;
+	text-decoration-color: var(--ouro);
+	text-underline-offset: 3px;
+}
+
+.ac-rodape a:hover {
+	color: var(--ouro-texto);
+}
+
+/* ─── Criar conta: indicador de etapas ─────────────────────────── */
+.ac-etapas {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	font-size: 15px;
+	font-weight: 700;
+}
+
+.ac-etapa-num {
+	flex: 0 0 34px;
+	height: 34px;
+	border-radius: 50%;
+	font-size: 16px;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	box-sizing: border-box;
+}
+
+.ac-etapa-num.atual {
+	background: var(--azul);
+	color: var(--pergaminho);
+	box-shadow:
+		0 0 0 3px #fffdf8,
+		0 0 0 4px #b69e55;
+}
+
+.ac-etapa-num.feita {
+	background: var(--ouro);
+	color: var(--azul-noite);
+}
+
+.ac-etapa-num.pendente {
+	background: var(--pergaminho);
+	border: 1.5px solid var(--campo-borda);
+	color: var(--tinta-3);
+}
+
+.ac-etapa-nome.pendente {
+	color: var(--tinta-3);
+}
+
+.ac-etapa-linha {
+	flex: 1;
+	min-width: 24px;
+	height: 2px;
+	border-radius: 2px;
+	background: var(--borda-suave);
+}
+
+.ac-etapa-linha.feita {
+	background: var(--ouro);
+}
+
+/* ─── Criar conta: sucesso ─────────────────────────────────────── */
+.ac-sucesso {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	text-align: center;
+	gap: 18px;
+	padding: 64px 56px;
+	min-height: 560px;
+}
+
+.ac-sucesso-arco {
+	width: 96px;
+	height: 112px;
+	border: 1px solid var(--ouro-borda);
+	border-bottom: none;
+	border-radius: 50% 50% 0 0 / 40% 40% 0 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: radial-gradient(circle at 50% 55%, #fbf6e6, transparent 75%);
+}
+
+.ac-sucesso-check {
+	width: 56px;
+	height: 56px;
+	margin-top: 14px;
+	border-radius: 50%;
+	background: linear-gradient(180deg, #d6be72, #b69e55);
+	border: 1px solid #9c8642;
+	color: var(--azul-noite);
+	font-size: 28px;
+	font-weight: 700;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+}
+
+.ac-sucesso p {
+	margin: 0;
+	font-size: 18px;
+	color: var(--tinta-3);
+}
+
+.ac-progresso {
+	width: 240px;
+	height: 4px;
+	border-radius: 999px;
+	background: #ede5d1;
+	overflow: hidden;
+}
+
+/* anda até o redirecionamento (a duração vem da tela) */
+.ac-progresso span {
+	display: block;
+	height: 100%;
+	background: var(--ouro);
+	animation: ac-progresso linear forwards;
+}
+
+@keyframes ac-progresso {
+	from {
+		width: 0;
+	}
+	to {
+		width: 100%;
+	}
+}
+
+/* Celular ainda não tem layout próprio; sem o vitral o formulário cabe. */
+@media (max-width: 860px) {
+	.ac-card--login,
+	.ac-card--cadastro {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.ac-vitral {
+		display: none;
+	}
+}

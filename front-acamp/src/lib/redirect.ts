@@ -11,6 +11,15 @@ export function registroUrl(destino: string | null): string {
 }
 
 /**
+ * Id da atividade quando a pessoa veio do "Inscrever-se"
+ * (`/dashboard/atividades/19?inscrever=1`); null em qualquer outro caso.
+ */
+export function atividadeDaInscricao(destino: string | null): number | null {
+	const partes = destino ? /^\/dashboard\/atividades\/(\d+)\?(.*&)?inscrever=1/.exec(destino) : null;
+	return partes ? Number(partes[1]) : null;
+}
+
+/**
  * Só aceita caminhos deste próprio site — um `?redirect=https://outro-site`
  * não pode levar a pessoa para fora depois do login.
  */
