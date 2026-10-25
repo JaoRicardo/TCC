@@ -30,6 +30,20 @@ class AuthStore {
 		this.isAuthenticated = false;
 	}
 
+	// O login e o cadastro devolvem o usuário resumido; o perfil completo
+	// (estado civil, endereço) vem de /users/me e a tela de inscrição depende dele.
+	async refreshUser() {
+		try {
+			const response = await apiFetch('/users/me', { redirectOnUnauthorized: false });
+			if (response.ok) {
+				const data = await response.json();
+				this.user = data.user;
+			}
+		} catch (error) {
+			console.error("Erro ao carregar perfil:", error);
+		}
+	}
+
 	async verifyToken() {
 		this.isLoading = true;
 		try {
@@ -43,7 +57,7 @@ class AuthStore {
 				this.setToken(localToken);
 			}
 
-			const response = await apiFetch('/users/me');
+			const response = await apiFetch('/users/me', { redirectOnUnauthorized: false });
 			if (response.ok) {
 				const data = await response.json();
 				this.user = data.user;

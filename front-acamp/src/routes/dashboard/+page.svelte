@@ -4,6 +4,7 @@
 	import { getActivities } from "$lib/services/activityService";
 	import { getMinhasInscricoes } from "$lib/services/inscricaoService";
 	import { API_HOST } from "$lib/api";
+	import { loginUrl } from "$lib/redirect";
 	import type { Activity } from "$lib/types/models";
 	import { onMount } from "svelte";
 	import banner from "$lib/imgs/banner.png";
@@ -15,35 +16,45 @@
 	/** Formulários que o usuário precisa responder — vira o contador do menu. */
 	let formulariosPendentes = $state(0);
 
-	$effect(() => {
-		if (!auth.isLoading && !auth.isAuthenticated) {
-			window.location.href = "/login";
-		}
-	});
-
+	// A lista de atividades é pública: visitante vê tudo, e só precisa entrar
+	// (ou criar a conta) na hora de se inscrever.
 	onMount(async () => {
 		try {
-			const [activitiesRes, inscricoesRes] = await Promise.all([
-				getActivities(),
-				getMinhasInscricoes(),
-			]);
+			const activitiesRes = await getActivities();
 			if (!activitiesRes.error) {
 				activities = activitiesRes.activities;
 			}
-			const map: Record<number, string> = {};
-			for (const insc of inscricoesRes.inscricoes) {
-				if (insc.activity) map[insc.activity.id] = insc.status;
-			}
-			minhasInscricoesMap = map;
-			formulariosPendentes = inscricoesRes.inscricoes.filter(
-				(i) => i.temFormulario && i.formularioPendente,
-			).length;
 		} catch (e) {
 			console.error("Erro na API:", e);
 		} finally {
 			loading = false;
 		}
 	});
+
+	// As inscrições da pessoa só existem com login — espera a sessão salva ser
+	// conferida, senão o visitante levaria um 401 e iria parar no login.
+	let inscricoesCarregadas = false;
+	$effect(() => {
+		if (auth.isLoading || !auth.isAuthenticated || inscricoesCarregadas) return;
+		inscricoesCarregadas = true;
+		getMinhasInscricoes()
+			.then((inscricoesRes) => {
+				const map: Record<number, string> = {};
+				for (const insc of inscricoesRes.inscricoes) {
+					if (insc.activity) map[insc.activity.id] = insc.status;
+				}
+				minhasInscricoesMap = map;
+				formulariosPendentes = inscricoesRes.inscricoes.filter(
+					(i) => i.temFormulario && i.formularioPendente,
+				).length;
+			})
+			.catch((e) => console.error("Erro na API:", e));
+	});
+
+	function linkInscrever(id: number) {
+		const destino = `/dashboard/atividades/${id}?inscrever=1`;
+		return auth.isAuthenticated ? destino : loginUrl(destino);
+	}
 
 	let filteredActivities = $derived(
 		currentFilter === "Todos"
@@ -59,7 +70,9 @@
 
 	function handleLogout() {
 		auth.clearToken();
-		window.location.href = "/login";
+		minhasInscricoesMap = {};
+		formulariosPendentes = 0;
+		inscricoesCarregadas = false;
 	}
 
 	function statusSlug(status?: string) {
@@ -77,7 +90,7 @@
 </script>
 
 <svelte:head>
-	<title>Painel | Acampamento São Miguel</title>
+	<title>Acampamentos e Eventos | Acampamento São Miguel</title>
 </svelte:head>
 
 <div class="app-layout">
@@ -86,7 +99,7 @@
 			<div class="spinner"></div>
 			<p>Carregando painel...</p>
 		</div>
-	{:else if auth.isAuthenticated && auth.user}
+	{:else}
 		<!-- Header Principal -->
 		<header class="top-header">
 			<div class="header-container">
@@ -97,27 +110,33 @@
 						class="banner-img"
 					/>
 				</div>
-				<div class="user-actions">
-					{#if acessaPainel()}
-						<a href={primeiraTela()} class="admin-link-btn"
-							>Painel Admin</a
-						>
-					{/if}
-					<div class="user-greeting">
-						<div class="avatar">
-							{auth.user.name?.charAt(0).toUpperCase()}
-						</div>
-						<div class="user-info">
-							<span class="greeting">Bem-vindo(a),</span>
-							<span class="name"
-								>{auth.user.name?.split(" ")[0]}</span
+				{#if auth.isAuthenticated && auth.user}
+					<div class="user-actions">
+						{#if acessaPainel()}
+							<a href={primeiraTela()} class="admin-link-btn"
+								>Painel Admin</a
 							>
+						{/if}
+						<div class="user-greeting">
+							<div class="avatar">
+								{auth.user.name?.charAt(0).toUpperCase()}
+							</div>
+							<div class="user-info">
+								<span class="greeting">Bem-vindo(a),</span>
+								<span class="name"
+									>{auth.user.name?.split(" ")[0]}</span
+								>
+							</div>
 						</div>
+						<button class="logout-btn" onclick={handleLogout}
+							>Sair</button
+						>
 					</div>
-					<button class="logout-btn" onclick={handleLogout}
-						>Sair</button
-					>
-				</div>
+				{:else}
+					<div class="user-actions">
+						<a href="/login" class="action-btn action-btn-primary">Entrar</a>
+					</div>
+				{/if}
 			</div>
 		</header>
 
@@ -154,29 +173,39 @@
 						</li>
 					</ul>
 				</div>
-				<div class="sidebar-section">
-					<h3 class="section-title">Minha inscrição</h3>
-					<ul class="nav-list">
-						<li>
-							<a class="nav-item nav-item--com-selo" href="/dashboard/formularios">
-								Meus Formulários
-								{#if formulariosPendentes > 0}
-									<span class="nav-selo">{formulariosPendentes}</span>
-								{/if}
-							</a>
-						</li>
-					</ul>
-				</div>
-				<div class="sidebar-section">
-					<h3 class="section-title">Servos</h3>
-					<ul class="nav-list">
-						<li>
-							<a class="nav-item" href="/dashboard/equipes"
-								>Minha Equipe</a
-							>
-						</li>
-					</ul>
-				</div>
+				{#if auth.isAuthenticated}
+					<div class="sidebar-section">
+						<h3 class="section-title">Minha inscrição</h3>
+						<ul class="nav-list">
+							<li>
+								<a class="nav-item nav-item--com-selo" href="/dashboard/formularios">
+									Meus Formulários
+									{#if formulariosPendentes > 0}
+										<span class="nav-selo">{formulariosPendentes}</span>
+									{/if}
+								</a>
+							</li>
+						</ul>
+					</div>
+					<div class="sidebar-section">
+						<h3 class="section-title">Servos</h3>
+						<ul class="nav-list">
+							<li>
+								<a class="nav-item" href="/dashboard/equipes"
+									>Minha Equipe</a
+								>
+							</li>
+						</ul>
+					</div>
+				{:else}
+					<div class="sidebar-section">
+						<h3 class="section-title">Quer participar?</h3>
+						<p class="visitor-note">
+							Para se inscrever em um acampamento ou evento, entre
+							na sua conta ou crie uma.
+						</p>
+					</div>
+				{/if}
 			</aside>
 
 			<!-- Área de Conteúdo (Grid de Cards) -->
@@ -274,7 +303,7 @@
 										>
 										{#if item.status === "Inscrições Abertas" && !minhasInscricoesMap[item.id]}
 											<a
-												href="/dashboard/atividades/{item.id}?inscrever=1"
+												href={linkInscrever(item.id)}
 												class="action-btn action-btn-primary"
 												>Inscrever-se</a
 											>
@@ -530,6 +559,13 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
+	}
+
+	.visitor-note {
+		margin: 0;
+		color: #666;
+		font-size: 0.9rem;
+		line-height: 1.5;
 	}
 
 	.nav-item.active {

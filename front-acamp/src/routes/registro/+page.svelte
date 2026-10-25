@@ -3,6 +3,13 @@
 	import logo from "$lib/imgs/logo_saomiguel - Copy.png";
 	import { apiFetch } from "$lib/api";
 	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
+	import { auth } from "$lib/stores/auth.svelte";
+	import { destinoSeguro, loginUrl } from "$lib/redirect";
+
+	// Veio do "Inscrever-se" de uma atividade: depois de criar a conta, já entra
+	// e volta para lá. Sem destino, segue o fluxo normal (vai para o login).
+	let destino = $derived(destinoSeguro($page.url.searchParams.get("redirect")));
 
 	let step = $state(1);
 	let isLoading = $state(false);
@@ -116,7 +123,16 @@
 
 			const data = await response.json();
 
-			if (response.ok) {
+			if (response.ok && destino && data.access_token) {
+				successMessage = "Conta criada com sucesso! Voltando para a inscrição...";
+				auth.setToken(data.access_token);
+				auth.user = data.user;
+				await auth.refreshUser();
+				const voltarPara = destino;
+				setTimeout(() => {
+					goto(voltarPara);
+				}, 1500);
+			} else if (response.ok) {
 				successMessage = "Conta criada com sucesso! Redirecionando...";
 				setTimeout(() => {
 					goto("/login");
@@ -348,7 +364,7 @@
 
 			{#if !successMessage}
 				<div class="register-link">
-					Já tem uma conta? <a href="/login">Faça login</a>
+					Já tem uma conta? <a href={destino ? loginUrl(destino) : "/login"}>Faça login</a>
 				</div>
 			{/if}
 		</div>

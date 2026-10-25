@@ -3,6 +3,7 @@
 	import { apiFetch } from "$lib/api";
 	import { auth } from "$lib/stores/auth.svelte";
 	import { getMinhasInscricoes, type MinhaInscricao } from "$lib/services/inscricaoService";
+	import { loginUrl } from "$lib/redirect";
 	import { onMount } from "svelte";
 
 	// Hierarquia por idade dos acampamentos (a mais nova primeiro). Casais e
@@ -59,21 +60,14 @@
 		);
 	}
 
+	// Os detalhes são públicos; a inscrição da pessoa (e o histórico que decide
+	// se ela entra como campista ou servo) só existe com login.
 	onMount(async () => {
 		try {
-			const id = $page.params.id;
-			const res = await apiFetch(`/activities/${id}`);
+			const res = await apiFetch(`/activities/${$page.params.id}`);
 			const data = await res.json();
 			if (res.ok) {
 				activity = data.data;
-				await loadMinhaInscricao(Number(id));
-				if (
-					$page.url.searchParams.get("inscrever") === "1" &&
-					activity?.status === "Inscrições Abertas" &&
-					!minhaInscricao
-				) {
-					openSubscribeModal(canBeCampista ? primaryTipo : "Servo");
-				}
 			} else {
 				error = data.error || "Não foi possível carregar os detalhes desta atividade.";
 			}
@@ -83,6 +77,28 @@
 			loading = false;
 		}
 	});
+
+	// Espera a sessão salva ser conferida: visitante não tem inscrição para buscar
+	// (e levaria um 401). `?inscrever=1` chega do card ou da volta do login.
+	let inscricaoCarregada = false;
+	$effect(() => {
+		if (!activity || auth.isLoading || !auth.isAuthenticated || inscricaoCarregada) return;
+		inscricaoCarregada = true;
+		loadMinhaInscricao(Number($page.params.id))
+			.then(() => {
+				if (
+					$page.url.searchParams.get("inscrever") === "1" &&
+					activity?.status === "Inscrições Abertas" &&
+					!minhaInscricao &&
+					(canBeCampista || canBeServo)
+				) {
+					openSubscribeModal(canBeCampista ? primaryTipo : "Servo");
+				}
+			})
+			.catch((e) => console.error("Erro ao carregar inscrição:", e));
+	});
+
+	let destinoInscricao = $derived(`/dashboard/atividades/${$page.params.id}?inscrever=1`);
 
 	function openSubscribeModal(tipo: "Campista" | "Participante" | "Servo") {
 		pendingTipo = tipo;
@@ -215,12 +231,12 @@
 	{:else if error}
 		<div class="error-state">
 			<p>{error}</p>
-			<a href="/dashboard" class="back-link-btn">Voltar ao Painel</a>
+			<a href="/dashboard" class="back-link-btn">Voltar para atividades</a>
 		</div>
 	{:else if activity}
 		<!-- Navegação -->
 		<div class="nav-bar">
-			<a href="/dashboard" class="back-link">← Voltar para Painel</a>
+			<a href="/dashboard" class="back-link">← Voltar para atividades</a>
 		</div>
 
 		<!-- Hero Banner -->
@@ -270,6 +286,17 @@
 									</a>
 								{/if}
 							</div>
+						</div>
+					{:else if activity.status === "Inscrições Abertas" && auth.isLoading}
+						<!-- conferindo a sessão: ainda não dá para saber quais botões mostrar -->
+					{:else if activity.status === "Inscrições Abertas" && !auth.isAuthenticated}
+						<p class="veteran-note">
+							ℹ️ Para se inscrever, entre na sua conta ou crie uma. Depois disso você volta direto para esta página.
+						</p>
+						<div class="subscribe-actions">
+							<a class="subscribe-btn" href={loginUrl(destinoInscricao)}>
+								🔑 Entrar para se inscrever
+							</a>
 						</div>
 					{:else if activity.status === "Inscrições Abertas"}
 						{#if isCamping && !canBeCampista}
@@ -791,6 +818,11 @@
 		box-shadow: 0 4px 15px rgba(111, 222, 194, 0.4);
 		text-transform: uppercase;
 		letter-spacing: 0.05em;
+	}
+
+	a.subscribe-btn {
+		text-decoration: none;
+		display: inline-block;
 	}
 
 	.subscribe-btn:hover {

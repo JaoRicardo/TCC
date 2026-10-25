@@ -1,8 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 
+	// A vitrine de acampamentos e eventos é pública: quem chega no site vê
+	// a lista direto, logado ou não.
 	onMount(() => {
-		window.location.href = '/login';
+		goto('/dashboard', { replaceState: true });
 	});
 </script>
 
@@ -11,5 +14,5 @@
 </svelte:head>
 
 <div style="display: flex; justify-content: center; align-items: center; height: 100vh;">
-	<p>Redirecionando para o login...</p>
+	<p>Carregando acampamentos e eventos...</p>
 </div>

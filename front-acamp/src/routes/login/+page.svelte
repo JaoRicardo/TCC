@@ -3,6 +3,12 @@
 	import { apiFetch } from "$lib/api";
 	import { auth } from "$lib/stores/auth.svelte";
 	import { goto } from "$app/navigation";
+	import { page } from "$app/stores";
+	import { destinoSeguro, registroUrl } from "$lib/redirect";
+
+	// Para onde voltar depois de entrar (ex.: a atividade em que a pessoa clicou
+	// "Inscrever-se"). Sem destino, vai para a lista de atividades.
+	let destino = $derived(destinoSeguro($page.url.searchParams.get("redirect")));
 
 	interface LoginResponse {
 		access_token?: string;
@@ -55,7 +61,8 @@
 			if (response.ok) {
 				auth.setToken(data.access_token!);
 				auth.user = data.user;
-				await goto("/dashboard");
+				await auth.refreshUser();
+				await goto(destino ?? "/dashboard");
 			} else {
 				errorMessage =
 					data.error ||
@@ -152,7 +159,7 @@
 				</button>
 
 				<div class="register-link">
-					Ainda não tem conta? <a href="/registro">Registre-se aqui</a
+					Ainda não tem conta? <a href={registroUrl(destino)}>Registre-se aqui</a
 					>
 				</div>
 			</form>

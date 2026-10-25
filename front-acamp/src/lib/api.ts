@@ -1,7 +1,17 @@
+import { loginUrl } from '$lib/redirect';
+
 export const API_BASE_URL = import.meta.env.VITE_API_URL;
 export const API_HOST = API_BASE_URL.replace('/api/v1', '');
 
-export async function apiFetch(endpoint: string, options: RequestInit = {}) {
+type ApiFetchOptions = RequestInit & {
+	/**
+	 * false = um 401 não manda para o login. Usado ao conferir a sessão salva:
+	 * nas telas públicas, um token vencido só deixa a pessoa como visitante.
+	 */
+	redirectOnUnauthorized?: boolean;
+};
+
+export async function apiFetch(endpoint: string, { redirectOnUnauthorized = true, ...options }: ApiFetchOptions = {}) {
 	const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null;
 
 	const headers = new Headers(options.headers);
@@ -22,8 +32,8 @@ export async function apiFetch(endpoint: string, options: RequestInit = {}) {
 
 	if (response.status === 401 && typeof window !== 'undefined') {
 		localStorage.removeItem('token');
-		if (window.location.pathname !== '/login') {
-			window.location.href = '/login';
+		if (redirectOnUnauthorized && window.location.pathname !== '/login') {
+			window.location.href = loginUrl(window.location.pathname + window.location.search);
 		}
 	}
 
