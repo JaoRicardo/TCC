@@ -110,7 +110,7 @@
 </script>
 
 <svelte:head>
-	<title>Setores | Painel Admin</title>
+	<title>Setores | Painel da Comunidade</title>
 </svelte:head>
 
 <div class="admin-form-page">

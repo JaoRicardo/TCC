@@ -192,7 +192,7 @@
 </script>
 
 <svelte:head>
-	<title>Formulários | Painel Admin</title>
+	<title>Formulários | Painel da Comunidade</title>
 </svelte:head>
 
 <div class="admin-form-page">

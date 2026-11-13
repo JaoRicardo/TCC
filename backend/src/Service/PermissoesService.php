@@ -19,18 +19,29 @@ use Cake\ORM\Locator\TableLocator;
  */
 class PermissoesService
 {
-    /** Chave => [nome, descrição], na ordem em que aparecem na tela de permissões. */
+    /**
+     * Chave => [nome, descrição, área], na ordem em que aparecem na tela de
+     * permissões. A área agrupa as telas na janela de permissões e nos selos da
+     * lista de pessoas; uma tela nova entra numa área existente ou numa nova.
+     */
     public const TELAS = [
-        'atividades'         => ['Gestão de Atividades', 'Ver a lista de acampamentos e eventos. É por ela que se abrem Inscritos e Sorteios e Equipes de Servos.'],
-        'excluir_atividades' => ['Excluir atividades', 'Apagar um acampamento ou evento da lista.'],
-        'inscricoes'         => ['Inscritos e Sorteios', 'Ver inscritos, indicar, fazer os sorteios e chamar suplentes.'],
-        'equipes'            => ['Equipes de Servos', 'Montar as equipes de qualquer setor, escolher o servo geral e ligar setores à atividade.'],
-        'acampamentos'       => ['Criar e editar acampamento', 'Cadastrar acampamentos e alterar os dados deles.'],
-        'eventos'            => ['Criar Evento', 'Cadastrar eventos.'],
-        'setores'            => ['Setores de Servos', 'Cadastrar setores e as vagas de cada categoria.'],
-        'formularios'        => ['Formulários', 'Montar as perguntas dos formulários.'],
-        'usuarios'           => ['Gestão de Usuários', 'Ver e excluir contas de usuários.'],
-        'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.'],
+        'atividades'         => ['Gestão de Atividades', 'Ver a lista de acampamentos e eventos. É por ela que se abrem Inscritos e Sorteios e Equipes de Servos.', 'atividades'],
+        'excluir_atividades' => ['Excluir atividades', 'Apagar um acampamento ou evento da lista.', 'atividades'],
+        'inscricoes'         => ['Inscritos e Sorteios', 'Ver inscritos, indicar, fazer os sorteios e chamar suplentes.', 'atividades'],
+        'equipes'            => ['Equipes de Servos', 'Montar as equipes de qualquer setor, escolher o servo geral e ligar setores à atividade.', 'atividades'],
+        'acampamentos'       => ['Criar e editar acampamento', 'Cadastrar acampamentos e alterar os dados deles.', 'atividades'],
+        'eventos'            => ['Criar Evento', 'Cadastrar eventos.', 'atividades'],
+        'setores'            => ['Setores de Servos', 'Cadastrar setores e as vagas de cada categoria.', 'servos'],
+        'formularios'        => ['Formulários', 'Montar as perguntas dos formulários.', 'servos'],
+        'usuarios'           => ['Pessoas e acessos', 'Ver e desativar contas de usuários.', 'pessoas'],
+        'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.', 'pessoas'],
+    ];
+
+    /** Área => [nome, nome curto (usado no selo da lista de pessoas)]. */
+    public const AREAS = [
+        'atividades' => ['Acampamentos e eventos', 'Atividades'],
+        'servos'     => ['Servos e formulários', 'Servos e formulários'],
+        'pessoas'    => ['Pessoas e acessos', 'Pessoas'],
     ];
 
     /** Permissão que só faz sentido junto com outra (a tela só se abre por ela). */
@@ -125,12 +136,14 @@ class PermissoesService
     public function catalogo(): array
     {
         $itens = [];
-        foreach (self::TELAS as $chave => [$nome, $descricao]) {
+        foreach (self::TELAS as $chave => [$nome, $descricao, $area]) {
             $itens[] = [
                 'chave'      => $chave,
                 'nome'       => $nome,
                 'descricao'  => $descricao,
                 'depende_de' => self::DEPENDE_DE[$chave] ?? null,
+                'area'       => self::AREAS[$area][0],
+                'area_curta' => self::AREAS[$area][1],
             ];
         }
 

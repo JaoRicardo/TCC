@@ -84,14 +84,17 @@ class UsersController extends ApiController
 
         $data = array_map([$this, 'serializeUserAdmin'], $users);
 
-        // Quem gerencia permissões vê quantas telas do painel cada pessoa tem.
-        if ($this->temPermissao($identity, 'permissoes')) {
-            foreach ($users as $i => $user) {
-                $data[$i]['telas_liberadas'] = count($this->permissoes()->daPessoa($user));
-            }
+        // Quem gerencia permissões vê as telas do painel de cada pessoa e o
+        // catálogo (com as áreas), para montar os selos de acesso.
+        if (!$this->temPermissao($identity, 'permissoes')) {
+            return $this->apiResponse(['data' => $data]);
         }
 
-        return $this->apiResponse(['data' => $data]);
+        foreach ($users as $i => $user) {
+            $data[$i]['telas_liberadas'] = $this->permissoes()->daPessoa($user);
+        }
+
+        return $this->apiResponse(['data' => $data, 'catalogo' => $this->permissoes()->catalogo()]);
     }
 
     // -------------------------------------------------------------------------
@@ -143,7 +146,7 @@ class UsersController extends ApiController
         if ($identity instanceof Response) return $identity;
 
         if ((int)$identity->id === $id) {
-            return $this->apiError('Não é possível excluir sua própria conta', 403);
+            return $this->apiError('Não é possível desativar sua própria conta', 403);
         }
 
         $user = $this->Users->find()

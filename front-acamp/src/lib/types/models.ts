@@ -5,8 +5,8 @@ export interface User {
     cpf: string;
     /** Telas do painel liberadas (só vem no cadastro da própria pessoa). */
     permissoes?: string[];
-    /** Quantas telas do painel a pessoa acessa (só para quem gerencia permissões). */
-    telas_liberadas?: number;
+    /** Telas do painel que a pessoa acessa (só vem na lista para quem gerencia permissões). */
+    telas_liberadas?: string[];
     birthday?: string;
     phone?: string;
     created?: string;

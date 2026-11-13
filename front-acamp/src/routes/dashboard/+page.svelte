@@ -121,7 +121,7 @@
 					</div>
 				</div>
 				{#if acessaPainel()}
-					<a href={primeiraTela()} class="btn-admin">Painel Admin</a>
+					<a href={primeiraTela()} class="btn-admin">Painel</a>
 				{/if}
 				<button class="btn-sair" onclick={handleLogout}>Sair</button>
 			</div>

@@ -126,6 +126,25 @@ class PermissoesTest extends RegrasTestCase
         $this->get('/api/v1/admin/users');
         $this->assertResponseOk();
         $this->assertArrayNotHasKey('telas_liberadas', $this->respostaJson()['data'][0]);
+        $this->assertArrayNotHasKey('catalogo', $this->respostaJson());
+    }
+
+    public function testQuemGerenciaVeAsTelasDeCadaPessoaEAsAreas(): void
+    {
+        $gestor = $this->criarUsuario('Gestor', idade: 40, admin: true);
+        $dona = $this->comTelas('Dona Maria', ['setores', 'formularios']);
+
+        $this->autenticarComo($gestor);
+        $this->get('/api/v1/admin/users');
+        $this->assertResponseOk();
+        $json = $this->respostaJson();
+
+        $linha = array_values(array_filter($json['data'], fn ($u) => $u['id'] === $dona->id))[0];
+        $this->assertSame(['setores', 'formularios'], $linha['telas_liberadas']);
+
+        $areas = array_column($json['catalogo'], 'area', 'chave');
+        $this->assertSame('Servos e formulários', $areas['setores']);
+        $this->assertSame('Pessoas e acessos', $areas['permissoes']);
     }
 
     public function testNinguemTiraDeSiMesmoAPermissaoDeGerenciar(): void

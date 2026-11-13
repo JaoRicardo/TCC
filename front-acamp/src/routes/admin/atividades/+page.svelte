@@ -54,7 +54,7 @@
 </script>
 
 <svelte:head>
-	<title>Gerenciar Atividades | Painel Admin</title>
+	<title>Gerenciar Atividades | Painel da Comunidade</title>
 </svelte:head>
 
 <div class="page-header">
