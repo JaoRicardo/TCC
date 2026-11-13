@@ -30,6 +30,7 @@ class Option extends Entity
      */
     protected array $_accessible = [
         'text' => true,
+        'order' => true,
         'question_id' => true,
         'created' => true,
         'modified' => true,

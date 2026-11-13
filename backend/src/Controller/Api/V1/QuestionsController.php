@@ -16,6 +16,9 @@ class QuestionsController extends ApiController
     private const TIPOS_TEXTO   = ['texto_curto', 'texto_longo', 'numero', 'data'];
     private const TIPOS_OPCOES  = ['sim_nao', 'unica_escolha', 'multipla_escolha', 'lista_suspensa'];
     private const TIPOS_VALIDOS = [...self::TIPOS_TEXTO, ...self::TIPOS_OPCOES];
+    /** Tipos em que a própria organização escreve as opções (mínimo 2). */
+    private const TIPOS_ESCOLHA = ['unica_escolha', 'multipla_escolha', 'lista_suspensa'];
+    private const OPCOES_SIM_NAO = ['Sim', 'Não'];
 
     public function initialize(): void
     {
@@ -79,7 +82,7 @@ class QuestionsController extends ApiController
         if ($texto === '' || !in_array($tipo, self::TIPOS_VALIDOS, true)) {
             return $this->apiError('Informe o texto e um tipo válido (' . implode(', ', self::TIPOS_VALIDOS) . ')', 422);
         }
-        if (in_array($tipo, ['unica_escolha', 'multipla_escolha', 'lista_suspensa'], true) && count($opcoes) < 2) {
+        if (in_array($tipo, self::TIPOS_ESCOLHA, true) && count($opcoes) < 2) {
             return $this->apiError('Perguntas de opção precisam de pelo menos 2 opções', 422);
         }
 
@@ -118,7 +121,10 @@ class QuestionsController extends ApiController
             return $this->apiResponse(['error' => 'Erro ao salvar a pergunta', 'errors' => $question->getErrors()], 422);
         }
 
-        $this->salvarOpcoes($question->id, $tipo, $opcoes);
+        $this->sincronizarOpcoes(
+            (int)$question->id,
+            $tipo === 'sim_nao' ? self::OPCOES_SIM_NAO : (in_array($tipo, self::TIPOS_ESCOLHA, true) ? $opcoes : [])
+        );
 
         $full = $this->Questions->find()->contain(['Options', 'Sections'])->where(['Questions.id' => $question->id])->first();
 
@@ -146,7 +152,8 @@ class QuestionsController extends ApiController
             $patch['depends_on_option_id'] = $data['depends_on_option_id'] ? intval($data['depends_on_option_id']) : null;
         }
 
-        $tipo = $question->type;
+        $tipoAntigo = $question->type;
+        $tipo = $tipoAntigo;
         if (isset($data['type'])) {
             if (!in_array($data['type'], self::TIPOS_VALIDOS, true)) {
                 return $this->apiError('Tipo inválido', 422);
@@ -155,18 +162,42 @@ class QuestionsController extends ApiController
             $patch['type'] = $tipo;
         }
 
-        if (isset($data['options'])) {
-            $opcoes = array_values(array_filter(array_map('trim', (array)$data['options'])));
-            if (in_array($tipo, ['unica_escolha', 'multipla_escolha', 'lista_suspensa'], true) && count($opcoes) < 2) {
+        // Opções que a pergunta fica tendo depois de salvar (null = não mexe nelas).
+        $opcoes = null;
+        if ($tipo === 'sim_nao') {
+            // Sim e Não são fixos: só são criados quando a pergunta passa a ser Sim/Não.
+            if ($tipoAntigo !== 'sim_nao') $opcoes = self::OPCOES_SIM_NAO;
+        } elseif (in_array($tipo, self::TIPOS_ESCOLHA, true)) {
+            if (isset($data['options'])) {
+                $opcoes = array_values(array_filter(array_map('trim', (array)$data['options'])));
+            } elseif (!in_array($tipoAntigo, self::TIPOS_ESCOLHA, true)) {
+                $opcoes = [];
+            }
+            if ($opcoes !== null && count($opcoes) < 2) {
                 return $this->apiError('Perguntas de opção precisam de pelo menos 2 opções', 422);
             }
-            $this->Options->deleteAll(['question_id' => $id]);
-            $this->salvarOpcoes($id, $tipo, $opcoes);
+        } else {
+            $opcoes = []; // pergunta de texto não tem opções
         }
 
         $this->Questions->patchEntity($question, $patch);
-        if (!$this->Questions->save($question)) {
+        if ($question->hasErrors()) {
             return $this->apiResponse(['error' => 'Erro ao atualizar', 'errors' => $question->getErrors()], 422);
+        }
+
+        $resultado = $this->Questions->getConnection()->transactional(function () use ($question, $id, $opcoes) {
+            if ($opcoes !== null) {
+                $erro = $this->sincronizarOpcoes($id, $opcoes);
+                if ($erro !== null) return $erro;
+            }
+
+            return $this->Questions->save($question) ? null : false;
+        });
+        if ($resultado === false) {
+            return $this->apiResponse(['error' => 'Erro ao atualizar', 'errors' => $question->getErrors()], 422);
+        }
+        if (is_string($resultado)) {
+            return $this->apiError($resultado, 422);
         }
 
         $full = $this->Questions->find()->contain(['Options', 'Sections'])->where(['Questions.id' => $id])->first();
@@ -271,18 +302,70 @@ class QuestionsController extends ApiController
 
     // ─── Helpers ────────────────────────────────────────────────────────────
 
-    private function salvarOpcoes(int $questionId, string $tipo, array $opcoes): void
+    /**
+     * Deixa a pergunta com exatamente estas opções, nesta ordem, sem recriar as
+     * que continuam: as respostas e as perguntas condicionais apontam para o id
+     * da opção, então apagar e criar de novo soltava tudo isso.
+     *
+     * - Opção com o mesmo texto de antes → mesma opção (mesmo se mudou de lugar).
+     * - Linha editada no mesmo lugar ("Talvez" → "Às vezes") → mesma opção, texto novo.
+     * - O resto é opção nova ou opção removida.
+     *
+     * Devolve a mensagem de erro, sem gravar nada, se for remover uma opção que
+     * tem pergunta condicional ligada.
+     */
+    private function sincronizarOpcoes(int $questionId, array $textos): ?string
     {
-        if ($tipo === 'sim_nao') {
-            $this->Options->save($this->Options->newEntity(['text' => 'Sim', 'question_id' => $questionId]));
-            $this->Options->save($this->Options->newEntity(['text' => 'Não', 'question_id' => $questionId]));
-            return;
-        }
-        if (!in_array($tipo, ['unica_escolha', 'multipla_escolha', 'lista_suspensa'], true)) return;
+        $atuais = $this->Options->find()
+            ->where(['question_id' => $questionId])
+            ->orderBy(['Options.order' => 'ASC', 'Options.id' => 'ASC'])
+            ->all()
+            ->toList();
 
-        foreach ($opcoes as $texto) {
-            $this->Options->save($this->Options->newEntity(['text' => $texto, 'question_id' => $questionId]));
+        /** @var array<int, \App\Model\Entity\Option|null> $destino posição na lista nova => opção reaproveitada */
+        $destino = array_fill(0, count($textos), null);
+        $livres = $atuais;
+        foreach ($textos as $i => $texto) {
+            foreach ($livres as $k => $opcao) {
+                if ($opcao->text === $texto) {
+                    $destino[$i] = $opcao;
+                    unset($livres[$k]);
+                    break;
+                }
+            }
         }
+        foreach ($destino as $i => $opcao) {
+            if ($opcao === null && isset($atuais[$i]) && in_array($atuais[$i], $livres, true)) {
+                $destino[$i] = $atuais[$i];
+                unset($livres[array_search($atuais[$i], $livres, true)]);
+            }
+        }
+
+        $removidas = array_values($livres);
+        if ($removidas) {
+            $idsRemovidos = array_map(fn($o) => $o->id, $removidas);
+            $dependente = $this->Questions->find()
+                ->where(['depends_on_option_id IN' => $idsRemovidos, 'deleted IS' => null])
+                ->first();
+            if ($dependente) {
+                $opcao = current(array_filter($removidas, fn($o) => $o->id === $dependente->depends_on_option_id));
+
+                return "A opção \"{$opcao->text}\" tem a pergunta \"{$dependente->text}\" ligada a ela. "
+                    . 'Exclua essa pergunta antes de tirar a opção.';
+            }
+
+            // Perguntas já excluídas ainda apontam para a opção (e o banco não deixa apagá-la assim).
+            $this->Questions->updateAll(['depends_on_option_id' => null], ['depends_on_option_id IN' => $idsRemovidos]);
+            $this->Options->deleteAll(['id IN' => $idsRemovidos]);
+        }
+
+        foreach ($textos as $i => $texto) {
+            $opcao = $destino[$i] ?? $this->Options->newEntity(['question_id' => $questionId]);
+            $this->Options->patchEntity($opcao, ['text' => $texto, 'order' => $i + 1]);
+            $this->Options->saveOrFail($opcao);
+        }
+
+        return null;
     }
 
     private function serializePergunta(object $q): array

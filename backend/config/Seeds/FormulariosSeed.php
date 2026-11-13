@@ -127,8 +127,8 @@ class FormulariosSeed extends BaseSeed
                     $perguntaId = (int)$conn->getDriver()->lastInsertId();
 
                     $opcoes = $p['tipo'] === 'sim_nao' ? ['Sim', 'Não'] : ($p['opcoes'] ?? []);
-                    foreach ($opcoes as $textoOpcao) {
-                        $conn->insert('options', ['text' => $textoOpcao, 'question_id' => $perguntaId, 'created' => $agora, 'modified' => $agora]);
+                    foreach ($opcoes as $posicao => $textoOpcao) {
+                        $conn->insert('options', ['text' => $textoOpcao, 'order' => $posicao + 1, 'question_id' => $perguntaId, 'created' => $agora, 'modified' => $agora]);
                         if ($textoOpcao === 'Sim' && isset($p['chave'])) {
                             $opcaoSimPorChave[$p['chave']] = (int)$conn->getDriver()->lastInsertId();
                         }

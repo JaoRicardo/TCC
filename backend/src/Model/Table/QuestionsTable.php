@@ -68,6 +68,7 @@ class QuestionsTable extends Table
         ]);
         $this->hasMany('Options', [
             'foreignKey' => 'question_id',
+            'sort' => ['Options.order' => 'ASC', 'Options.id' => 'ASC'],
         ]);
     }
 
