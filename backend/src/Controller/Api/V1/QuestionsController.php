@@ -19,6 +19,11 @@ class QuestionsController extends ApiController
     /** Tipos em que a própria organização escreve as opções (mínimo 2). */
     private const TIPOS_ESCOLHA = ['unica_escolha', 'multipla_escolha', 'lista_suspensa'];
     private const OPCOES_SIM_NAO = ['Sim', 'Não'];
+    /**
+     * Ver perguntas, lista e seções: quem só tem "Respostas dos formulários"
+     * também precisa, para abrir o editor em modo leitura. Mudar exige "formularios".
+     */
+    private const LER = ['formularios', 'respostas_formularios'];
 
     public function initialize(): void
     {
@@ -32,7 +37,7 @@ class QuestionsController extends ApiController
     public function index(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requirePermissao('formularios');
+        $identity = $this->requirePermissao(self::LER);
         if ($identity instanceof Response) return $identity;
 
         $categoryId       = intval($this->request->getQuery('category_id') ?? 0);
@@ -466,7 +471,7 @@ class QuestionsController extends ApiController
     public function resumo(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requirePermissao('formularios');
+        $identity = $this->requirePermissao(self::LER);
         if ($identity instanceof Response) return $identity;
 
         $ordemDasCategorias = ['Mirim', 'FAC', 'Juvenil', 'Sênior', 'Casais', 'Discipulados'];
@@ -490,6 +495,30 @@ class QuestionsController extends ApiController
             $usoDasSecoes["{$linha->category_id}|{$linha->subscription_type}"][(int)$linha->section_id] = (int)$linha->n;
         }
 
+        // Quem já enviou, somando todas as edições: decide se a lista mostra "Respostas".
+        // Mesmas pessoas que a aba Respostas mostra (sem desistentes, quem perdeu a
+        // vaga ou conta desativada), para os números baterem.
+        $porFormulario = $this->fetchTable('PreRegistrations')->find();
+        $porFormulario->select([
+                'category_id'       => 'Activities.category_id',
+                'subscription_type' => 'PreRegistrations.subscription_type',
+                'n'                 => $porFormulario->func()->count('*'),
+            ])
+            ->innerJoin(['Activities' => 'activities'], ['Activities.id = PreRegistrations.activity_id', 'Activities.deleted IS' => null])
+            ->innerJoin(['Users' => 'users'], ['Users.id = PreRegistrations.user_id', 'Users.deleted IS' => null])
+            ->where([
+                'PreRegistrations.form_submitted'     => true,
+                'PreRegistrations.deleted IS'         => null,
+                'PreRegistrations.is_quitter'         => false,
+                'PreRegistrations.disqualified_at IS' => null,
+            ])
+            ->groupBy(['Activities.category_id', 'PreRegistrations.subscription_type'])
+            ->disableHydration();
+        $enviaram = [];
+        foreach ($porFormulario->all() as $linha) {
+            $enviaram["{$linha['category_id']}|{$linha['subscription_type']}"] = (int)$linha['n'];
+        }
+
         $agora = date('Y-m-d H:i:s');
         $formularios = [];
         foreach ($categorias as $categoria) {
@@ -502,6 +531,7 @@ class QuestionsController extends ApiController
                     'perguntas'         => array_sum($secoes),
                     'secoes'            => array_keys($secoes),
                     'uso'               => $this->usoDoFormulario((int)$categoria->id, $tipo, $agora),
+                    'respostas'         => $enviaram["{$categoria->id}|{$tipo}"] ?? 0,
                 ];
             }
         }
@@ -554,7 +584,7 @@ class QuestionsController extends ApiController
     public function secoes(): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requirePermissao('formularios');
+        $identity = $this->requirePermissao(self::LER);
         if ($identity instanceof Response) return $identity;
 
         $secoes = $this->Sections->find()->where(['deleted IS' => null])->orderBy(['order' => 'ASC'])->all();

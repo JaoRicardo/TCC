@@ -8,7 +8,8 @@
 	import { onMount } from 'svelte';
 	import '$lib/styles/formularios.css';
 	import { getResumoFormularios, type ResumoFormulario } from '$lib/services/perguntaService';
-	import { diaEMes, enderecoDoEditor, nomeCurto, tituloDoFormulario } from '$lib/formularios';
+	import { diaEMes, enderecoDasRespostas, enderecoDoEditor, nomeCurto, tituloDoFormulario } from '$lib/formularios';
+	import { pode } from '$lib/permissoes';
 
 	let formularios: ResumoFormulario[] = $state([]);
 	let estado: 'carregando' | 'erro' | 'pronto' = $state('carregando');
@@ -50,6 +51,7 @@
 {#snippet celula(f: ResumoFormulario | undefined)}
 	{#if f}
 		{@const titulo = tituloDoFormulario(f.categoria, f.subscription_type)}
+		{@const acao = !pode('formularios') ? 'Ver' : f.perguntas > 0 ? 'Editar' : 'Montar'}
 		<div class="celula" class:celula--vazia={f.perguntas === 0}>
 			<div class="celula-info">
 				{#if f.perguntas > 0}
@@ -74,13 +76,20 @@
 					{/if}
 				{/if}
 			</div>
-			<a
-				class="fm-btn fm-btn--contorno"
-				href={enderecoDoEditor(f.category_id, f.subscription_type)}
-				aria-label="{f.perguntas > 0 ? 'Editar' : 'Montar'} {titulo}"
-			>
-				{f.perguntas > 0 ? 'Editar' : 'Montar'}
-			</a>
+			<div class="celula-acoes">
+				{#if f.respostas > 0 && pode('respostas_formularios')}
+					<a
+						class="fm-btn"
+						href={enderecoDasRespostas(f.category_id, f.subscription_type)}
+						aria-label="Respostas de {titulo}"
+					>
+						Respostas
+					</a>
+				{/if}
+				<a class="fm-btn fm-btn--contorno" href={enderecoDoEditor(f.category_id, f.subscription_type)} aria-label="{acao} {titulo}">
+					{acao}
+				</a>
+			</div>
 		</div>
 	{/if}
 {/snippet}
@@ -220,6 +229,12 @@
 		color: var(--tinta-3);
 		border-top: 1px solid var(--borda-suave);
 		border-bottom: 1px solid var(--linha);
+	}
+
+	.celula-acoes {
+		display: flex;
+		gap: 8px;
+		flex: 0 0 auto;
 	}
 
 	.celula {

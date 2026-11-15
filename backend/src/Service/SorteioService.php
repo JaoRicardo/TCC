@@ -202,6 +202,7 @@ class SorteioService
                 'disqualified_at' => null,
                 'disqualification_reason' => null,
                 'promoted_at' => null,
+                'selected_at' => null,
             ],
             [
                 'activity_id'       => $activityId,
@@ -302,6 +303,7 @@ class SorteioService
                 'disqualified_at' => null,
                 'disqualification_reason' => null,
                 'promoted_at' => null,
+                'selected_at' => null,
             ],
             [
                 'activity_id'       => $activityId,
@@ -369,6 +371,7 @@ class SorteioService
                 'disqualified_at' => null,
                 'disqualification_reason' => null,
                 'promoted_at' => null,
+                'selected_at' => null,
             ],
             [
                 'activity_id'       => $activityId,
@@ -516,6 +519,7 @@ class SorteioService
                 'disqualified_at' => null,
                 'disqualification_reason' => null,
                 'promoted_at' => null,
+                'selected_at' => null,
             ],
             [
                 'activity_id'       => $activityId,

@@ -12,6 +12,12 @@ export function enderecoDoEditor(categoryId: number, tipo: TipoInscricao): strin
 	return `/admin/formularios/${categoryId}/${tipo.toLowerCase()}`;
 }
 
+/** Aba Respostas do formulário, opcionalmente já numa edição de acampamento. */
+export function enderecoDasRespostas(categoryId: number, tipo: TipoInscricao, atividadeId?: number): string {
+	const base = `${enderecoDoEditor(categoryId, tipo)}/respostas`;
+	return atividadeId ? `${base}?atividade=${atividadeId}` : base;
+}
+
 /** "2026-11-20T23:59:00" → "20/11" */
 export function diaEMes(iso: string): string {
 	const [data] = iso.split('T');

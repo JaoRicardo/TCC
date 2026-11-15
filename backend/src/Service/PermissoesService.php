@@ -33,6 +33,9 @@ class PermissoesService
         'eventos'            => ['Criar Evento', 'Cadastrar eventos.', 'atividades'],
         'setores'            => ['Setores de Servos', 'Cadastrar setores e as vagas de cada categoria.', 'servos'],
         'formularios'        => ['Formulários', 'Montar as perguntas dos formulários.', 'servos'],
+        // Independente de "formularios": quem cuida da saúde ou da cozinha vê as
+        // respostas (alergias, remédios) sem poder mudar as perguntas.
+        'respostas_formularios' => ['Respostas dos formulários', 'Ver as respostas dos formulários, que têm dados de saúde, e baixar as planilhas.', 'servos'],
         'usuarios'           => ['Pessoas e acessos', 'Ver e desativar contas de usuários.', 'pessoas'],
         'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.', 'pessoas'],
     ];

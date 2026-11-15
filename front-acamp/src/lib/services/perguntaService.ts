@@ -64,6 +64,8 @@ export interface ResumoFormulario {
 	/** Seções que têm pergunta neste formulário. */
 	secoes: number[];
 	uso: UsoDoFormulario | null;
+	/** Quantas pessoas já enviaram, somando todas as edições. */
+	respostas: number;
 }
 
 export async function getResumoFormularios(): Promise<{ data?: ResumoFormulario[]; error?: string }> {

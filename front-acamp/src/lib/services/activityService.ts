@@ -30,7 +30,7 @@ export async function getActivities(): Promise<{ activities: Activity[], error?:
             end_date: b.fimEvento,
             place: b.local,
             image: b.imagem,
-            category: b.categoria ? { name: b.categoria.nome } : null,
+            category: b.categoria ? { id: b.categoria.id, name: b.categoria.nome } : null,
             targetAudience: b.targetAudience || b.publicoAlvo,
             status: b.status
         }));

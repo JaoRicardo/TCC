@@ -89,14 +89,17 @@ abstract class ApiController extends AppController
      * Exige a permissão de uma tela do painel (ver PermissoesService::TELAS).
      * A mensagem é neutra de propósito: quem tem acesso limitado não deve
      * perceber que existe algo que ele não pode ver.
+     *
+     * @param string|string[] $chave Uma permissão, ou uma lista em que basta ter qualquer uma.
      */
-    protected function requirePermissao(string $chave): mixed
+    protected function requirePermissao(string|array $chave): mixed
     {
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) {
             return $identity;
         }
-        if (!$this->temPermissao($identity, $chave)) {
+        $algumaDelas = array_filter((array)$chave, fn($c) => $this->temPermissao($identity, $c));
+        if (!$algumaDelas) {
             return $this->apiError('Não foi possível concluir esta ação.', 403);
         }
         return $identity;

@@ -11,6 +11,8 @@
 	import '$lib/styles/formularios.css';
 	import Janela from '$lib/components/painel/Janela.svelte';
 	import ImportarPerguntas from '$lib/components/painel/ImportarPerguntas.svelte';
+	import CabecalhoFormulario from '$lib/components/painel/CabecalhoFormulario.svelte';
+	import { pode } from '$lib/permissoes';
 	import { caminhoDoPainel } from '$lib/stores/caminho.svelte';
 	import {
 		TIPOS_PERGUNTA,
@@ -76,6 +78,8 @@
 	let titulo = $derived(esteFormulario && tipo ? tituloDoFormulario(esteFormulario.categoria, tipo) : 'Formulário');
 	let uso = $derived(esteFormulario?.uso ?? null);
 	let salvas = $derived(perguntas.filter((p) => !p.rascunho));
+	/** Sem "Formulários" (só "Respostas dos formulários"), o editor fica só para leitura. */
+	let podeEditar = $derived(pode('formularios'));
 
 	// ─── Estado da tela ──────────────────────────────────────────────────
 	let aberta: number | string | null = $state(null);
@@ -358,7 +362,7 @@
 	}
 
 	async function abrir(id: number | string) {
-		if (aberta === id) return;
+		if (aberta === id || !podeEditar) return;
 		if (!(await fecharAberta())) return;
 		const q = perguntas.find((x) => x.id === id);
 		if (!q) return;
@@ -969,27 +973,27 @@
 			</div>
 		</section>
 	{:else if tipo && esteFormulario}
-		<div class="topo">
-			<div class="topo-linha">
-				<div class="topo-textos">
-					<span class="fm-sobretitulo">Formulário de acampamento</span>
-					<h1 class="fm-h1">{titulo}</h1>
-					<p class="fm-sub">Vale para todos os acampamentos {esteFormulario.categoria}, ano após ano.</p>
-				</div>
+		<CabecalhoFormulario
+			{categoryId}
+			categoria={esteFormulario.categoria}
+			{tipo}
+			{titulo}
+			aba="perguntas"
+			perguntas={salvas.length}
+			respostas={pode('respostas_formularios') ? esteFormulario.respostas : null}
+		>
+			{#snippet lado()}
 				<span class="status" role="status">
-					{#if statusSalvo === 'salvando'}
+					{#if !podeEditar}
+						<span class="selo-leitura">Só leitura</span>
+					{:else if statusSalvo === 'salvando'}
 						<span class="fm-spinner fm-spinner--pequeno"></span>Salvando...
 					{:else}
 						<span class="status-ok">✓</span>{statusSalvo}
 					{/if}
 				</span>
-			</div>
-			<div class="abas" role="tablist" aria-label="Partes do formulário">
-				<button type="button" role="tab" aria-selected="true" class="aba aba--ativa">
-					Perguntas<span class="contador">{salvas.length}</span>
-				</button>
-			</div>
-		</div>
+			{/snippet}
+		</CabecalhoFormulario>
 
 		{#if uso && salvas.length > 0}
 			<div class="fm-aviso fm-aviso--azul">
@@ -1012,9 +1016,10 @@
 				<div class="vazio-arco"><img src={logoAsas} alt="" /></div>
 				<p class="vazio-titulo">Este formulário ainda não tem perguntas.</p>
 				<p class="fm-sub vazio-texto">
-					Enquanto estiver vazio, ninguém perde a vaga pelo prazo.{#if fontesDeImportacao.length}
+					Enquanto estiver vazio, ninguém perde a vaga pelo prazo.{#if fontesDeImportacao.length && podeEditar}
 						O jeito mais rápido é copiar as perguntas de outro formulário e ajustar.{/if}
 				</p>
+				{#if podeEditar}
 				<div class="acoes-linha">
 					{#if fontesDeImportacao.length}
 						<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={abrirImportar}>
@@ -1031,6 +1036,7 @@
 						Começar do zero
 					</button>
 				</div>
+				{/if}
 			</section>
 		{:else}
 			<div class="grade">
@@ -1087,7 +1093,7 @@
 											{/if}
 										</span>
 									</div>
-									<div class="ancora" data-menu>
+									<div class="ancora" data-menu hidden={!podeEditar}>
 										<button
 											type="button"
 											class="fm-btn"
@@ -1406,6 +1412,7 @@
 												if (de !== null) moverPara(de, q.id);
 											}}
 										>
+											{#if podeEditar}
 											<button
 												type="button"
 												id="alca-{q.id}"
@@ -1427,7 +1434,8 @@
 											>
 												⋮⋮
 											</button>
-											<button type="button" class="abrir" onclick={() => abrir(q.id)}>
+											{/if}
+											<button type="button" class="abrir" aria-disabled={!podeEditar} onclick={() => abrir(q.id)}>
 												<span class="icone-tipo" aria-hidden="true">{iconeDoTipo(q.type)}</span>
 												<span class="fechado-textos">
 													<span class="fechado-pergunta">{q.text || 'Pergunta sem texto'}</span>
@@ -1444,7 +1452,7 @@
 							{#if s.total === 0}
 								<p class="secao-vazia">Nenhuma pergunta nesta seção ainda.</p>
 							{/if}
-							{#if !termo}
+							{#if !termo && podeEditar}
 								<button type="button" class="fm-btn fm-btn--tracejado mais-pergunta" onclick={() => novaPergunta(s.secao.id)}>
 									+ Pergunta em {s.secao.titulo}
 								</button>
@@ -1457,6 +1465,14 @@
 				</div>
 
 				<!-- ─── Direita: adicionar ─── -->
+				{#if !podeEditar}
+					<div class="lateral-dir">
+						<span class="fm-rotulo">Só leitura</span>
+						<span class="lateral-nota">
+							Você pode ver as perguntas e as respostas, mas só quem tem a permissão “Formulários” muda as perguntas.
+						</span>
+					</div>
+				{:else}
 				<div class="lateral-dir">
 					<span class="fm-rotulo">Adicionar</span>
 					<button type="button" class="fm-btn fm-btn--ouro" onclick={() => novaPergunta(secaoAtual())}>+ Pergunta</button>
@@ -1482,6 +1498,7 @@
 					</button>
 					<span class="lateral-nota">“+ Pergunta” entra na seção da pergunta aberta.</span>
 				</div>
+				{/if}
 			</div>
 		{/if}
 	{/if}
@@ -1693,26 +1710,6 @@
 	}
 
 	/* ─── Topo ─── */
-	.topo {
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-	}
-
-	.topo-linha {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: 20px;
-		flex-wrap: wrap;
-	}
-
-	.topo-textos {
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
 	.status {
 		display: flex;
 		align-items: center;
@@ -1726,32 +1723,17 @@
 		font-weight: 700;
 	}
 
-	.abas {
-		display: flex;
-		gap: 6px;
-		border-bottom: 1px solid var(--borda);
-	}
-
-	.aba {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		height: 48px;
-		padding: 0 18px;
-		font-size: 17px;
-		font-weight: 600;
-		color: var(--tinta-3);
-		background: transparent;
-		border: none;
-		border-bottom: 3px solid transparent;
-		margin-bottom: -1px;
-	}
-
-	.aba--ativa {
-		font-weight: 700;
-		color: var(--azul);
-		border-bottom-color: var(--ouro);
+	.abrir[aria-disabled='true'] {
 		cursor: default;
+	}
+
+	.selo-leitura {
+		padding: 4px 12px;
+		font-size: 14px;
+		font-weight: 700;
+		color: var(--tinta-3);
+		background: var(--opcional-bg);
+		border-radius: 999px;
 	}
 
 	.contador {

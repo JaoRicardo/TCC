@@ -7,7 +7,8 @@ import { auth } from '$lib/stores/auth.svelte';
  * endereço, volta sem aviso para a primeira tela que pode ver.
  */
 
-type ItemDoMenu = { chave: string; caminho: string; nome: string };
+/** `chave`: a tela aparece para quem tem qualquer uma destas permissões. */
+type ItemDoMenu = { chave: string | string[]; caminho: string; nome: string };
 
 /**
  * Menu lateral do painel: grupos e itens, na ordem em que aparecem. A primeira
@@ -31,7 +32,8 @@ export const MENU_DO_PAINEL: { titulo: string; itens: ItemDoMenu[] }[] = [
 		titulo: 'Servos e formulários',
 		itens: [
 			{ chave: 'setores', caminho: '/admin/setores', nome: 'Setores de Servos' },
-			{ chave: 'formularios', caminho: '/admin/formularios', nome: 'Formulários' }
+			// Quem só vê as respostas também entra: o editor abre só para leitura.
+			{ chave: ['formularios', 'respostas_formularios'], caminho: '/admin/formularios', nome: 'Formulários' }
 		]
 	}
 ];
@@ -44,19 +46,25 @@ const TELAS_FORA_DO_MENU: [string, string, string][] = [
 	['/admin/acampamentos/editar', 'Editar acampamento', '/admin/acampamentos/criar']
 ];
 
-/** Começo do endereço → permissão que a tela exige. */
-const TELA_POR_CAMINHO: [string, string][] = [
+/**
+ * Endereço → permissão que a tela exige (qualquer uma, se for lista). Vale a
+ * primeira regra que casa, então as mais específicas vêm antes.
+ */
+const TELA_POR_CAMINHO: [string | RegExp, string | string[]][] = [
+	[/^\/admin\/formularios\/[^/]+\/[^/]+\/respostas/, 'respostas_formularios'],
 	['/admin/usuarios', 'usuarios'],
 	['/admin/eventos', 'eventos'],
 	['/admin/acampamentos', 'acampamentos'],
 	['/admin/atividades', 'atividades'],
 	['/admin/inscricoes', 'inscricoes'],
 	['/admin/setores', 'setores'],
-	['/admin/formularios', 'formularios']
+	['/admin/formularios', ['formularios', 'respostas_formularios']]
 ];
 
-export function pode(chave: string): boolean {
-	return (auth.user?.permissoes ?? []).includes(chave);
+/** Tem a permissão (ou qualquer uma da lista). */
+export function pode(chave: string | string[]): boolean {
+	const minhas = auth.user?.permissoes ?? [];
+	return (Array.isArray(chave) ? chave : [chave]).some((c) => minhas.includes(c));
 }
 
 /** Entra no painel quem tem pelo menos uma tela liberada. */
@@ -65,7 +73,9 @@ export function acessaPainel(): boolean {
 }
 
 export function podeAbrir(caminho: string): boolean {
-	const tela = TELA_POR_CAMINHO.find(([inicio]) => caminho.startsWith(inicio));
+	const tela = TELA_POR_CAMINHO.find(([regra]) =>
+		typeof regra === 'string' ? caminho.startsWith(regra) : regra.test(caminho)
+	);
 	return tela ? pode(tela[1]) : true;
 }
 

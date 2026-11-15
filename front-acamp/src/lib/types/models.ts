@@ -23,7 +23,7 @@ export interface Activity {
     created?: string;
     modified?: string;
     image?: string;
-    category?: { name: string };
+    category?: { id?: number; name: string };
     targetAudience?: string;
     status?: 'Em Breve' | 'Inscrições Abertas' | 'Encerrado' | string;
 }

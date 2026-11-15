@@ -3,6 +3,7 @@
 	import { getActivities, deleteActivity as apiDeleteActivity } from '$lib/services/activityService';
 	import type { Activity } from '$lib/types/models';
 	import { pode } from '$lib/permissoes';
+	import { enderecoDasRespostas } from '$lib/formularios';
 
 	let activities: Activity[] = $state([]);
 	let loading = $state(true);
@@ -111,6 +112,14 @@
 							<!-- Cada ação só aparece para quem tem a tela liberada. -->
 							{#if pode('inscricoes')}
 								<a href="/admin/inscricoes/{activity.id}" class="action-btn subs-btn" title="Ver Inscritos">📋</a>
+							{/if}
+							{#if activity.activitable_type === 'Campings' && activity.category?.id && pode('respostas_formularios')}
+								<a
+									href={enderecoDasRespostas(activity.category.id, 'Campista', activity.id)}
+									class="action-btn answers-btn"
+									title="Respostas do formulário"
+									aria-label="Respostas do formulário de {activity.name}"
+								>📝</a>
 							{/if}
 							{#if activity.activitable_type === 'Campings' && pode('equipes')}
 								<a href="/dashboard/equipes/{activity.id}" class="action-btn team-btn" title="Gerenciar Equipe de Servos">👥</a>
@@ -260,6 +269,12 @@
 		border-color: #fde68a;
 	}
 	.subs-btn:hover { background-color: #fde68a; }
+
+	.answers-btn {
+		background-color: #e6ebf5;
+		border-color: #c4cfe6;
+	}
+	.answers-btn:hover { background-color: #c4cfe6; }
 
 	.edit-btn {
 		background-color: #e0f2fe;

@@ -122,6 +122,7 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/perguntas/{id}/restaurar', ['controller' => 'Questions', 'action' => 'restaurar'])->setPass(['id']);
             $builder->get('/admin/formularios/resumo', ['controller' => 'Questions', 'action' => 'resumo']);
             $builder->post('/admin/formularios/importar', ['controller' => 'Questions', 'action' => 'importar']);
+            $builder->get('/admin/formularios/respostas', ['controller' => 'Respostas', 'action' => 'index']);
             $builder->get('/admin/secoes', ['controller' => 'Questions', 'action' => 'secoes']);
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
             $builder->patch('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'editarSecao'])->setPass(['id']);

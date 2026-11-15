@@ -3,7 +3,12 @@ declare(strict_types=1);
 
 namespace App\Model\Table;
 
+use ArrayObject;
+use Cake\Datasource\EntityInterface;
+use Cake\Event\EventInterface;
+use Cake\I18n\DateTime;
 use Cake\ORM\RulesChecker;
+use InvalidArgumentException;
 use Cake\ORM\Table;
 use Cake\Validation\Validator;
 
@@ -38,6 +43,56 @@ class PreRegistrationsTable extends Table
         $this->hasMany('Answers', [
             'foreignKey' => 'pre_registration_id',
         ]);
+    }
+
+    /**
+     * Guarda as datas da aba Respostas num lugar só, valendo para todo caminho
+     * que salva a inscrição (sorteio, indicação, suplente, "chamar próximo",
+     * envio do formulário):
+     *
+     * - selected_at: o momento em que a inscrição passou de "sem vaga nem lugar
+     *   na fila" para sorteada, indicada ou suplente. Suplente promovido mantém
+     *   a data de quando entrou na fila; quem sai da lista perde a data.
+     * - form_submitted_at: o primeiro envio do formulário.
+     */
+    public function beforeSave(EventInterface $event, EntityInterface $entity, ArrayObject $options): void
+    {
+        if ($entity->isNew() || $entity->isDirty('selection_method_id') || $entity->isDirty('substitute_position')) {
+            $temLugar = $entity->get('selection_method_id') !== null || $entity->get('substitute_position') !== null;
+            $tinhaLugar = !$entity->isNew()
+                && ($this->valorAnterior($entity, 'selection_method_id') !== null
+                    || $this->valorAnterior($entity, 'substitute_position') !== null);
+            if (!$temLugar) {
+                $entity->set('selected_at', null);
+            } elseif (!$tinhaLugar) {
+                $entity->set('selected_at', DateTime::now());
+            }
+        }
+
+        if ($entity->isDirty('form_submitted')) {
+            if (!$entity->get('form_submitted')) {
+                $entity->set('form_submitted_at', null);
+            } elseif ($entity->get('form_submitted_at') === null) {
+                $entity->set('form_submitted_at', DateTime::now());
+            }
+        }
+    }
+
+    /**
+     * Valor do campo antes desta alteração. Campo que não vinha carregado e foi
+     * preenchido agora não tem valor anterior guardado — e o getOriginal comum
+     * devolveria o valor novo no lugar; aqui ele conta como vazio.
+     */
+    private function valorAnterior(EntityInterface $entity, string $campo): mixed
+    {
+        if (!$entity->isDirty($campo)) {
+            return $entity->get($campo);
+        }
+        try {
+            return $entity->getOriginal($campo, false);
+        } catch (InvalidArgumentException) {
+            return null;
+        }
     }
 
     public function validationDefault(Validator $validator): Validator
