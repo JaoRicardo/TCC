@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import { acessaPainel, menuDaPessoa, podeAbrir, primeiraTela, telaAtual } from '$lib/permissoes';
 	import logoAsas from '$lib/imgs/logo-asas.png';
+	import { caminhoDoPainel } from '$lib/stores/caminho.svelte';
 
 	let { children } = $props();
 
@@ -83,7 +84,12 @@
 			<header class="topo">
 				<div class="caminho">
 					<span>Painel da Comunidade</span>
-					{#if tela.nome}
+					{#if tela.nome && caminhoDoPainel.subtela && tela.itemDoMenu}
+						<span class="caminho-seta" aria-hidden="true">›</span>
+						<a href={tela.itemDoMenu}>{tela.nome}</a>
+						<span class="caminho-seta" aria-hidden="true">›</span>
+						<strong>{caminhoDoPainel.subtela}</strong>
+					{:else if tela.nome}
 						<span class="caminho-seta" aria-hidden="true">›</span>
 						<strong>{tela.nome}</strong>
 					{/if}
@@ -322,6 +328,10 @@
 
 	.caminho strong {
 		color: #1e2233;
+	}
+
+	.caminho a {
+		color: #1b2f5e;
 	}
 
 	.caminho-seta {

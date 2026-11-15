@@ -66,8 +66,11 @@ class QuestionsTable extends Table
         $this->hasMany('Answers', [
             'foreignKey' => 'question_id',
         ]);
+        // Opção removida da pergunta fica no banco (exclusão lógica): respostas
+        // antigas e perguntas excluídas ainda apontam para ela.
         $this->hasMany('Options', [
             'foreignKey' => 'question_id',
+            'conditions' => ['Options.deleted IS' => null],
             'sort' => ['Options.order' => 'ASC', 'Options.id' => 'ASC'],
         ]);
     }
