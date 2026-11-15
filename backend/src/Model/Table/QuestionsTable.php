@@ -59,9 +59,14 @@ class QuestionsTable extends Table
             'foreignKey' => 'depends_on_option_id',
             'className' => 'Options',
         ]);
+        // Pergunta de formulário de evento não tem categoria (ver EventForms).
         $this->belongsTo('Categories', [
             'foreignKey' => 'category_id',
-            'joinType' => 'INNER',
+            'joinType' => 'LEFT',
+        ]);
+        $this->belongsTo('EventForms', [
+            'foreignKey' => 'event_form_id',
+            'joinType' => 'LEFT',
         ]);
         $this->hasMany('Answers', [
             'foreignKey' => 'question_id',
@@ -111,7 +116,8 @@ class QuestionsTable extends Table
             ->notEmptyString('section_id');
 
         $validator
-            ->notEmptyString('category_id');
+            ->allowEmptyString('category_id')
+            ->allowEmptyString('event_form_id');
 
         $validator
             ->scalar('subscription_type')

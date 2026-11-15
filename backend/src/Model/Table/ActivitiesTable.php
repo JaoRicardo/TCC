@@ -23,6 +23,11 @@ class ActivitiesTable extends Table
             'foreignKey' => 'category_id',
             'joinType'   => 'LEFT',
         ]);
+        // Evento com formulário de inscrição (null = conclui a inscrição na hora).
+        $this->belongsTo('EventForms', [
+            'foreignKey' => 'event_form_id',
+            'joinType'   => 'LEFT',
+        ]);
         $this->belongsTo('Campings', [
             'foreignKey' => 'camping_id',
             'joinType'   => 'LEFT',

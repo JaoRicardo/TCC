@@ -82,6 +82,8 @@ export interface AtividadeFormulario {
 
 export interface FormularioData {
 	status: string;
+	/** Inscrição em evento: o formulário faz parte da inscrição, que só conclui no envio. */
+	eh_evento: boolean;
 	atividade: AtividadeFormulario | null;
 	/** Existe formulário para esta pessoa ver (ela foi selecionada E há perguntas). */
 	formulario_disponivel: boolean;

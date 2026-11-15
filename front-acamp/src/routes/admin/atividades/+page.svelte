@@ -3,7 +3,7 @@
 	import { getActivities, deleteActivity as apiDeleteActivity } from '$lib/services/activityService';
 	import type { Activity } from '$lib/types/models';
 	import { pode } from '$lib/permissoes';
-	import { enderecoDasRespostas } from '$lib/formularios';
+	import { doAcampamento, doEvento, enderecoDasRespostas } from '$lib/formularios';
 
 	let activities: Activity[] = $state([]);
 	let loading = $state(true);
@@ -113,13 +113,23 @@
 							{#if pode('inscricoes')}
 								<a href="/admin/inscricoes/{activity.id}" class="action-btn subs-btn" title="Ver Inscritos">📋</a>
 							{/if}
-							{#if activity.activitable_type === 'Campings' && activity.category?.id && pode('respostas_formularios')}
-								<a
-									href={enderecoDasRespostas(activity.category.id, 'Campista', activity.id)}
-									class="action-btn answers-btn"
-									title="Respostas do formulário"
-									aria-label="Respostas do formulário de {activity.name}"
-								>📝</a>
+							{#if pode('respostas_formularios')}
+								{@const alvo =
+									activity.activitable_type === 'Campings'
+										? activity.category?.id
+											? doAcampamento(activity.category.id, 'Campista')
+											: null
+										: activity.formularioId
+											? doEvento(activity.formularioId)
+											: null}
+								{#if alvo}
+									<a
+										href={enderecoDasRespostas(alvo, activity.id)}
+										class="action-btn answers-btn"
+										title="Respostas do formulário"
+										aria-label="Respostas do formulário de {activity.name}"
+									>📝</a>
+								{/if}
 							{/if}
 							{#if activity.activitable_type === 'Campings' && pode('equipes')}
 								<a href="/dashboard/equipes/{activity.id}" class="action-btn team-btn" title="Gerenciar Equipe de Servos">👥</a>
@@ -130,8 +140,7 @@
 									<a href="/admin/acampamentos/editar/{activity.id}" class="action-btn edit-btn" title="Editar Acampamento">✏️</a>
 								{/if}
 							{:else if pode('eventos')}
-								<!-- Futuro: Editar Evento genérico -->
-								<button class="action-btn edit-btn disabled" title="Em breve" disabled>✏️</button>
+								<a href="/admin/eventos/editar/{activity.id}" class="action-btn edit-btn" title="Editar Evento">✏️</a>
 							{/if}
 
 							{#if pode('excluir_atividades')}
@@ -287,12 +296,6 @@
 		border-color: #fecaca;
 	}
 	.delete-btn:hover { background-color: #fecaca; }
-
-	.disabled {
-		opacity: 0.5;
-		cursor: not-allowed;
-		filter: grayscale(1);
-	}
 
 	/* Loaders e Erros */
 	.loading-state, .error-box {

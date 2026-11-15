@@ -24,9 +24,10 @@
 		loading = false;
 	});
 
-	// Só entram as inscrições cujo acampamento já tem formulário montado e em que
-	// a pessoa está numa situação que dá direito a responder.
-	const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado'];
+	// Só entram as inscrições que já têm formulário montado e em que a pessoa está
+	// numa situação que dá direito a responder. Evento com formulário: a inscrição
+	// fica "em andamento" até enviar e vira "Inscrito" depois.
+	const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Inscrição em andamento', 'Inscrito'];
 
 	const comFormulario = $derived(
 		inscricoes.filter((i) => i.temFormulario && STATUS_COM_FORMULARIO.includes(i.status))

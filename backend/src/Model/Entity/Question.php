@@ -32,6 +32,7 @@ class Question extends Entity
 {
     protected array $_accessible = [
         'category_id' => true,
+        'event_form_id' => true,
         'subscription_type' => true,
         'text' => true,
         'order' => true,

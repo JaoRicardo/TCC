@@ -1,4 +1,5 @@
 import { apiFetch } from '$lib/api';
+import { paramsDoAlvo, type AlvoFormulario } from '$lib/formularios';
 
 /** Tipos de resposta: nome na tela e o ícone do cartão da pergunta. */
 export const TIPOS_PERGUNTA = [
@@ -21,8 +22,10 @@ export interface Opcao {
 
 export interface Pergunta {
 	id: number;
-	category_id: number;
-	subscription_type: 'Campista' | 'Servo';
+	/** null nas perguntas de formulário de evento. */
+	category_id: number | null;
+	subscription_type: 'Campista' | 'Servo' | 'Participante';
+	event_form_id: number | null;
 	text: string;
 	type: string;
 	is_required: boolean;
@@ -68,15 +71,43 @@ export interface ResumoFormulario {
 	respostas: number;
 }
 
-export async function getResumoFormularios(): Promise<{ data?: ResumoFormulario[]; error?: string }> {
+/** Evento na lista de formulários: onde o formulário é usado, ou que está sem formulário. */
+export interface EventoDoFormulario {
+	atividade_id: number;
+	nome: string;
+	inicio: string | null;
+	/** Fim das inscrições (sem ele, o início do evento). */
+	fim_inscricoes: string | null;
+	/** Inscrições ainda abertas. */
+	aberto: boolean;
+}
+
+/** Um formulário de evento na lista da tela Formulários. */
+export interface ResumoFormularioEvento {
+	id: number;
+	nome: string;
+	perguntas: number;
+	secoes: number[];
+	respostas: number;
+	eventos: EventoDoFormulario[];
+}
+
+export interface ResumoEventos {
+	formularios: ResumoFormularioEvento[];
+	/** Eventos que ainda vão acontecer sem formulário (a inscrição conclui na hora). */
+	sem_formulario: EventoDoFormulario[];
+}
+
+export async function getResumoFormularios(): Promise<{ data?: ResumoFormulario[]; eventos?: ResumoEventos; error?: string }> {
 	const res = await apiFetch('/admin/formularios/resumo');
 	const data = await res.json();
-	if (res.ok) return { data: data.data };
+	if (res.ok) return { data: data.data, eventos: data.eventos };
 	return { error: data.error || 'Erro ao carregar os formulários' };
 }
 
-export async function getPerguntas(categoryId: number, subscriptionType: string): Promise<{ data?: Pergunta[]; error?: string }> {
-	const res = await apiFetch(`/admin/perguntas?category_id=${categoryId}&subscription_type=${subscriptionType}`);
+export async function getPerguntas(alvo: AlvoFormulario): Promise<{ data?: Pergunta[]; error?: string }> {
+	const params = new URLSearchParams(Object.entries(paramsDoAlvo(alvo)).map(([k, v]) => [k, String(v)]));
+	const res = await apiFetch(`/admin/perguntas?${params}`);
 	const data = await res.json();
 	if (res.ok) return { data: data.data };
 	return { error: data.error || 'Erro ao carregar perguntas' };
@@ -112,12 +143,11 @@ export async function restaurarPergunta(id: number): Promise<{ data?: Pergunta[]
 }
 
 /** Copia perguntas de outro formulário para o fim das seções deste. */
-export async function importarPerguntas(payload: {
-	category_id: number;
-	subscription_type: 'Campista' | 'Servo';
-	question_ids: number[];
-}): Promise<{ data?: Pergunta[]; error?: string }> {
-	const res = await apiFetch('/admin/formularios/importar', { method: 'POST', body: JSON.stringify(payload) });
+export async function importarPerguntas(destino: AlvoFormulario, questionIds: number[]): Promise<{ data?: Pergunta[]; error?: string }> {
+	const res = await apiFetch('/admin/formularios/importar', {
+		method: 'POST',
+		body: JSON.stringify({ ...paramsDoAlvo(destino), question_ids: questionIds })
+	});
 	const data = await res.json();
 	if (res.ok) return { data: data.data };
 	return { error: data.error || 'Erro ao importar as perguntas' };
@@ -147,9 +177,9 @@ export async function editarSecao(id: number, dados: { titulo?: string; ordem?: 
 /** Exclui as perguntas da seção só neste formulário. `quando` volta no "Desfazer". */
 export async function excluirPerguntasDaSecao(
 	secaoId: number,
-	formulario: { category_id: number; subscription_type: 'Campista' | 'Servo' }
+	alvo: AlvoFormulario
 ): Promise<{ data?: { excluidas: number; quando: string }; error?: string }> {
-	const res = await apiFetch(`/admin/secoes/${secaoId}/excluir-perguntas`, { method: 'POST', body: JSON.stringify(formulario) });
+	const res = await apiFetch(`/admin/secoes/${secaoId}/excluir-perguntas`, { method: 'POST', body: JSON.stringify(paramsDoAlvo(alvo)) });
 	const data = await res.json();
 	if (res.ok) return { data: { excluidas: data.excluidas, quando: data.quando } };
 	return { error: data.error || 'Erro ao excluir as perguntas da seção' };
@@ -157,9 +187,13 @@ export async function excluirPerguntasDaSecao(
 
 export async function restaurarPerguntasDaSecao(
 	secaoId: number,
-	formulario: { category_id: number; subscription_type: 'Campista' | 'Servo'; quando: string }
+	alvo: AlvoFormulario,
+	quando: string
 ): Promise<{ data?: Pergunta[]; error?: string }> {
-	const res = await apiFetch(`/admin/secoes/${secaoId}/restaurar-perguntas`, { method: 'POST', body: JSON.stringify(formulario) });
+	const res = await apiFetch(`/admin/secoes/${secaoId}/restaurar-perguntas`, {
+		method: 'POST',
+		body: JSON.stringify({ ...paramsDoAlvo(alvo), quando })
+	});
 	const data = await res.json();
 	if (res.ok) return { data: data.data };
 	return { error: data.error || 'Erro ao desfazer a exclusão' };
@@ -170,4 +204,45 @@ export async function excluirSecao(id: number): Promise<{ success: boolean; erro
 	const data = await res.json();
 	if (res.ok) return { success: true };
 	return { success: false, error: data.error || 'Erro ao excluir seção' };
+}
+
+// ─── Formulários de evento ──────────────────────────────────────────────
+
+export interface FormularioDeEvento {
+	id: number;
+	nome: string;
+}
+
+/** Para o campo "Formulário de inscrição" de Criar/Editar Evento. */
+export async function getFormulariosDeEvento(): Promise<{ data?: FormularioDeEvento[]; error?: string }> {
+	const res = await apiFetch('/admin/formularios-evento');
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Erro ao carregar os formulários de evento' };
+}
+
+/** Cria um formulário de evento, em branco ou copiando outro, e já liga aos eventos escolhidos. */
+export async function criarFormularioDeEvento(dados: {
+	nome: string;
+	copiarDe: AlvoFormulario | null;
+	eventos: number[];
+}): Promise<{ data?: FormularioDeEvento; error?: string }> {
+	const res = await apiFetch('/admin/formularios-evento', {
+		method: 'POST',
+		body: JSON.stringify({
+			nome: dados.nome,
+			copiar_de: dados.copiarDe ? paramsDoAlvo(dados.copiarDe) : null,
+			eventos: dados.eventos
+		})
+	});
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Erro ao criar o formulário' };
+}
+
+export async function renomearFormularioDeEvento(id: number, nome: string): Promise<{ data?: FormularioDeEvento; error?: string }> {
+	const res = await apiFetch(`/admin/formularios-evento/${id}`, { method: 'PATCH', body: JSON.stringify({ nome }) });
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Erro ao renomear o formulário' };
 }

@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use App\Controller\Api\ApiController;
 use App\Model\Table\UserDocumentsTable;
+use App\Service\FormulariosService;
 use Cake\Http\Response;
 
 /**
@@ -33,22 +34,67 @@ class RespostasController extends ApiController
         $identity = $this->requirePermissao('respostas_formularios');
         if ($identity instanceof Response) return $identity;
 
+        $pedida = intval($this->request->getQuery('atividade_id') ?? 0);
+
+        // Formulário de evento: as "edições" são os eventos que usam o formulário.
+        $eventFormId = intval($this->request->getQuery('event_form_id') ?? 0);
+        if ($eventFormId) {
+            if (!$this->fetchTable('EventForms')->find()->where(['id' => $eventFormId, 'deleted IS' => null])->count()) {
+                return $this->apiError('Formulário de evento não encontrado', 404);
+            }
+            $edicoes = $this->eventosDoFormulario($eventFormId);
+            $escolhida = $this->edicaoEscolhida($edicoes, $pedida);
+
+            return $this->apiResponse(['data' => [
+                'edicoes'      => $edicoes,
+                'atividade_id' => $escolhida['id'] ?? null,
+                'prazo'        => $escolhida['prazo'] ?? null,
+                'perguntas'    => $this->perguntas(FormulariosService::deEvento($eventFormId)),
+                'pessoas'      => $escolhida ? $this->pessoas($escolhida['id'], 'Participante', true) : [],
+            ]]);
+        }
+
         $categoryId = intval($this->request->getQuery('category_id') ?? 0);
         $tipo       = $this->request->getQuery('subscription_type');
         if (!$categoryId || !in_array($tipo, ['Campista', 'Servo'], true)) {
-            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
+            return $this->apiError('Informe o formulário: category_id e subscription_type (Campista|Servo), ou event_form_id', 422);
         }
 
         $edicoes = $this->edicoes($categoryId, $tipo);
-        $escolhida = $this->edicaoEscolhida($edicoes, intval($this->request->getQuery('atividade_id') ?? 0));
+        $escolhida = $this->edicaoEscolhida($edicoes, $pedida);
 
         return $this->apiResponse(['data' => [
             'edicoes'      => $edicoes,
             'atividade_id' => $escolhida['id'] ?? null,
             'prazo'        => $escolhida['prazo'] ?? null,
-            'perguntas'    => $this->perguntas($categoryId, $tipo),
+            'perguntas'    => $this->perguntas(['category_id' => $categoryId, 'subscription_type' => $tipo, 'event_form_id' => null]),
             'pessoas'      => $escolhida ? $this->pessoas($escolhida['id'], $tipo) : [],
         ]]);
+    }
+
+    /** Eventos que usam o formulário; o prazo é o fim das inscrições (sem ele, o início do evento). */
+    private function eventosDoFormulario(int $eventFormId): array
+    {
+        $eventos = $this->fetchTable('Activities')->find()
+            ->where(['event_form_id' => $eventFormId, 'camping_id IS' => null, 'deleted IS' => null])
+            ->orderBy(['start_date' => 'DESC', 'id' => 'DESC'])
+            ->all();
+
+        $agora = time();
+        $lista = [];
+        foreach ($eventos as $e) {
+            $prazo = $e->participant_registration_end_date ?? $e->start_date;
+            $lista[] = [
+                'id'     => (int)$e->id,
+                'nome'   => $e->name,
+                'inicio' => $e->start_date->format('Y-m-d'),
+                'fim'    => $e->start_date->modify('+' . max(0, (int)$e->duration_days - 1) . ' days')->format('Y-m-d'),
+                'prazo'  => $prazo?->format('Y-m-d\TH:i:s'),
+                'aberta' => $prazo !== null && $prazo->getTimestamp() > $agora,
+            ];
+        }
+
+        return $lista;
     }
 
     /** Acampamentos da categoria, do mais recente para o mais antigo, com o prazo do formulário deste tipo. */
@@ -110,15 +156,11 @@ class RespostasController extends ApiController
     }
 
     /** Perguntas do formulário, na ordem de exibição, com as opções (só as que valem). */
-    private function perguntas(int $categoryId, string $tipo): array
+    private function perguntas(array $formulario): array
     {
         $perguntas = $this->fetchTable('Questions')->find()
             ->contain(['Options', 'Sections'])
-            ->where([
-                'Questions.category_id'       => $categoryId,
-                'Questions.subscription_type' => $tipo,
-                'Questions.deleted IS'        => null,
-            ])
+            ->where(FormulariosService::condicoes($formulario, 'Questions.') + ['Questions.deleted IS' => null])
             ->orderBy(['Sections.order' => 'ASC', 'Sections.id' => 'ASC', 'Questions.order' => 'ASC'])
             ->all();
 
@@ -138,22 +180,30 @@ class RespostasController extends ApiController
         return $lista;
     }
 
-    private function pessoas(int $activityId, string $tipo): array
+    /**
+     * No acampamento: quem precisa enviar (sorteados, indicados, suplentes). No
+     * evento (sem sorteio): todos os inscritos — quem não enviou ainda está com
+     * a inscrição em andamento.
+     */
+    private function pessoas(int $activityId, string $tipo, bool $evento = false): array
     {
+        $onde = [
+            'PreRegistrations.activity_id'        => $activityId,
+            'PreRegistrations.subscription_type'  => $tipo,
+            'PreRegistrations.deleted IS'         => null,
+            'PreRegistrations.is_quitter'         => false,
+            'PreRegistrations.disqualified_at IS' => null,
+            'Users.deleted IS'                    => null,
+        ];
+        if (!$evento) {
+            $onde['OR'] = [
+                'PreRegistrations.selection_method_id IS NOT' => null,
+                'PreRegistrations.substitute_position IS NOT' => null,
+            ];
+        }
         $inscricoes = $this->fetchTable('PreRegistrations')->find()
             ->contain(['Users', 'SelectionMethods'])
-            ->where([
-                'PreRegistrations.activity_id'        => $activityId,
-                'PreRegistrations.subscription_type'  => $tipo,
-                'PreRegistrations.deleted IS'         => null,
-                'PreRegistrations.is_quitter'         => false,
-                'PreRegistrations.disqualified_at IS' => null,
-                'Users.deleted IS'                    => null,
-                'OR' => [
-                    'PreRegistrations.selection_method_id IS NOT' => null,
-                    'PreRegistrations.substitute_position IS NOT' => null,
-                ],
-            ])
+            ->where($onde)
             ->orderBy(['Users.name' => 'ASC'])
             ->all()
             ->toList();
@@ -193,7 +243,9 @@ class RespostasController extends ApiController
                     : null,
                 'telefone'      => $u->phone,
                 'email'         => $u->email,
-                'situacao'      => $i->substitute_position !== null ? 'Suplente' : ($metodo === 'Sorteio' ? 'Sorteado' : 'Indicado'),
+                'situacao'      => $evento
+                    ? ($i->form_submitted ? 'Inscrito' : 'Em andamento')
+                    : ($i->substitute_position !== null ? 'Suplente' : ($metodo === 'Sorteio' ? 'Sorteado' : 'Indicado')),
                 'enviou'        => (bool)$i->form_submitted,
                 // Datas guardadas desde 2026-11-15; inscrições anteriores vêm null.
                 'confirmado_em' => $i->selected_at?->format('Y-m-d\TH:i:s'),

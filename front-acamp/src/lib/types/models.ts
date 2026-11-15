@@ -24,6 +24,8 @@ export interface Activity {
     modified?: string;
     image?: string;
     category?: { id?: number; name: string };
+    /** Evento com formulário de inscrição (null = conclui a inscrição na hora). */
+    formularioId?: number | null;
     targetAudience?: string;
     status?: 'Em Breve' | 'Inscrições Abertas' | 'Encerrado' | string;
 }

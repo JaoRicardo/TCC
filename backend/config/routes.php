@@ -123,6 +123,9 @@ return function (RouteBuilder $routes): void {
             $builder->get('/admin/formularios/resumo', ['controller' => 'Questions', 'action' => 'resumo']);
             $builder->post('/admin/formularios/importar', ['controller' => 'Questions', 'action' => 'importar']);
             $builder->get('/admin/formularios/respostas', ['controller' => 'Respostas', 'action' => 'index']);
+            $builder->get('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'index']);
+            $builder->post('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'add']);
+            $builder->patch('/admin/formularios-evento/{id}', ['controller' => 'EventForms', 'action' => 'edit'])->setPass(['id']);
 
             // --- Documento de identidade ---
             $builder->get('/me/documento', ['controller' => 'Documentos', 'action' => 'meu']);

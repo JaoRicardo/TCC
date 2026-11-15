@@ -1,5 +1,5 @@
 import { apiFetch } from '$lib/api';
-import type { TipoInscricao } from '$lib/formularios';
+import { paramsDoAlvo, type AlvoFormulario } from '$lib/formularios';
 import type { DocumentoResumo } from '$lib/services/formularioService';
 
 /** Um acampamento da categoria, para o filtro "Acampamento" da aba Respostas. */
@@ -30,7 +30,8 @@ export interface PessoaComRespostas {
 	idade: number | null;
 	telefone: string | null;
 	email: string | null;
-	situacao: 'Sorteado' | 'Indicado' | 'Suplente';
+	/** Acampamento: Sorteado/Indicado/Suplente. Evento (sem sorteio): Inscrito/Em andamento. */
+	situacao: 'Sorteado' | 'Indicado' | 'Suplente' | 'Inscrito' | 'Em andamento';
 	enviou: boolean;
 	/** Quando foi sorteada, indicada ou entrou na fila de suplentes (null em inscrições antigas). */
 	confirmado_em: string | null;
@@ -53,11 +54,10 @@ export interface RespostasDoFormulario {
 }
 
 export async function getRespostas(
-	categoryId: number,
-	tipo: TipoInscricao,
+	alvo: AlvoFormulario,
 	atividadeId?: number | null
 ): Promise<{ data?: RespostasDoFormulario; error?: string }> {
-	const params = new URLSearchParams({ category_id: String(categoryId), subscription_type: tipo });
+	const params = new URLSearchParams(Object.entries(paramsDoAlvo(alvo)).map(([k, v]) => [k, String(v)]));
 	if (atividadeId) params.set('atividade_id', String(atividadeId));
 	const res = await apiFetch(`/admin/formularios/respostas?${params}`);
 	const data = await res.json();

@@ -1,18 +1,97 @@
 <script lang="ts">
 	/**
-	 * Lista dos formulários de acampamento: uma linha por categoria, com o
-	 * formulário de Campista e o de Servo. Cada célula diz quantas perguntas o
-	 * formulário tem e se ele está em uso (acampamento com o prazo aberto) —
-	 * inclusive o caso perigoso de estar em uso e vazio.
+	 * Lista dos formulários.
+	 *
+	 * - Acampamentos: uma linha por categoria, com o formulário de Campista e o
+	 *   de Servo. Cada célula diz quantas perguntas o formulário tem e se ele
+	 *   está em uso (acampamento com o prazo aberto) — inclusive o caso
+	 *   perigoso de estar em uso e vazio.
+	 * - Eventos: formulários com nome próprio, que cada evento escolhe no
+	 *   cadastro; mais os eventos que vão acontecer sem formulário.
 	 */
 	import { onMount } from 'svelte';
+	import { goto } from '$app/navigation';
 	import '$lib/styles/formularios.css';
-	import { getResumoFormularios, type ResumoFormulario } from '$lib/services/perguntaService';
-	import { diaEMes, enderecoDasRespostas, enderecoDoEditor, nomeCurto, tituloDoFormulario } from '$lib/formularios';
+	import Janela from '$lib/components/painel/Janela.svelte';
+	import {
+		criarFormularioDeEvento,
+		getResumoFormularios,
+		type EventoDoFormulario,
+		type ResumoEventos,
+		type ResumoFormulario
+	} from '$lib/services/perguntaService';
+	import {
+		diaEMes,
+		doAcampamento,
+		doEvento,
+		enderecoDasRespostas,
+		enderecoDoEditor,
+		nomeCurto,
+		tituloDoFormulario,
+		type AlvoFormulario
+	} from '$lib/formularios';
 	import { pode } from '$lib/permissoes';
 
 	let formularios: ResumoFormulario[] = $state([]);
+	let eventos: ResumoEventos = $state({ formularios: [], sem_formulario: [] });
 	let estado: 'carregando' | 'erro' | 'pronto' = $state('carregando');
+
+	// ─── Novo formulário de evento ───────────────────────────────────────
+	let novoAberto = $state(false);
+	let novoNome = $state('');
+	/** enderecoDoEditor() do formulário de origem, ou '' para começar em branco. */
+	let novoBase = $state('');
+	let novoEventos: number[] = $state([]);
+	let criando = $state(false);
+	let erroNovo = $state('');
+
+	/** Formulários com perguntas, para "Começar com". */
+	let bases = $derived.by(() => {
+		const lista: { alvo: AlvoFormulario; titulo: string; grupo: string }[] = [];
+		for (const f of formularios) {
+			if (f.perguntas > 0) {
+				lista.push({ alvo: doAcampamento(f.category_id, f.subscription_type), titulo: tituloDoFormulario(f.categoria, f.subscription_type), grupo: 'Acampamentos' });
+			}
+		}
+		for (const f of eventos.formularios) {
+			if (f.perguntas > 0) lista.push({ alvo: doEvento(f.id), titulo: f.nome, grupo: 'Eventos' });
+		}
+		return lista;
+	});
+
+	function abrirNovo() {
+		novoNome = '';
+		novoBase = '';
+		novoEventos = [];
+		erroNovo = '';
+		novoAberto = true;
+	}
+
+	async function criarNovo() {
+		const nome = novoNome.trim();
+		if (!nome) {
+			erroNovo = 'Dê um nome ao formulário.';
+			return;
+		}
+		criando = true;
+		erroNovo = '';
+		try {
+			const base = bases.find((b) => enderecoDoEditor(b.alvo) === novoBase);
+			const res = await criarFormularioDeEvento({ nome, copiarDe: base?.alvo ?? null, eventos: novoEventos });
+			if (res.error || !res.data) {
+				erroNovo = res.error || 'Não foi possível criar o formulário.';
+				return;
+			}
+			goto(enderecoDoEditor(doEvento(res.data.id)));
+		} catch {
+			erroNovo = 'Não foi possível criar o formulário. Verifique sua conexão.';
+		} finally {
+			criando = false;
+		}
+	}
+
+	/** "Missa de Envio (21/11)" */
+	const eventoCurto = (e: EventoDoFormulario) => `${e.nome}${e.inicio ? ` (${diaEMes(e.inicio)})` : ''}`;
 
 	/** Uma linha por categoria, na ordem que o servidor manda (Mirim → Discipulados). */
 	let linhas = $derived.by(() => {
@@ -35,6 +114,7 @@
 				return;
 			}
 			formularios = res.data;
+			eventos = res.eventos ?? { formularios: [], sem_formulario: [] };
 			estado = 'pronto';
 		} catch {
 			estado = 'erro';
@@ -80,13 +160,17 @@
 				{#if f.respostas > 0 && pode('respostas_formularios')}
 					<a
 						class="fm-btn"
-						href={enderecoDasRespostas(f.category_id, f.subscription_type)}
+						href={enderecoDasRespostas(doAcampamento(f.category_id, f.subscription_type))}
 						aria-label="Respostas de {titulo}"
 					>
 						Respostas
 					</a>
 				{/if}
-				<a class="fm-btn fm-btn--contorno" href={enderecoDoEditor(f.category_id, f.subscription_type)} aria-label="{acao} {titulo}">
+				<a
+					class="fm-btn fm-btn--contorno"
+					href={enderecoDoEditor(doAcampamento(f.category_id, f.subscription_type))}
+					aria-label="{acao} {titulo}"
+				>
 					{acao}
 				</a>
 			</div>
@@ -147,8 +231,138 @@
 				</table>
 			{/if}
 		</section>
+
+		{#if estado === 'pronto'}
+			<section class="fm-cartao tabela-cartao">
+				<div class="tabela-titulo tabela-titulo--acao">
+					<div>
+						<h2 class="fm-h2">Eventos</h2>
+						<p>
+							Eventos não têm categoria nem servos. Cada evento escolhe o formulário no próprio cadastro, e um mesmo
+							formulário pode servir para vários eventos.
+						</p>
+					</div>
+					{#if pode('formularios')}
+						<button type="button" class="fm-btn fm-btn--ouro" onclick={abrirNovo}>+ Novo formulário de evento</button>
+					{/if}
+				</div>
+
+				{#if eventos.formularios.length === 0}
+					<p class="eventos-vazio">Nenhum formulário de evento ainda. Sem formulário, a inscrição no evento termina na hora.</p>
+				{:else}
+					<table>
+						<thead>
+							<tr class="linha linha--cabecalho linha--eventos">
+								<th scope="col">Formulário</th>
+								<th scope="col">Usado nos eventos</th>
+								<th scope="col"><span class="visualmente-escondido">Ações</span></th>
+							</tr>
+						</thead>
+						<tbody>
+							{#each eventos.formularios as f (f.id)}
+								{@const acao = !pode('formularios') ? 'Ver' : f.perguntas > 0 ? 'Editar' : 'Montar'}
+								<tr class="linha linha--eventos">
+									<th scope="row" class="evento-form">
+										<span class="evento-nome">{f.nome}</span>
+										<span class="celula-nota">
+											{f.perguntas > 0
+												? `${f.perguntas} ${f.perguntas === 1 ? 'pergunta' : 'perguntas'} · ${f.secoes.length} ${f.secoes.length === 1 ? 'seção' : 'seções'}`
+												: 'Vazio: a inscrição termina na hora'}
+										</span>
+									</th>
+									<td>
+										<div class="eventos-uso">
+											{#each f.eventos as e (e.atividade_id)}
+												<span class="evento-uso">
+													<span class="selo-evento">Evento</span>{e.nome}
+													{#if e.fim_inscricoes}<span class="celula-nota">
+															· {e.aberto ? 'inscrições até' : 'inscrições encerradas em'} {diaEMes(e.fim_inscricoes)}</span
+														>{/if}
+												</span>
+											{:else}
+												<span class="celula-nota">Nenhum evento usa este formulário.</span>
+											{/each}
+										</div>
+									</td>
+									<td>
+										<div class="celula-acoes">
+											{#if f.respostas > 0 && pode('respostas_formularios')}
+												<a class="fm-btn" href={enderecoDasRespostas(doEvento(f.id))} aria-label="Respostas de {f.nome}">Respostas</a>
+											{/if}
+											<a class="fm-btn fm-btn--contorno" href={enderecoDoEditor(doEvento(f.id))} aria-label="{acao} {f.nome}">{acao}</a>
+										</div>
+									</td>
+								</tr>
+							{/each}
+						</tbody>
+					</table>
+				{/if}
+
+				{#if eventos.sem_formulario.length}
+					<p class="sem-formulario">
+						<strong>Sem formulário:</strong>
+						{eventos.sem_formulario.map(eventoCurto).join(', ')}. Neles, a inscrição termina na hora, sem perguntas.
+					</p>
+				{/if}
+			</section>
+		{/if}
 	{/if}
 </div>
+
+{#if novoAberto}
+	<Janela idTitulo="t-novo-evento" largura={600} travada={criando} onfechar={() => (novoAberto = false)}>
+		<h2 id="t-novo-evento" class="fm-janela-titulo">Novo formulário de evento</h2>
+		<form
+			class="novo"
+			onsubmit={(e) => {
+				e.preventDefault();
+				criarNovo();
+			}}
+		>
+			<label class="novo-campo">
+				<span class="fm-rotulo">Nome</span>
+				<input class="fm-campo" bind:value={novoNome} placeholder="Ex: Retiro de Carnaval" maxlength="150" data-foco-inicial />
+			</label>
+			<label class="novo-campo">
+				<span class="fm-rotulo">Começar com</span>
+				<select class="fm-campo" bind:value={novoBase}>
+					<option value="">Em branco</option>
+					{#each ['Acampamentos', 'Eventos'] as grupo}
+						{@const doGrupo = bases.filter((b) => b.grupo === grupo)}
+						{#if doGrupo.length}
+							<optgroup label="Copiar de um formulário de {grupo.toLowerCase()}">
+								{#each doGrupo as b (enderecoDoEditor(b.alvo))}
+									<option value={enderecoDoEditor(b.alvo)}>{b.titulo}</option>
+								{/each}
+							</optgroup>
+						{/if}
+					{/each}
+				</select>
+				{#if novoBase}<span class="novo-nota">As perguntas são copiadas: mudar uma depois não altera a outra.</span>{/if}
+			</label>
+			{#if eventos.sem_formulario.length}
+				<fieldset class="novo-campo novo-eventos">
+					<legend class="fm-rotulo">Usar nos eventos sem formulário <span class="novo-opcional">(opcional)</span></legend>
+					{#each eventos.sem_formulario as e (e.atividade_id)}
+						<label class="novo-evento">
+							<input type="checkbox" value={e.atividade_id} bind:group={novoEventos} />
+							{e.nome}{#if e.inicio}<span class="celula-nota"> · {diaEMes(e.inicio)}</span>{/if}
+						</label>
+					{/each}
+				</fieldset>
+			{/if}
+			{#if erroNovo}<p class="fm-erro-linha" role="alert">{erroNovo}</p>{/if}
+			<div class="fm-janela-acoes">
+				<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" disabled={criando} onclick={() => (novoAberto = false)}>
+					Cancelar
+				</button>
+				<button type="submit" class="fm-btn fm-btn--ouro fm-btn--grande" disabled={criando || !novoNome.trim()}>
+					{#if criando}<span class="fm-spinner fm-spinner--pequeno"></span>Criando...{:else}Criar e abrir{/if}
+				</button>
+			</div>
+		</form>
+	</Janela>
+{/if}
 
 <style>
 	.cabecalho {
@@ -211,6 +425,130 @@
 	.linha td,
 	.linha th {
 		padding: 0;
+	}
+
+	/* ─── Eventos ─── */
+	.tabela-titulo--acao {
+		flex-direction: row;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 20px;
+	}
+
+	.tabela-titulo--acao > div {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		max-width: 760px;
+	}
+
+	.linha--eventos {
+		grid-template-columns: minmax(200px, 0.9fr) minmax(0, 1.6fr) auto;
+		align-items: center;
+	}
+
+	.evento-form {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		text-align: left;
+	}
+
+	.evento-nome {
+		font: 600 22px/1.15 'Cormorant Garamond', serif;
+		color: var(--azul);
+	}
+
+	.eventos-uso {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.evento-uso {
+		display: flex;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 8px;
+		font-size: 16px;
+		color: var(--tinta);
+	}
+
+	.selo-evento {
+		padding: 1px 8px;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: #fffdf8;
+		background: var(--vermelho);
+		border-radius: 999px;
+	}
+
+	.eventos-vazio,
+	.sem-formulario {
+		margin: 0;
+		padding: 16px 24px 20px;
+		font-size: 15px;
+		line-height: 1.45;
+		color: var(--tinta-3);
+	}
+
+	.sem-formulario {
+		border-top: 1px solid var(--linha);
+		background: var(--cabecalho-tabela);
+	}
+
+	.visualmente-escondido {
+		position: absolute;
+		width: 1px;
+		height: 1px;
+		overflow: hidden;
+		clip: rect(0 0 0 0);
+	}
+
+	/* ─── Janela "Novo formulário de evento" ─── */
+	.novo {
+		display: flex;
+		flex-direction: column;
+		gap: 18px;
+	}
+
+	.novo-campo {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		margin: 0;
+		padding: 0;
+		border: none;
+	}
+
+	.novo-nota,
+	.novo-opcional {
+		font-size: 14px;
+		font-weight: 400;
+		letter-spacing: 0;
+		text-transform: none;
+		color: var(--tinta-3);
+	}
+
+	.novo-eventos {
+		gap: 4px;
+	}
+
+	.novo-evento {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		min-height: 40px;
+		font-size: 16px;
+		cursor: pointer;
+	}
+
+	.novo-evento input {
+		width: 20px;
+		height: 20px;
+		accent-color: var(--azul);
 	}
 
 	.categoria {

@@ -1,27 +1,28 @@
 <script lang="ts">
 	/**
 	 * Topo do formulário no painel, igual no editor e na aba Respostas: título,
-	 * "vale para todos os acampamentos…" e as abas Perguntas | Respostas. Cada
-	 * aba é uma tela (endereço próprio); a aba Respostas só aparece para quem
-	 * tem a permissão.
+	 * a linha de explicação e as abas Perguntas | Respostas. Cada aba é uma tela
+	 * (endereço próprio); a aba Respostas só aparece para quem tem a permissão.
 	 */
 	import type { Snippet } from 'svelte';
-	import { enderecoDasRespostas, enderecoDoEditor, type TipoInscricao } from '$lib/formularios';
+	import { enderecoDasRespostas, enderecoDoEditor, type AlvoFormulario } from '$lib/formularios';
 
 	let {
-		categoryId,
-		categoria,
-		tipo,
+		alvo,
+		sobretitulo,
 		titulo,
+		sub,
 		aba,
 		perguntas,
 		respostas = null,
 		lado
 	}: {
-		categoryId: number;
-		categoria: string;
-		tipo: TipoInscricao;
+		alvo: AlvoFormulario;
+		/** "Formulário de acampamento" ou "Formulário de evento". */
+		sobretitulo: string;
 		titulo: string;
+		/** Ex.: "Vale para todos os acampamentos Juvenil, ano após ano." */
+		sub: string;
 		aba: 'perguntas' | 'respostas';
 		perguntas: number;
 		/** Quantas pessoas enviaram; null esconde a aba (sem permissão). */
@@ -34,9 +35,9 @@
 <div class="topo">
 	<div class="topo-linha">
 		<div class="topo-textos">
-			<span class="fm-sobretitulo">Formulário de acampamento</span>
+			<span class="fm-sobretitulo">{sobretitulo}</span>
 			<h1 class="fm-h1">{titulo}</h1>
-			<p class="fm-sub">Vale para todos os acampamentos {categoria}, ano após ano.</p>
+			<p class="fm-sub">{sub}</p>
 		</div>
 		{#if lado}{@render lado()}{/if}
 	</div>
@@ -44,7 +45,7 @@
 		<a
 			class="aba"
 			class:aba--ativa={aba === 'perguntas'}
-			href={enderecoDoEditor(categoryId, tipo)}
+			href={enderecoDoEditor(alvo)}
 			aria-current={aba === 'perguntas' ? 'page' : undefined}
 		>
 			Perguntas<span class="contador">{perguntas}</span>
@@ -53,7 +54,7 @@
 			<a
 				class="aba"
 				class:aba--ativa={aba === 'respostas'}
-				href={enderecoDasRespostas(categoryId, tipo)}
+				href={enderecoDasRespostas(alvo)}
 				aria-current={aba === 'respostas' ? 'page' : undefined}
 			>
 				Respostas<span class="contador">{respostas}</span>

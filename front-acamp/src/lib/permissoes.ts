@@ -43,7 +43,8 @@ const ITENS_DO_MENU: ItemDoMenu[] = MENU_DO_PAINEL.flatMap((grupo) => grupo.iten
 /** Telas que não estão no menu: nome no caminho da barra superior e item do menu que fica marcado. */
 const TELAS_FORA_DO_MENU: [string, string, string][] = [
 	['/admin/inscricoes', 'Inscritos e Sorteios', '/admin/atividades'],
-	['/admin/acampamentos/editar', 'Editar acampamento', '/admin/acampamentos/criar']
+	['/admin/acampamentos/editar', 'Editar acampamento', '/admin/acampamentos/criar'],
+	['/admin/eventos/editar', 'Editar evento', '/admin/eventos/criar']
 ];
 
 /**

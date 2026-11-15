@@ -60,6 +60,7 @@ class Activity extends Entity
         'is_featured'                         => true,
         'category_id'                         => true,
         'camping_id'                          => true,
+        'event_form_id'                       => true,
         'created'                             => true,
         'modified'                            => true,
         'deleted'                             => true,

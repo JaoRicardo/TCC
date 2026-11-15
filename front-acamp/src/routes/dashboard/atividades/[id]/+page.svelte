@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { page } from "$app/stores";
+	import { goto } from "$app/navigation";
 	import { apiFetch } from "$lib/api";
 	import { auth } from "$lib/stores/auth.svelte";
 	import { getMinhasInscricoes, type MinhaInscricao } from "$lib/services/inscricaoService";
@@ -118,7 +119,7 @@
 	}
 
 	function inscricaoSlug(status?: string) {
-		if (status === "Sorteado" || status === "Indicado" || status === "Formulário Enviado") return "confirmed";
+		if (status === "Sorteado" || status === "Indicado" || status === "Formulário Enviado" || status === "Inscrito") return "confirmed";
 		if (status === "Suplente") return "waiting";
 		if (status === "Desistência" || status === "Prazo Perdido") return "cancelled";
 		return "pending";
@@ -206,6 +207,11 @@
 
 			if (res.ok) {
 				showSubscribeModal = false;
+				// Evento com formulário: a inscrição só conclui quando a pessoa envia.
+				if (data.data?.status === "Inscrição em andamento") {
+					goto(`/dashboard/formulario/${data.data.id}`);
+					return;
+				}
 				await loadMinhaInscricao(Number($page.params.id));
 			} else {
 				subscribeError = data.error || "Erro ao processar inscrição.";
@@ -275,15 +281,23 @@
 						<div class="subscribed-banner subscribed-{inscricaoSlug(minhaInscricao.status)}">
 							<div class="subscribed-banner-icon">✓</div>
 							<div>
-								<strong>Você já está inscrito(a) neste {isCamping ? "acampamento" : "evento"}!</strong>
-								<p>
-									Inscrição como <strong>{minhaInscricao.tipo}</strong> · Status atual:
-									<strong>{minhaInscricao.status}</strong>
-								</p>
-								{#if ["Sorteado", "Indicado", "Suplente", "Formulário Enviado"].includes(minhaInscricao.status)}
-									<a href="/dashboard/formulario/{minhaInscricao.id}" class="form-link-btn">
-										{minhaInscricao.status === "Formulário Enviado" ? "Ver/editar formulário" : "Preencher formulário"}
-									</a>
+								{#if minhaInscricao.status === "Inscrição em andamento"}
+									<strong>Sua inscrição neste evento está em andamento.</strong>
+									<p>Responda o formulário para concluir a inscrição. A vaga só fica garantida quando você envia.</p>
+									<a href="/dashboard/formulario/{minhaInscricao.id}" class="form-link-btn">Responder e concluir a inscrição</a>
+								{:else}
+									<strong>Você já está inscrito(a) neste {isCamping ? "acampamento" : "evento"}!</strong>
+									<p>
+										Inscrição como <strong>{minhaInscricao.tipo}</strong> · Status atual:
+										<strong>{minhaInscricao.status}</strong>
+									</p>
+									{#if ["Sorteado", "Indicado", "Suplente", "Formulário Enviado"].includes(minhaInscricao.status) || (!isCamping && minhaInscricao.temFormulario && minhaInscricao.formularioEnviado)}
+										<a href="/dashboard/formulario/{minhaInscricao.id}" class="form-link-btn">
+											{minhaInscricao.status === "Formulário Enviado" || minhaInscricao.formularioEnviado
+												? "Ver/editar formulário"
+												: "Preencher formulário"}
+										</a>
+									{/if}
 								{/if}
 							</div>
 						</div>

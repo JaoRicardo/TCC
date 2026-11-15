@@ -6,6 +6,7 @@ namespace App\Controller\Api\V1;
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Model\Table\UserDocumentsTable;
+use App\Service\FormulariosService;
 use App\Service\MercadoPagoService;
 use App\Service\PrazoFormularioService;
 use Cake\Http\Response;
@@ -99,6 +100,17 @@ class InscricoesController extends ApiController
             $erro = $this->checkAcampamentoEligibility($identity, $activity, $tipo);
             if ($erro !== null) {
                 return $this->apiError($erro, 422);
+            }
+        } else {
+            // Evento: sem sorteio, por ordem de chegada até o fim das inscrições
+            // (sem data, até o início do evento) ou até acabarem as vagas. Com
+            // formulário, a vaga só fica garantida quando a pessoa envia.
+            $fimDasInscricoes = $activity->participant_registration_end_date ?? $activity->start_date;
+            if ($fimDasInscricoes && $fimDasInscricoes->getTimestamp() < time()) {
+                return $this->apiError('As inscrições deste evento terminaram.', 422);
+            }
+            if (!$this->eventoTemVaga($activity)) {
+                return $this->apiError('As vagas deste evento acabaram.', 422);
             }
         }
 
@@ -434,16 +446,13 @@ class InscricoesController extends ApiController
         }
 
         $activity = $preReg->activity ?? null;
-        $camping  = $this->campingDaInscricao($preReg);
         $status   = $this->calcularStatus($preReg);
+        $ehEvento = $this->ehEvento($preReg);
 
-        $prazo        = $this->prazoFormularioService->prazoDaInscricao($preReg, $camping);
+        $prazo        = $this->prazoDoFormulario($preReg);
         $prazoVencido = $prazo !== null && $prazo->getTimestamp() < time();
 
-        $categoryId = $activity->category->id ?? null;
-        $questions  = $categoryId
-            ? $this->perguntasDoFormulario((int)$categoryId, (string)$preReg->subscription_type)
-            : [];
+        $questions = $this->perguntasDoFormulario($preReg);
 
         // Três coisas diferentes, que antes estavam misturadas num único
         // "formulario_disponivel": (1) é a vez dessa pessoa responder,
@@ -452,7 +461,7 @@ class InscricoesController extends ApiController
         //
         // Suplente responde o formulário junto dos sorteados, no mesmo prazo: é o
         // que permite chamá-lo na hora em que uma vaga é liberada.
-        $statusPermite     = in_array($status, self::STATUS_COM_FORMULARIO, true);
+        $statusPermite     = $this->statusPermiteFormulario($preReg, $status);
         $formularioMontado = !empty($questions);
         $temFormulario     = $statusPermite && $formularioMontado;
         $editavel          = $temFormulario && !$prazoVencido;
@@ -476,8 +485,11 @@ class InscricoesController extends ApiController
                     $prazo,
                     (bool)$preReg->form_submitted,
                     $preReg->substitute_position !== null,
-                    (string)$preReg->disqualification_reason
+                    (string)$preReg->disqualification_reason,
+                    $ehEvento
                 ),
+                // Evento: o formulário faz parte da inscrição, que só conclui no envio.
+                'eh_evento'             => $ehEvento,
                 'respondido'            => (bool)$preReg->form_submitted,
                 // Primeiro envio (guardado desde 2026-11-15; envios anteriores vêm null).
                 'enviado_em'            => $preReg->form_submitted_at?->format('Y-m-d\TH:i'),
@@ -521,9 +533,22 @@ class InscricoesController extends ApiController
         mixed $prazo,
         bool $jaEnviado,
         bool $eraSuplente,
-        string $motivoDesclassificacao = ''
+        string $motivoDesclassificacao = '',
+        bool $ehEvento = false
     ): ?string {
         $prazoFmt = $prazo !== null ? $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i') : null;
+
+        if ($ehEvento) {
+            if (!$statusPermite) return 'Esta inscrição foi cancelada, então não há formulário para responder.';
+            if (!$formularioMontado) return null; // evento sem perguntas: a inscrição já está concluída
+            if ($prazoVencido) {
+                return $jaEnviado
+                    ? "As inscrições terminaram em {$prazoFmt}. Suas respostas não podem mais ser alteradas."
+                    : "As inscrições terminaram em {$prazoFmt} e o formulário não foi enviado, então a inscrição não foi concluída.";
+            }
+
+            return null;
+        }
 
         if (!$statusPermite) {
             if ($status === 'Prazo Perdido' && $motivoDesclassificacao === PrazoFormularioService::MOTIVO_PRAZO_PAGAMENTO) {
@@ -564,15 +589,14 @@ class InscricoesController extends ApiController
     }
 
     // Perguntas de um formulário (categoria + tipo de inscrição), na ordem de exibição.
-    private function perguntasDoFormulario(int $categoryId, string $subscriptionType): array
+    private function perguntasDoFormulario(object $preReg): array
     {
+        $formulario = $this->formularioDaInscricao($preReg);
+        if ($formulario === null) return [];
+
         return $this->Questions->find()
             ->contain(['Options', 'Sections'])
-            ->where([
-                'Questions.category_id'       => $categoryId,
-                'Questions.subscription_type' => $subscriptionType,
-                'Questions.deleted IS'        => null,
-            ])
+            ->where(FormulariosService::condicoes($formulario, 'Questions.') + ['Questions.deleted IS' => null])
             ->orderBy(['Sections.order' => 'ASC', 'Questions.order' => 'ASC'])
             ->all()
             ->toArray();
@@ -722,7 +746,7 @@ class InscricoesController extends ApiController
         }
 
         $status = $this->calcularStatus($preReg);
-        if (!in_array($status, self::STATUS_COM_FORMULARIO, true)) {
+        if (!$this->statusPermiteFormulario($preReg, $status)) {
             return $this->apiError(
                 $status === 'Prazo Perdido'
                     ? 'O prazo para responder o formulário terminou.'
@@ -735,27 +759,31 @@ class InscricoesController extends ApiController
         if (!$activity) {
             return $this->apiError('Atividade não encontrada', 404);
         }
+        $ehEvento = $this->ehEvento($preReg);
 
         // Prazo fechado: não aceita mais nem primeira resposta nem correção.
-        $camping = $this->campingDaInscricao($preReg);
-        if ($this->prazoFormularioService->prazoVencido($preReg, $camping)) {
-            $prazo = $this->prazoFormularioService->prazoDaInscricao($preReg, $camping);
-            $quando = $prazo !== null ? $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i') : 'já';
+        // (Evento: o prazo é o fim das inscrições.)
+        $prazo = $this->prazoDoFormulario($preReg);
+        if ($prazo !== null && $prazo->getTimestamp() < time()) {
+            $quando = $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i');
 
-            return $this->apiError("O prazo para responder o formulário terminou em {$quando}.", 422);
+            return $this->apiError(
+                $ehEvento
+                    ? "As inscrições terminaram em {$quando}."
+                    : "O prazo para responder o formulário terminou em {$quando}.",
+                422
+            );
         }
 
-        $categoryId = $activity->category->id ?? null;
-        $questions  = $categoryId
-            ? $this->perguntasDoFormulario((int)$categoryId, (string)$preReg->subscription_type)
-            : [];
+        $questions = $this->perguntasDoFormulario($preReg);
 
         // Sem perguntas cadastradas não existe "formulário enviado": antes dessa
         // checagem era possível enviar um formulário vazio e a inscrição ficava
         // marcada como respondida sem nenhum dado.
         if (empty($questions)) {
             return $this->apiError(
-                'A organização ainda não montou o formulário deste acampamento, então não há nada para enviar.',
+                'A organização ainda não montou o formulário ' . ($ehEvento ? 'deste evento' : 'deste acampamento')
+                    . ', então não há nada para enviar.',
                 422
             );
         }
@@ -799,7 +827,20 @@ class InscricoesController extends ApiController
         }
 
         $salvas = 0;
-        $ok = $this->Answers->getConnection()->transactional(function () use ($questions, $visiveis, $enviadas, $preReg, &$salvas) {
+        $semVaga = false;
+        $ok = $this->Answers->getConnection()->transactional(function () use ($questions, $visiveis, $enviadas, $preReg, $activity, $ehEvento, &$salvas, &$semVaga) {
+            // Evento: a vaga só é garantida no primeiro envio, por ordem de chegada.
+            // A linha do evento fica travada até o fim da transação, então dois
+            // envios ao mesmo tempo não levam a mesma última vaga.
+            if ($ehEvento && !$preReg->form_submitted) {
+                $evento = $this->Activities->find()->where(['id' => $activity->id])->epilog('FOR UPDATE')->first();
+                if (!$this->eventoTemVaga($evento)) {
+                    $semVaga = true;
+
+                    return false;
+                }
+            }
+
             // Inclui as excluídas: uma pergunta respondida de novo reaproveita a
             // mesma linha em vez de criar outra.
             $existentes = $this->Answers->find()
@@ -845,6 +886,9 @@ class InscricoesController extends ApiController
             return (bool)$this->PreRegistrations->save($preReg);
         });
 
+        if ($semVaga) {
+            return $this->apiError('As vagas deste evento acabaram antes do envio, então a inscrição não foi concluída.', 422);
+        }
         if (!$ok) {
             return $this->apiError('Não foi possível salvar o formulário. Tente novamente.', 500);
         }
@@ -1038,22 +1082,35 @@ class InscricoesController extends ApiController
      */
     private function temFormularioMontado(object $preReg): bool
     {
-        $categoryId = $preReg->activity->category_id ?? ($preReg->activity->category->id ?? null);
-        if ($categoryId === null) return false;
+        $formulario = $this->formularioDaInscricao($preReg);
+        if ($formulario === null) return false;
 
-        $chave = $categoryId . '|' . $preReg->subscription_type;
-
+        $chave = implode('|', array_map(fn($v) => (string)$v, $formulario));
         if (!array_key_exists($chave, $this->formulariosCache)) {
             $this->formulariosCache[$chave] = $this->Questions->find()
-                ->where([
-                    'category_id'       => $categoryId,
-                    'subscription_type' => $preReg->subscription_type,
-                    'deleted IS'        => null,
-                ])
+                ->where(FormulariosService::condicoes($formulario) + ['deleted IS' => null])
                 ->count() > 0;
         }
 
         return $this->formulariosCache[$chave];
+    }
+
+    /**
+     * Qual formulário a inscrição responde: acampamento = categoria + tipo
+     * (Campista/Servo); evento = o formulário escolhido para ele (null se não tem).
+     */
+    private function formularioDaInscricao(object $preReg): ?array
+    {
+        $activity = $preReg->activity ?? null;
+        if (!$activity) return null;
+        if ($activity->camping_id === null) {
+            return $activity->event_form_id ? FormulariosService::deEvento((int)$activity->event_form_id) : null;
+        }
+        $categoryId = $activity->category_id ?? ($activity->category->id ?? null);
+
+        return $categoryId === null
+            ? null
+            : ['category_id' => (int)$categoryId, 'subscription_type' => (string)$preReg->subscription_type, 'event_form_id' => null];
     }
 
     private function formatarDataHora(mixed $valor): ?string
@@ -1185,9 +1242,62 @@ class InscricoesController extends ApiController
         }
     }
 
+    /** Inscrição em evento (atividade sem acampamento). */
+    private function ehEvento(object $preReg): bool
+    {
+        return isset($preReg->activity) && $preReg->activity->camping_id === null;
+    }
+
+    /**
+     * Até quando dá para responder: no acampamento, o prazo do formulário; no
+     * evento, o fim das inscrições (sem ele, o início do evento).
+     */
+    private function prazoDoFormulario(object $preReg): mixed
+    {
+        if ($this->ehEvento($preReg)) {
+            return $preReg->activity->participant_registration_end_date ?? $preReg->activity->start_date;
+        }
+
+        return $this->prazoFormularioService->prazoDaInscricao($preReg, $this->campingDaInscricao($preReg));
+    }
+
+    /** O formulário vale para a situação desta inscrição? */
+    private function statusPermiteFormulario(object $preReg, string $status): bool
+    {
+        return $this->ehEvento($preReg)
+            ? in_array($status, ['Inscrição em andamento', 'Inscrito'], true)
+            : in_array($status, self::STATUS_COM_FORMULARIO, true);
+    }
+
+    /**
+     * Ainda há vaga no evento? Por ordem de chegada, contando quem já concluiu
+     * a inscrição: com formulário, quem enviou (a vaga só é garantida no envio);
+     * sem formulário, todos os inscritos. No envio, chamar dentro da transação
+     * com a linha do evento travada, para duas pessoas não levarem a mesma vaga.
+     */
+    private function eventoTemVaga(object $activity): bool
+    {
+        if ((int)$activity->total_vacancies <= 0) return true;
+
+        $concluidas = ['activity_id' => $activity->id, 'deleted IS' => null, 'is_quitter' => false];
+        // Com formulário, só conta quem enviou; sem formulário, toda inscrição já é concluída.
+        if ($activity->event_form_id) $concluidas['form_submitted'] = true;
+
+        return $this->PreRegistrations->find()->where($concluidas)->count() < (int)$activity->total_vacancies;
+    }
+
     private function calcularStatus(object $preReg): string
     {
         if ($preReg->is_quitter) return 'Desistência';
+        // Evento não tem sorteio. Com formulário (que tenha perguntas), a
+        // inscrição só conclui quando a pessoa envia.
+        if ($this->ehEvento($preReg)) {
+            $pendente = $preReg->activity->event_form_id !== null
+                && !$preReg->form_submitted
+                && $this->temFormularioMontado($preReg);
+
+            return $pendente ? 'Inscrição em andamento' : 'Inscrito';
+        }
         // Perdeu o prazo do formulário: a vaga já foi repassada a um suplente.
         // Vem antes do sorteio/indicação de propósito — o selection_method_id
         // continua gravado (registra como a pessoa tinha sido escolhida), então
@@ -1207,10 +1317,7 @@ class InscricoesController extends ApiController
         $activity = $preReg->activity ?? null;
 
         $status = $this->calcularStatus($preReg);
-        $prazoFormulario = $this->prazoFormularioService->prazoDaInscricao(
-            $preReg,
-            $this->campingDaInscricao($preReg)
-        );
+        $prazoFormulario = $this->prazoDoFormulario($preReg);
 
         return [
             'id'           => $preReg->id,
@@ -1221,7 +1328,7 @@ class InscricoesController extends ApiController
             // Prazo e pendências do formulário, para o painel avisar antes de vencer.
             'prazoFormulario'    => $prazoFormulario?->format('Y-m-d\TH:i'),
             'formularioEnviado'  => (bool)$preReg->form_submitted,
-            'formularioPendente' => in_array($status, ['Sorteado', 'Indicado', 'Suplente'], true)
+            'formularioPendente' => in_array($status, ['Sorteado', 'Indicado', 'Suplente', 'Inscrição em andamento'], true)
                 && !$preReg->form_submitted,
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.

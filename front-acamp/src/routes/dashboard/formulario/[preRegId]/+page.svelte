@@ -373,16 +373,31 @@
 		return partes.join(' · ');
 	});
 
+	/** Evento: o formulário faz parte da inscrição, que só conclui no envio. */
+	let ehEvento = $derived.by(() => {
+		if (!form) return false;
+		return form.eh_evento;
+	});
+
 	let textoDoPrazo = $derived.by(() => {
 		const prazo = form?.prazo;
 		if (!prazo) return '';
+		if (ehEvento) {
+			if (prazo.vencido) return `As inscrições terminaram em ${diaMes(prazo.limite)}.`;
+			if (form?.respondido) return `Inscrição concluída. Dá para alterar as respostas até ${diaEHora(prazo.limite)}.`;
+			return `Responda para concluir sua inscrição. As inscrições vão até ${diaEHora(prazo.limite)}.`;
+		}
 		if (prazo.vencido) return `O prazo terminou em ${diaMes(prazo.limite)}. As respostas não podem mais ser alteradas.`;
 		if (form?.respondido) return `Dá para alterar as respostas até ${diaEHora(prazo.limite)}.`;
 		if (prazo.eh_suplente) return `Envie até ${diaEHora(prazo.limite)}: só é chamado para uma vaga quem já enviou.`;
 		return `Envie até ${diaEHora(prazo.limite)}. Quem não enviar até lá perde a vaga.`;
 	});
 
-	let rotuloDoEnvio = $derived(ehRevisao && erroEnvio !== null ? 'Tentar de novo' : ehRevisao ? 'Enviar formulário' : etapa === 0 ? 'Está tudo certo, continuar' : 'Próxima etapa →');
+	let rotuloDoEnvio = $derived.by(() => {
+		if (ehRevisao && erroEnvio !== null) return 'Tentar de novo';
+		if (ehRevisao) return ehEvento && form && !form.respondido ? 'Enviar e concluir inscrição' : 'Enviar formulário';
+		return etapa === 0 ? 'Está tudo certo, continuar' : 'Próxima etapa →';
+	});
 
 	function tipoDoCampo(q: PerguntaFormulario): { type: string; inputmode: 'text' | 'tel' | 'decimal' } {
 		if (q.type === 'data') return { type: 'date', inputmode: 'text' };
@@ -596,7 +611,11 @@
 	</header>
 
 	<main class="folha" bind:this={topo}>
-		<a href="/dashboard/formularios" class="voltar">← Meus Formulários</a>
+		{#if ehEvento && form?.atividade}
+			<a href="/dashboard/atividades/{form.atividade.id}" class="voltar">← Detalhes do evento</a>
+		{:else}
+			<a href="/dashboard/formularios" class="voltar">← Meus Formulários</a>
+		{/if}
 
 		{#if estado === 'inicio' || estado === 'carregando'}
 			<section class="cartao centro" role="status">
@@ -614,7 +633,9 @@
 			<section class="vitral">
 				<div class="vitral-trama"></div>
 				<div class="vitral-conteudo">
-					<span class="sobretitulo"><span class="sobretitulo-traco"></span>Formulário de inscrição</span>
+					<span class="sobretitulo"
+						><span class="sobretitulo-traco"></span>{ehEvento ? 'Inscrição no evento' : 'Formulário de inscrição'}</span
+					>
 					<h1>{form.atividade?.nome ?? 'Formulário de inscrição'}</h1>
 					{#if infoDoAcampamento}<p>{infoDoAcampamento}</p>{/if}
 				</div>
@@ -639,7 +660,9 @@
 			{:else}
 				{#if form.prazo}
 					<div class="faixa-prazo">
-						<span class="selo" class:selo--aviso={form.status === 'Suplente'}><span class="selo-ponto"></span>{form.status}</span>
+						<span class="selo" class:selo--aviso={form.status === 'Suplente' || form.status === 'Inscrição em andamento'}
+							><span class="selo-ponto"></span>{form.status}</span
+						>
 						<span>{textoDoPrazo}</span>
 					</div>
 				{/if}
@@ -655,12 +678,14 @@
 					<!-- ─── Enviado ─── -->
 					<section class="cartao centro">
 						<span class="check" aria-hidden="true">✓</span>
-						<h2>Formulário enviado!</h2>
+						<h2>{ehEvento ? 'Inscrição concluída!' : 'Formulário enviado!'}</h2>
 						<p class="nota nota--centro">
 							{form.enviado_em ? `Recebemos as respostas em ${diaEHora(form.enviado_em)}.` : 'Recebemos as respostas.'}
-							{#if form.editavel && form.prazo}Dá para alterar até {diaEHora(form.prazo.limite)}.{/if}
+							{#if form.editavel && form.prazo}
+								Dá para alterar até {diaEHora(form.prazo.limite)}{ehEvento ? ', quando as inscrições fecham' : ''}.
+							{/if}
 						</p>
-						<span class="selo"><span class="selo-ponto"></span>Formulário Enviado</span>
+						<span class="selo"><span class="selo-ponto"></span>{ehEvento ? 'Inscrito(a)' : 'Formulário Enviado'}</span>
 						<div class="acoes-centro">
 							{#if form.editavel}
 								<button type="button" class="btn btn--contorno" onclick={verRespostas}>Ver ou alterar respostas</button>
@@ -669,6 +694,15 @@
 						</div>
 					</section>
 					{@render pagamento()}
+				{:else if modo === 'encerrado' && !form.respondido}
+					<!-- ─── Evento: inscrições terminaram sem o formulário enviado ─── -->
+					<section class="cartao centro">
+						<div class="arco"><img src={logoAsas} alt="" /></div>
+						<h2>{form.prazo ? `As inscrições terminaram em ${diaMes(form.prazo.limite)}.` : 'As inscrições terminaram.'}</h2>
+						<p class="nota nota--centro">{form.motivo_indisponivel}</p>
+						<span class="selo selo--perigo"><span class="selo-ponto"></span>Inscrição não concluída</span>
+						<p class="nota nota--centro">Se acha que houve um engano, fale com a organização do evento.</p>
+					</section>
 				{:else if modo === 'encerrado'}
 					<!-- ─── Prazo encerrado depois de enviar: só leitura ─── -->
 					<section class="cartao">
@@ -807,7 +841,8 @@
 							<div class="cartao-cabeca">
 								<h2>Revise antes de enviar</h2>
 								<p class="nota">
-									Confira tudo.{#if form.prazo && !form.prazo.vencido}
+									Confira tudo.{#if ehEvento && !form.respondido}
+										Ao enviar, sua inscrição fica concluída.{:else if form.prazo && !form.prazo.vencido}
 										Depois de enviar, ainda dá para alterar até {diaEHora(form.prazo.limite)}.{/if}
 								</p>
 							</div>

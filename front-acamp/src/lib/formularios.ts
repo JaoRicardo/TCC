@@ -2,19 +2,51 @@
 
 export type TipoInscricao = 'Campista' | 'Servo';
 
+/**
+ * Qual formulário: de acampamento (categoria × Campista/Servo) ou de evento
+ * (modelo com nome próprio que os eventos usam).
+ */
+export type AlvoFormulario =
+	| { tipo: 'acampamento'; categoryId: number; inscricao: TipoInscricao }
+	| { tipo: 'evento'; eventFormId: number };
+
+export const doAcampamento = (categoryId: number, inscricao: TipoInscricao): AlvoFormulario => ({
+	tipo: 'acampamento',
+	categoryId,
+	inscricao
+});
+
+export const doEvento = (eventFormId: number): AlvoFormulario => ({ tipo: 'evento', eventFormId });
+
+/** Como o servidor identifica o formulário: category_id + subscription_type, ou event_form_id. */
+export function paramsDoAlvo(alvo: AlvoFormulario): { category_id: number; subscription_type: TipoInscricao } | { event_form_id: number } {
+	return alvo.tipo === 'evento'
+		? { event_form_id: alvo.eventFormId }
+		: { category_id: alvo.categoryId, subscription_type: alvo.inscricao };
+}
+
+export function mesmoAlvo(a: AlvoFormulario, b: AlvoFormulario): boolean {
+	if (a.tipo === 'evento' || b.tipo === 'evento') {
+		return a.tipo === 'evento' && b.tipo === 'evento' && a.eventFormId === b.eventFormId;
+	}
+	return a.categoryId === b.categoryId && a.inscricao === b.inscricao;
+}
+
 /** "Juvenil · Campista" */
 export function tituloDoFormulario(categoria: string, tipo: TipoInscricao): string {
 	return `${categoria} · ${tipo}`;
 }
 
-/** Endereço do editor: /admin/formularios/{categoria}/campista|servo */
-export function enderecoDoEditor(categoryId: number, tipo: TipoInscricao): string {
-	return `/admin/formularios/${categoryId}/${tipo.toLowerCase()}`;
+/** Endereço do editor: /admin/formularios/{categoria}/campista|servo ou /admin/formularios/evento/{id} */
+export function enderecoDoEditor(alvo: AlvoFormulario): string {
+	return alvo.tipo === 'evento'
+		? `/admin/formularios/evento/${alvo.eventFormId}`
+		: `/admin/formularios/${alvo.categoryId}/${alvo.inscricao.toLowerCase()}`;
 }
 
-/** Aba Respostas do formulário, opcionalmente já numa edição de acampamento. */
-export function enderecoDasRespostas(categoryId: number, tipo: TipoInscricao, atividadeId?: number): string {
-	const base = `${enderecoDoEditor(categoryId, tipo)}/respostas`;
+/** Aba Respostas do formulário, opcionalmente já numa edição (acampamento ou evento). */
+export function enderecoDasRespostas(alvo: AlvoFormulario, atividadeId?: number): string {
+	const base = `${enderecoDoEditor(alvo)}/respostas`;
 	return atividadeId ? `${base}?atividade=${atividadeId}` : base;
 }
 

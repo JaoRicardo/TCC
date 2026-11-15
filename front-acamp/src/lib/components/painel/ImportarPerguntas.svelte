@@ -1,3 +1,10 @@
+<script lang="ts" module>
+	import type { AlvoFormulario } from '$lib/formularios';
+
+	/** Um formulário de onde dá para copiar perguntas (de acampamento ou de evento). */
+	export type FonteDeImportacao = { alvo: AlvoFormulario; titulo: string; perguntas: number };
+</script>
+
 <script lang="ts">
 	/**
 	 * Painel lateral "Importar perguntas": escolhe o formulário de origem, marca
@@ -7,41 +14,32 @@
 	 */
 	import { onMount } from 'svelte';
 	import Janela from './Janela.svelte';
-	import {
-		TIPOS_PERGUNTA,
-		TIPOS_COM_OPCOES,
-		getPerguntas,
-		importarPerguntas,
-		type Pergunta,
-		type ResumoFormulario
-	} from '$lib/services/perguntaService';
-	import { tituloDoFormulario, type TipoInscricao } from '$lib/formularios';
+	import { TIPOS_PERGUNTA, TIPOS_COM_OPCOES, getPerguntas, importarPerguntas, type Pergunta } from '$lib/services/perguntaService';
+	import { enderecoDoEditor } from '$lib/formularios';
 
 	let {
-		categoryId,
-		tipo,
+		destino,
 		titulo,
 		fontes,
 		ativaPrazo = null,
 		onfechar,
 		onimportado
 	}: {
-		categoryId: number;
-		tipo: TipoInscricao;
+		destino: AlvoFormulario;
 		/** Formulário de destino, ex.: "Juvenil · Servo". */
 		titulo: string;
 		/** Formulários com perguntas, menos este. */
-		fontes: ResumoFormulario[];
-		/** Formulário vazio e em uso: importar ativa o prazo. */
-		ativaPrazo?: { total: number; quem: string; prazo: string } | null;
+		fontes: FonteDeImportacao[];
+		/** Formulário vazio e em uso: o aviso de que importar ativa o prazo. */
+		ativaPrazo?: string | null;
 		onfechar: () => void;
 		onimportado: (copiadas: Pergunta[], deQual: string) => void;
 	} = $props();
 
 	type Grupo = { id: number; titulo: string; itens: { p: Pergunta; filha: boolean }[] };
 
-	const chave = (f: ResumoFormulario) => `${f.category_id}|${f.subscription_type}`;
-	const nomeDe = (f: ResumoFormulario) => tituloDoFormulario(f.categoria, f.subscription_type);
+	const chave = (f: FonteDeImportacao) => enderecoDoEditor(f.alvo);
+	const nomeDe = (f: FonteDeImportacao) => f.titulo;
 
 	let fonte = $state('');
 	let perguntas: Pergunta[] = $state([]);
@@ -63,7 +61,7 @@
 		marcadas = new Set();
 		abertas = [];
 		try {
-			const res = await getPerguntas(f.category_id, f.subscription_type);
+			const res = await getPerguntas(f.alvo);
 			if (fonte !== k) return;
 			if (res.error || !res.data) {
 				erro = 'Não foi possível carregar as perguntas deste formulário.';
@@ -80,7 +78,9 @@
 
 	// Começa pelo outro formulário da mesma categoria (Juvenil · Servo ← Juvenil · Campista).
 	onMount(() => {
-		const inicial = fontes.find((f) => f.category_id === categoryId) ?? fontes[0];
+		const mesmaCategoria = (f: FonteDeImportacao) =>
+			destino.tipo === 'acampamento' && f.alvo.tipo === 'acampamento' && f.alvo.categoryId === destino.categoryId;
+		const inicial = fontes.find(mesmaCategoria) ?? fontes[0];
 		if (inicial) escolher(chave(inicial));
 	});
 
@@ -173,7 +173,7 @@
 		importando = true;
 		erro = '';
 		try {
-			const res = await importarPerguntas({ category_id: categoryId, subscription_type: tipo, question_ids: [...marcadas] });
+			const res = await importarPerguntas(destino, [...marcadas]);
 			if (res.error || !res.data) {
 				erro = res.error || 'Não foi possível importar as perguntas.';
 				return;
@@ -283,10 +283,7 @@
 
 		{#if ativaPrazo}
 			<div class="fm-aviso fm-aviso--ambar fm-aviso--pequeno">
-				<span>
-					<strong>Este formulário está vazio e em uso.</strong> Ao importar, os {ativaPrazo.total}
-					{ativaPrazo.quem} passam a ter que enviar até <strong>{ativaPrazo.prazo}</strong>. Quem não enviar até lá perde a vaga.
-				</span>
+				<span>{ativaPrazo}</span>
 			</div>
 		{/if}
 
@@ -301,7 +298,11 @@
 			{#if importando}
 				<span class="fm-spinner fm-spinner--pequeno"></span>Importando...
 			{:else}
-				Importar {total} {total === 1 ? 'pergunta' : 'perguntas'}{ativaPrazo ? ' e ativar o prazo' : ''}
+				Importar {total} {total === 1 ? 'pergunta' : 'perguntas'}{ativaPrazo
+					? destino.tipo === 'evento'
+						? ' e ativar o formulário'
+						: ' e ativar o prazo'
+					: ''}
 			{/if}
 		</button>
 	</div>

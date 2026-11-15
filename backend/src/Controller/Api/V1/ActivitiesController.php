@@ -97,12 +97,16 @@ class ActivitiesController extends ApiController
     {
         $this->request->allowMethod(['get']);
 
-        $identity = $this->requirePermissao('acampamentos');
+        $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
             ->where(['Activities.id' => $id, 'Activities.deleted IS' => null])
             ->first();
+
+        // Acampamento pede "acampamentos"; evento (tela Editar Evento), "eventos".
+        $identity = $this->requirePermissao(($activity->camping_id ?? null) !== null || !$activity ? 'acampamentos' : 'eventos');
+        if ($identity instanceof Response) return $identity;
 
         if (!$activity) return $this->apiError('Atividade não encontrada', 404);
 
@@ -114,6 +118,17 @@ class ActivitiesController extends ApiController
             'activity' => $this->entityToFormArray($activity),
             'camping'  => $camping ? $this->entityToFormArray($camping) : null,
         ]]);
+    }
+
+    /** Formulário de evento escolhido no cadastro (vazio ou inexistente = nenhum). */
+    private function formularioDeEvento(array $ad): ?int
+    {
+        $id = intval($ad['event_form_id'] ?? 0);
+        if (!$id) return null;
+
+        $existe = $this->fetchTable('EventForms')->find()->where(['id' => $id, 'deleted IS' => null])->count();
+
+        return $existe ? $id : null;
     }
 
     /** Datas no formato do <input type="datetime-local">, sem conversão de fuso. */
@@ -226,6 +241,8 @@ class ActivitiesController extends ApiController
                 'min_age'                             => isset($ad['min_age']) && $ad['min_age'] !== '' && $ad['min_age'] !== 'null' ? intval($ad['min_age']) : null,
                 'max_age'                             => isset($ad['max_age']) && $ad['max_age'] !== '' && $ad['max_age'] !== 'null' ? intval($ad['max_age']) : null,
                 'target_audience'                     => $ad['target_audience'] ?? 'Geral',
+                // Formulário de inscrição do evento (vazio = a inscrição conclui na hora).
+                'event_form_id'                       => $type === 'Event' ? $this->formularioDeEvento($ad) : null,
             ]);
 
             if (!$this->Activities->save($activity)) {
@@ -323,6 +340,9 @@ class ActivitiesController extends ApiController
         if (isset($ad['participant_payment_link']))            $activityPatch['participant_payment_link']            = $ad['participant_payment_link'];
         if (isset($ad['servant_payment_date']))                $activityPatch['servant_payment_date']                = $ad['servant_payment_date'];
         if (isset($ad['servant_payment_link']))                $activityPatch['servant_payment_link']                = $ad['servant_payment_link'];
+        if (array_key_exists('event_form_id', $ad) && $activity->camping_id === null) {
+            $activityPatch['event_form_id'] = $this->formularioDeEvento($ad);
+        }
 
         $this->Activities->patchEntity($activity, $activityPatch);
         if (!$this->Activities->save($activity)) {
@@ -1121,6 +1141,8 @@ class ActivitiesController extends ApiController
             'linkPagamentoParticipante'  => $activity->participant_payment_link,
             'prazoPagamentoServo'        => $activity->servant_payment_date?->format('Y-m-d\TH:i'),
             'linkPagamentoServo'         => $activity->servant_payment_link,
+            // Evento com formulário: a inscrição só conclui quando a pessoa envia.
+            'formularioId'               => $activity->event_form_id,
         ];
 
         // Backward-compat aliases used by frontend
@@ -1163,6 +1185,17 @@ class ActivitiesController extends ApiController
         $now       = new \DateTime();
         $inscStart = $activity->participant_registration_start_date;
         $inscEnd   = $activity->participant_registration_end_date;
+
+        // Evento: sem data de início, as inscrições já estão abertas (o campo só
+        // existe para evento pago, "Início das vendas"); sem fim, vão até o
+        // início do evento. Antes, evento gratuito ficava "Em Breve" para sempre.
+        if ($activity->camping_id === null) {
+            if ($inscStart && $now < $inscStart) return 'Em Breve';
+            $fim = $inscEnd ?? $activity->start_date;
+
+            return $fim && $now <= $fim ? 'Inscrições Abertas' : 'Encerrado';
+        }
+
         if (!$inscStart) return 'Em Breve';
         if ($now < $inscStart) return 'Em Breve';
         if ($now <= $inscEnd) return 'Inscrições Abertas';

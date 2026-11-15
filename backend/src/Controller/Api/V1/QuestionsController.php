@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Service\FormulariosService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -33,27 +34,19 @@ class QuestionsController extends ApiController
         $this->Sections  = $this->fetchTable('Sections');
     }
 
-    // GET /admin/perguntas?category_id=&subscription_type=
+    // GET /admin/perguntas?category_id=&subscription_type=  (ou ?event_form_id=)
     public function index(): Response
     {
         $this->request->allowMethod(['get']);
         $identity = $this->requirePermissao(self::LER);
         if ($identity instanceof Response) return $identity;
 
-        $categoryId       = intval($this->request->getQuery('category_id') ?? 0);
-        $subscriptionType = $this->request->getQuery('subscription_type');
-
-        if (!$categoryId || !in_array($subscriptionType, ['Campista', 'Servo'], true)) {
-            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
-        }
+        $formulario = $this->formulario($this->request->getQueryParams());
+        if ($formulario instanceof Response) return $formulario;
 
         $questions = $this->Questions->find()
             ->contain(['Options', 'Sections'])
-            ->where([
-                'Questions.category_id'         => $categoryId,
-                'Questions.subscription_type'   => $subscriptionType,
-                'Questions.deleted IS'           => null,
-            ])
+            ->where(FormulariosService::condicoes($formulario, 'Questions.') + ['Questions.deleted IS' => null])
             ->orderBy(['Sections.order' => 'ASC', 'Questions.order' => 'ASC'])
             ->all()
             ->toArray();
@@ -72,8 +65,8 @@ class QuestionsController extends ApiController
         if ($identity instanceof Response) return $identity;
 
         $data             = $this->request->getData();
-        $categoryId       = intval($data['category_id'] ?? 0);
-        $subscriptionType = $data['subscription_type'] ?? null;
+        $formulario       = $this->formulario($data);
+        if ($formulario instanceof Response) return $formulario;
         $texto            = trim((string)($data['text'] ?? ''));
         $tipo             = $data['type'] ?? null;
         $isRequired       = (bool)($data['is_required'] ?? true);
@@ -82,9 +75,6 @@ class QuestionsController extends ApiController
         $dependsOnOptionId = !empty($data['depends_on_option_id']) ? intval($data['depends_on_option_id']) : null;
         $opcoes           = $this->lerOpcoes((array)($data['options'] ?? []));
 
-        if (!$categoryId || !in_array($subscriptionType, ['Campista', 'Servo'], true)) {
-            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
-        }
         if ($texto === '' || !in_array($tipo, self::TIPOS_VALIDOS, true)) {
             return $this->apiError('Informe o texto e um tipo válido (' . implode(', ', self::TIPOS_VALIDOS) . ')', 422);
         }
@@ -106,19 +96,17 @@ class QuestionsController extends ApiController
         }
 
         if ($dependsOnOptionId !== null) {
-            $erro = $this->validarCondicao($categoryId, $subscriptionType, $sectionId, $dependsOnOptionId);
+            $erro = $this->validarCondicao($formulario, $sectionId, $dependsOnOptionId);
             if ($erro !== null) return $this->apiError($erro, 422);
         }
 
         $maxOrd = $this->Questions->find()
             ->select(['order'])
-            ->where(['category_id' => $categoryId, 'subscription_type' => $subscriptionType, 'section_id' => $sectionId, 'deleted IS' => null])
+            ->where(FormulariosService::condicoes($formulario) + ['section_id' => $sectionId, 'deleted IS' => null])
             ->orderBy(['order' => 'DESC'])
             ->first();
 
-        $question = $this->Questions->newEntity([
-            'category_id'          => $categoryId,
-            'subscription_type'    => $subscriptionType,
+        $question = $this->Questions->newEntity($formulario + [
             'text'                 => $texto,
             'type'                 => $tipo,
             'is_required'          => $isRequired,
@@ -170,8 +158,7 @@ class QuestionsController extends ApiController
             $novaCondicao = $patch['depends_on_option_id'];
             if ($novaCondicao !== null && $novaCondicao !== $question->depends_on_option_id) {
                 $erro = $this->validarCondicao(
-                    (int)$question->category_id,
-                    (string)$question->subscription_type,
+                    FormulariosService::formularioDa($question),
                     $patch['section_id'] ?? (int)$question->section_id,
                     $novaCondicao,
                     $id
@@ -314,11 +301,12 @@ class QuestionsController extends ApiController
     /**
      * POST /admin/formularios/importar
      *
-     * Copia perguntas de um formulário para outro (category_id + subscription_type
-     * de destino, question_ids da origem). As cópias entram no fim de cada seção,
-     * com opções novas, e as condicionais passam a depender das opções copiadas.
+     * Copia perguntas de um formulário para outro (destino: category_id +
+     * subscription_type ou event_form_id; question_ids da origem, que pode ser de
+     * acampamento ou de evento). As cópias entram no fim de cada seção, com
+     * opções novas, e as condicionais passam a depender das opções copiadas.
      * Uma condicional vem sempre com a pergunta de que depende, mesmo que só ela
-     * tenha sido marcada.
+     * tenha sido marcada (ver FormulariosService::copiar).
      */
     public function importar(): Response
     {
@@ -326,126 +314,30 @@ class QuestionsController extends ApiController
         $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
-        $data             = $this->request->getData();
-        $categoryId       = intval($data['category_id'] ?? 0);
-        $subscriptionType = $data['subscription_type'] ?? null;
-        $ids              = array_values(array_unique(array_filter(array_map('intval', (array)($data['question_ids'] ?? [])))));
-
-        if (!$categoryId || !in_array($subscriptionType, ['Campista', 'Servo'], true)) {
-            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
-        }
-        $categoria = $this->fetchTable('Categories')->find()
-            ->where(['id' => $categoryId, 'type' => 'Acampamento', 'deleted IS' => null])
-            ->first();
-        if (!$categoria) return $this->apiError('Formulário de destino não encontrado', 404);
+        $data    = $this->request->getData();
+        $destino = $this->formulario($data);
+        if ($destino instanceof Response) return $destino;
+        $ids     = array_values(array_unique(array_filter(array_map('intval', (array)($data['question_ids'] ?? [])))));
         if (!$ids) return $this->apiError('Escolha ao menos uma pergunta para importar', 422);
 
-        $buscar = fn(array $quais) => $this->Questions->find()
-            ->contain(['Options', 'Sections'])
-            ->where(['Questions.id IN' => $quais, 'Questions.deleted IS' => null])
+        $origem = $this->Questions->find()
+            ->where(['id IN' => $ids, 'deleted IS' => null])
             ->all()
-            ->indexBy('id')
-            ->toArray();
-
-        $origem = $buscar($ids);
+            ->toList();
         if (count($origem) !== count($ids)) {
             return $this->apiError('Alguma das perguntas escolhidas não existe mais. Recarregue a página e tente de novo.', 422);
         }
-        $primeira = current($origem);
-        $mesmoFormulario = fn($q) => (int)$q->category_id === (int)$primeira->category_id
-            && $q->subscription_type === $primeira->subscription_type;
+        $daOrigem = FormulariosService::formularioDa($origem[0]);
         foreach ($origem as $q) {
-            if (!$mesmoFormulario($q)) {
+            if (FormulariosService::formularioDa($q) != $daOrigem) {
                 return $this->apiError('As perguntas precisam ser todas do mesmo formulário', 422);
             }
         }
-        if ((int)$primeira->category_id === $categoryId && $primeira->subscription_type === $subscriptionType) {
+        if ($daOrigem == $destino) {
             return $this->apiError('Escolha um formulário diferente deste para importar', 422);
         }
 
-        // Traz junto a pergunta de que cada condicional depende. Repete porque a
-        // pai trazida agora pode, ela mesma, depender de outra.
-        do {
-            $antes = count($origem);
-            $opcoesNaLista = [];
-            foreach ($origem as $q) {
-                foreach ($q->options ?? [] as $o) $opcoesNaLista[(int)$o->id] = true;
-            }
-            $faltam = [];
-            foreach ($origem as $q) {
-                $opcaoPai = $q->depends_on_option_id;
-                if ($opcaoPai !== null && !isset($opcoesNaLista[(int)$opcaoPai])) $faltam[] = (int)$opcaoPai;
-            }
-            if ($faltam) {
-                $pais = $this->Options->find()
-                    ->select(['question_id'])
-                    ->where(['id IN' => $faltam, 'deleted IS' => null])
-                    ->all()
-                    ->extract('question_id')
-                    ->toList();
-                $pais = array_diff(array_map('intval', $pais), array_keys($origem));
-                if ($pais) $origem += array_filter($buscar($pais), $mesmoFormulario);
-            }
-        } while (count($origem) > $antes);
-
-        // Na ordem do formulário de origem: seção por seção, pergunta por pergunta.
-        $lista = array_values($origem);
-        usort($lista, fn($a, $b) => [$a->section->order ?? 0, $a->section_id, $a->order, $a->id]
-            <=> [$b->section->order ?? 0, $b->section_id, $b->order, $b->id]);
-
-        $novas = $this->Questions->getConnection()->transactional(function () use ($lista, $categoryId, $subscriptionType) {
-            $proximaOrdem = [];
-            $opcaoNova = [];
-            $criadas = [];
-            foreach ($lista as $q) {
-                $secaoId = (int)$q->section_id;
-                if (!isset($proximaOrdem[$secaoId])) {
-                    $ultima = $this->Questions->find()
-                        ->select(['order'])
-                        ->where([
-                            'category_id' => $categoryId,
-                            'subscription_type' => $subscriptionType,
-                            'section_id' => $secaoId,
-                            'deleted IS' => null,
-                        ])
-                        ->orderBy(['order' => 'DESC'])
-                        ->first();
-                    $proximaOrdem[$secaoId] = ($ultima->order ?? 0) + 1;
-                }
-
-                $copia = $this->Questions->newEntity([
-                    'category_id'           => $categoryId,
-                    'subscription_type'     => $subscriptionType,
-                    'text'                  => $q->text,
-                    'type'                  => $q->type,
-                    'is_required'           => (bool)$q->is_required,
-                    'section_id'            => $secaoId,
-                    'order'                 => $proximaOrdem[$secaoId]++,
-                    'accept_generic_answer' => (bool)$q->accept_generic_answer,
-                    'depends_on_option_id'  => null,
-                ]);
-                $this->Questions->saveOrFail($copia);
-                $criadas[(int)$q->id] = $copia;
-
-                foreach ($q->options ?? [] as $o) {
-                    $nova = $this->Options->newEntity(['question_id' => $copia->id, 'text' => $o->text, 'order' => $o->order]);
-                    $this->Options->saveOrFail($nova);
-                    $opcaoNova[(int)$o->id] = (int)$nova->id;
-                }
-            }
-
-            // Depois de todas criadas, porque a pai pode estar numa seção que vem depois.
-            foreach ($lista as $q) {
-                $opcaoPai = $q->depends_on_option_id === null ? null : (int)$q->depends_on_option_id;
-                // Pai que não veio (excluída ou de outro formulário): a cópia fica sem condição.
-                if ($opcaoPai === null || !isset($opcaoNova[$opcaoPai])) continue;
-                $copia = $criadas[(int)$q->id];
-                $copia->depends_on_option_id = $opcaoNova[$opcaoPai];
-                $this->Questions->saveOrFail($copia);
-            }
-
-            return array_map(fn($c) => (int)$c->id, array_values($criadas));
-        });
+        $novas = (new FormulariosService())->copiar($ids, $destino);
 
         $copiadas = $this->Questions->find()
             ->contain(['Options', 'Sections'])
@@ -488,7 +380,7 @@ class QuestionsController extends ApiController
 
         $porSecao = $this->Questions->find();
         $porSecao->select(['category_id', 'subscription_type', 'section_id', 'n' => $porSecao->func()->count('*')])
-            ->where(['deleted IS' => null])
+            ->where(['deleted IS' => null, 'event_form_id IS' => null])
             ->groupBy(['category_id', 'subscription_type', 'section_id']);
         $usoDasSecoes = [];
         foreach ($porSecao->all() as $linha) {
@@ -536,7 +428,87 @@ class QuestionsController extends ApiController
             }
         }
 
-        return $this->apiResponse(['data' => $formularios]);
+        return $this->apiResponse(['data' => $formularios, 'eventos' => $this->resumoDosEventos()]);
+    }
+
+    /**
+     * Card "Eventos" da lista: os formulários de evento (com perguntas, seções,
+     * quantos enviaram e em quais eventos são usados) e os eventos que ainda vão
+     * acontecer sem formulário (neles a inscrição termina na hora).
+     */
+    private function resumoDosEventos(): array
+    {
+        $formularios = $this->fetchTable('EventForms')->find()
+            ->where(['deleted IS' => null])
+            ->orderBy(['name' => 'ASC'])
+            ->all()
+            ->toList();
+        $ids = array_map(fn($f) => (int)$f->id, $formularios);
+
+        $secoesDe = [];
+        $enviaramEm = [];
+        $usosDe = [];
+        if ($ids) {
+            $porSecao = $this->Questions->find();
+            $porSecao->select(['event_form_id', 'section_id', 'n' => $porSecao->func()->count('*')])
+                ->where(['deleted IS' => null, 'event_form_id IN' => $ids])
+                ->groupBy(['event_form_id', 'section_id'])
+                ->disableHydration();
+            foreach ($porSecao->all() as $l) {
+                $secoesDe[(int)$l['event_form_id']][(int)$l['section_id']] = (int)$l['n'];
+            }
+
+            $enviaram = $this->fetchTable('PreRegistrations')->find();
+            $enviaram->select(['event_form_id' => 'Activities.event_form_id', 'n' => $enviaram->func()->count('*')])
+                ->innerJoin(['Activities' => 'activities'], ['Activities.id = PreRegistrations.activity_id', 'Activities.deleted IS' => null])
+                ->innerJoin(['Users' => 'users'], ['Users.id = PreRegistrations.user_id', 'Users.deleted IS' => null])
+                ->where([
+                    'Activities.event_form_id IN'     => $ids,
+                    'PreRegistrations.form_submitted' => true,
+                    'PreRegistrations.deleted IS'     => null,
+                    'PreRegistrations.is_quitter'     => false,
+                ])
+                ->groupBy(['Activities.event_form_id'])
+                ->disableHydration();
+            foreach ($enviaram->all() as $l) {
+                $enviaramEm[(int)$l['event_form_id']] = (int)$l['n'];
+            }
+        }
+
+        $eventos = $this->fetchTable('Activities')->find()
+            ->select(['id', 'name', 'start_date', 'participant_registration_end_date', 'event_form_id'])
+            ->where(['camping_id IS' => null, 'deleted IS' => null])
+            ->orderBy(['start_date' => 'ASC'])
+            ->all();
+        $semFormulario = [];
+        $agora = time();
+        foreach ($eventos as $e) {
+            $fim = $e->participant_registration_end_date ?? $e->start_date;
+            $item = [
+                'atividade_id'   => (int)$e->id,
+                'nome'           => $e->name,
+                'inicio'         => $e->start_date?->format('Y-m-d\TH:i'),
+                'fim_inscricoes' => $fim?->format('Y-m-d\TH:i'),
+                'aberto'         => $fim !== null && $fim->getTimestamp() > $agora,
+            ];
+            if ($e->event_form_id !== null) {
+                $usosDe[(int)$e->event_form_id][] = $item;
+            } elseif ($e->start_date && $e->start_date->getTimestamp() > $agora) {
+                $semFormulario[] = $item;
+            }
+        }
+
+        return [
+            'formularios' => array_map(fn($f) => [
+                'id'        => (int)$f->id,
+                'nome'      => $f->name,
+                'perguntas' => array_sum($secoesDe[(int)$f->id] ?? []),
+                'secoes'    => array_keys($secoesDe[(int)$f->id] ?? []),
+                'respostas' => $enviaramEm[(int)$f->id] ?? 0,
+                'eventos'   => $usosDe[(int)$f->id] ?? [],
+            ], $formularios),
+            'sem_formulario' => $semFormulario,
+        ];
     }
 
     /** Acampamento da categoria com o prazo do formulário aberto (o que vence primeiro), ou null. */
@@ -655,7 +627,7 @@ class QuestionsController extends ApiController
     }
 
     /**
-     * POST /admin/secoes/{id}/excluir-perguntas  (category_id, subscription_type)
+     * POST /admin/secoes/{id}/excluir-perguntas  (category_id + subscription_type, ou event_form_id)
      *
      * Exclui de uma vez as perguntas da seção em UM formulário, com as
      * condicionais delas. A seção é compartilhada e continua existindo nos
@@ -668,18 +640,12 @@ class QuestionsController extends ApiController
         $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
-        $formulario = $this->formularioDoPedido();
+        $formulario = $this->formulario($this->request->getData());
         if ($formulario instanceof Response) return $formulario;
-        [$categoryId, $subscriptionType] = $formulario;
 
         $ids = $this->Questions->find()
             ->select(['id'])
-            ->where([
-                'category_id'       => $categoryId,
-                'subscription_type' => $subscriptionType,
-                'section_id'        => $id,
-                'deleted IS'        => null,
-            ])
+            ->where(FormulariosService::condicoes($formulario) + ['section_id' => $id, 'deleted IS' => null])
             ->all()
             ->extract('id')
             ->toList();
@@ -709,7 +675,7 @@ class QuestionsController extends ApiController
     }
 
     /**
-     * POST /admin/secoes/{id}/restaurar-perguntas  (category_id, subscription_type, quando)
+     * POST /admin/secoes/{id}/restaurar-perguntas  (o formulário e quando)
      *
      * O "Desfazer" de excluirPerguntasDaSecao: volta as perguntas da seção
      * excluídas naquele instante e as condicionais delas que saíram junto.
@@ -720,9 +686,8 @@ class QuestionsController extends ApiController
         $identity = $this->requirePermissao('formularios');
         if ($identity instanceof Response) return $identity;
 
-        $formulario = $this->formularioDoPedido();
+        $formulario = $this->formulario($this->request->getData());
         if ($formulario instanceof Response) return $formulario;
-        [$categoryId, $subscriptionType] = $formulario;
 
         $quando = (string)$this->request->getData('quando');
         $data = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $quando);
@@ -732,12 +697,7 @@ class QuestionsController extends ApiController
 
         $daSecao = $this->Questions->find()
             ->select(['id'])
-            ->where([
-                'category_id'       => $categoryId,
-                'subscription_type' => $subscriptionType,
-                'section_id'        => $id,
-                'deleted'           => $quando,
-            ])
+            ->where(FormulariosService::condicoes($formulario) + ['section_id' => $id, 'deleted' => $quando])
             ->all()
             ->extract('id')
             ->toList();
@@ -774,19 +734,30 @@ class QuestionsController extends ApiController
     }
 
     /**
-     * category_id e subscription_type do corpo do pedido, ou o erro 422.
+     * O formulário pedido (query ou corpo): de acampamento (category_id +
+     * Campista/Servo) ou de evento (event_form_id). Ver FormulariosService.
      *
-     * @return array{0: int, 1: string}|\Cake\Http\Response
+     * @return array{category_id: int|null, subscription_type: string, event_form_id: int|null}|\Cake\Http\Response
      */
-    private function formularioDoPedido(): array|Response
+    private function formulario(array $fonte): array|Response
     {
-        $categoryId       = intval($this->request->getData('category_id') ?? 0);
-        $subscriptionType = $this->request->getData('subscription_type');
-        if (!$categoryId || !in_array($subscriptionType, ['Campista', 'Servo'], true)) {
-            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
+        $eventFormId = intval($fonte['event_form_id'] ?? 0);
+        if ($eventFormId) {
+            $existe = $this->fetchTable('EventForms')->find()
+                ->where(['id' => $eventFormId, 'deleted IS' => null])
+                ->count();
+            if (!$existe) return $this->apiError('Formulário de evento não encontrado', 404);
+
+            return FormulariosService::deEvento($eventFormId);
         }
 
-        return [$categoryId, $subscriptionType];
+        $categoryId = intval($fonte['category_id'] ?? 0);
+        $tipo       = $fonte['subscription_type'] ?? null;
+        if (!$categoryId || !in_array($tipo, ['Campista', 'Servo'], true)) {
+            return $this->apiError('Informe o formulário: category_id e subscription_type (Campista|Servo), ou event_form_id', 422);
+        }
+
+        return ['category_id' => $categoryId, 'subscription_type' => $tipo, 'event_form_id' => null];
     }
 
     // ─── Helpers ────────────────────────────────────────────────────────────
@@ -902,8 +873,7 @@ class QuestionsController extends ApiController
      * condicional. Devolve a mensagem de erro, ou null se puder.
      */
     private function validarCondicao(
-        int $categoryId,
-        string $subscriptionType,
+        array $formulario,
         int $sectionId,
         int $optionId,
         ?int $questionId = null
@@ -916,7 +886,7 @@ class QuestionsController extends ApiController
         if ((int)$pai->id === $questionId) {
             return 'Uma pergunta não pode depender da própria resposta.';
         }
-        if ((int)$pai->category_id !== $categoryId || $pai->subscription_type !== $subscriptionType) {
+        if (FormulariosService::formularioDa($pai) != $formulario) {
             return 'A pergunta de que esta depende é de outro formulário.';
         }
         if ((int)$pai->section_id !== $sectionId) {
@@ -983,6 +953,7 @@ class QuestionsController extends ApiController
             'id'                   => $q->id,
             'category_id'          => $q->category_id,
             'subscription_type'    => $q->subscription_type,
+            'event_form_id'        => $q->event_form_id,
             'text'                 => $q->text,
             'type'                 => $q->type,
             'is_required'          => (bool)$q->is_required,
