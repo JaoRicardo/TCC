@@ -13,7 +13,13 @@
 	import CabecalhoFormulario from '$lib/components/painel/CabecalhoFormulario.svelte';
 	import { caminhoDoPainel } from '$lib/stores/caminho.svelte';
 	import { getResumoFormularios, TIPOS_PERGUNTA, type ResumoFormulario } from '$lib/services/perguntaService';
-	import { getRespostas, type PessoaComRespostas, type RespostasDoFormulario } from '$lib/services/respostaService';
+	import {
+		abrirDocumento,
+		conferirDocumento,
+		getRespostas,
+		type PessoaComRespostas,
+		type RespostasDoFormulario
+	} from '$lib/services/respostaService';
 	import {
 		diaEMes,
 		enderecoDasRespostas,
@@ -295,6 +301,32 @@
 
 	// ─── Por pessoa ──────────────────────────────────────────────────────
 	let pessoa = $derived(enviaram[Math.min(pessoaIdx, Math.max(0, enviaram.length - 1))]);
+
+	// ─── Documento (só com a permissão "documentos") ──────────────────────
+	let conferindo = $state(false);
+
+	async function verDocumento(id: number) {
+		const res = await abrirDocumento(id);
+		if (res.error) avisar(res.error);
+	}
+
+	async function marcarConferido(p: PessoaComRespostas, conferido: boolean) {
+		if (!p.documento) return;
+		conferindo = true;
+		try {
+			const res = await conferirDocumento(p.documento.id, conferido);
+			if (res.data) {
+				p.documento = res.data;
+				avisar(conferido ? 'Documento marcado como conferido.' : 'Documento desmarcado.');
+			} else {
+				avisar(res.error || 'Não foi possível marcar o documento.');
+			}
+		} catch {
+			avisar('Não foi possível marcar o documento. Verifique sua conexão.');
+		} finally {
+			conferindo = false;
+		}
+	}
 
 	// ─── Tabela ──────────────────────────────────────────────────────────
 	let colunasDaTabela = $derived(perguntas.filter((q) => secoesTabela.includes(q.section.id)));
@@ -672,6 +704,38 @@
 							{/if}
 						</div>
 					</div>
+					{#if pessoa.documento !== undefined}
+						<!-- Só vem para quem tem a permissão "Documentos de identidade". -->
+						{@const doc = pessoa.documento}
+						<div class="ficha-documento nao-imprimir" class:ficha-documento--ok={doc?.conferido_em}>
+							<div class="ficha-documento-textos">
+								<span class="fm-rotulo">Documento de identidade</span>
+								{#if doc}
+									<span>
+										{doc.tipo === 'pdf' ? 'PDF' : 'Foto'} enviado{doc.enviado_em ? ` em ${diaEHora(doc.enviado_em)}` : ''}{doc.conferido_em
+											? ` · conferido em ${diaEHora(doc.conferido_em)}`
+											: ' · ainda não conferido'}
+									</span>
+								{:else}
+									<span>Ainda não enviou. Quem enviou o formulário antes de o documento ser pedido fica sem ele.</span>
+								{/if}
+							</div>
+							{#if doc}
+								<div class="acoes-linha">
+									<button type="button" class="fm-btn" onclick={() => verDocumento(doc.id)}>Ver documento</button>
+									<button
+										type="button"
+										class="fm-btn"
+										class:fm-btn--ouro={!doc.conferido_em}
+										disabled={conferindo}
+										onclick={() => marcarConferido(pessoa, !doc.conferido_em)}
+									>
+										{doc.conferido_em ? 'Desmarcar conferido' : 'Marcar como conferido'}
+									</button>
+								</div>
+							{/if}
+						</div>
+					{/if}
 					{#each secoes as s (s.id)}
 						{@const daSecao = perguntas.filter((q) => q.section.id === s.id && valePara(q, pessoa))}
 						{#if daSecao.length}
@@ -1292,6 +1356,31 @@
 		display: flex;
 		flex-direction: column;
 		align-items: flex-end;
+		gap: 4px;
+	}
+
+	.ficha-documento {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		flex-wrap: wrap;
+		padding: 14px 16px;
+		font-size: 15px;
+		color: var(--tinta-2);
+		background: #fbf0d6;
+		border: 1px solid #ebd39c;
+		border-radius: 10px;
+	}
+
+	.ficha-documento--ok {
+		background: #e4f1e8;
+		border-color: #b9d9c4;
+	}
+
+	.ficha-documento-textos {
+		display: flex;
+		flex-direction: column;
 		gap: 4px;
 	}
 

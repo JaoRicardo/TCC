@@ -61,3 +61,6 @@ yarn-error.log
 
 # Imagens enviadas pelo sistema (dado de execucao, acompanha o banco)
 /webroot/uploads/
+
+# Documentos de identidade enviados pelas pessoas (dado pessoal, fora do git e da pasta pública)
+/storage/

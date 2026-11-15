@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/api';
 import type { TipoInscricao } from '$lib/formularios';
+import type { DocumentoResumo } from '$lib/services/formularioService';
 
 /** Um acampamento da categoria, para o filtro "Acampamento" da aba Respostas. */
 export interface Edicao {
@@ -39,6 +40,8 @@ export interface PessoaComRespostas {
 	atualizado_em: string | null;
 	/** id da pergunta → resposta gravada (escolha = id da opção; múltipla = JSON de ids). */
 	respostas: Record<string, string>;
+	/** Só vem para quem tem a permissão "documentos" (null = não enviou). */
+	documento?: DocumentoResumo | null;
 }
 
 export interface RespostasDoFormulario {
@@ -60,4 +63,29 @@ export async function getRespostas(
 	const data = await res.json();
 	if (res.ok) return { data: data.data };
 	return { error: data.error || 'Erro ao carregar as respostas' };
+}
+
+/**
+ * Abre o arquivo do documento numa aba nova. O arquivo só sai pela rota
+ * protegida (com o token), então vem como blob e não como link direto.
+ */
+export async function abrirDocumento(id: number): Promise<{ error?: string }> {
+	const aba = window.open('', '_blank');
+	const res = await apiFetch(`/admin/documentos/${id}/arquivo`);
+	if (!res.ok) {
+		aba?.close();
+		return { error: 'Não foi possível abrir o documento.' };
+	}
+	const url = URL.createObjectURL(await res.blob());
+	if (aba) aba.location.href = url;
+	else window.location.href = url;
+	setTimeout(() => URL.revokeObjectURL(url), 60_000);
+	return {};
+}
+
+export async function conferirDocumento(id: number, conferido: boolean): Promise<{ data?: DocumentoResumo; error?: string }> {
+	const res = await apiFetch(`/admin/documentos/${id}/conferir`, { method: 'POST', body: JSON.stringify({ conferido }) });
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Não foi possível marcar o documento.' };
 }

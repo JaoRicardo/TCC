@@ -1,989 +1,1729 @@
 <script lang="ts">
 	/**
-	 * Ficha de inscrição do acampamento, no formato de formulário (uma pergunta por
-	 * cartão), com as cores do projeto.
+	 * Formulário de inscrição do acampamento, pensado primeiro para o celular:
+	 * uma etapa por vez — "Seus dados" (do cadastro), uma etapa por seção e a
+	 * Revisão. As respostas ficam guardadas no aparelho (rascunho) a cada
+	 * mudança, então dá para fechar a aba e continuar depois, e um envio que
+	 * falha não perde nada. O servidor continua validando tudo no envio.
 	 *
-	 * Responde quem foi sorteado, indicado ou está como suplente. No fim vem a etapa
-	 * de pagamento, que só é cobrada de quem tem vaga — suplente não paga.
+	 * Mirim: quem preenche é o responsável, na conta da criança — os textos
+	 * falam da criança.
+	 *
+	 * Depois do envio vem o pagamento da taxa, que só é cobrado de quem tem vaga
+	 * (suplente não paga).
 	 */
-	import { onMount } from 'svelte';
+	import { tick } from 'svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { loginUrl } from '$lib/redirect';
+	import banner from '$lib/imgs/banner.png';
+	import logoAsas from '$lib/imgs/logo-asas.png';
 	import {
 		getFormulario,
 		salvarFormulario,
 		iniciarPagamento,
+		enviarDocumento,
 		type FormularioData,
-		type PerguntaFormulario
+		type PerguntaFormulario,
+		type SecaoFormulario
 	} from '$lib/services/formularioService';
 
+	type Modo = 'preenchendo' | 'enviado' | 'encerrado';
+	type Rascunho = { respostas: Record<string, string>; etapa: number; salvoEm: string };
+
 	const preRegId = $page.params.preRegId as string;
+	const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
 
+	let estado: 'inicio' | 'carregando' | 'erro' | 'pronto' = $state('inicio');
+	let erroCarregar = $state('');
 	let form: FormularioData | null = $state(null);
-	let loading = $state(true);
-	let error = $state('');
-	let saving = $state(false);
-	let saveError = $state('');
-	let saveSuccess = $state(false);
+	let respostas: Record<number, string> = $state({});
+	let modo: Modo = $state('preenchendo');
+	let etapa = $state(0);
+	let mostrarErros = $state(false);
+	let enviando = $state(false);
+	/** null = sem erro; '' = falha de conexão; texto = o que o servidor disse. */
+	let erroEnvio: string | null = $state(null);
+	let rascunhoAs = $state('');
 	let pagando = $state(false);
-	let pagamentoError = $state('');
+	let erroPagamento = $state('');
+	let topo: HTMLElement | undefined = $state();
 
-	// respostas por pergunta: para multipla_escolha guardamos um JSON de ids selecionados
-	let answers: Record<number, string> = $state({});
-
+	// ─── Entrar e carregar ───────────────────────────────────────────────
 	$effect(() => {
-		if (!auth.isLoading && !auth.isAuthenticated) {
-			window.location.href = '/login';
+		if (auth.isLoading || estado !== 'inicio') return;
+		if (!auth.isAuthenticated) {
+			goto(loginUrl($page.url.pathname), { replaceState: true });
+			return;
 		}
+		carregar();
 	});
 
-	const todasPerguntas: PerguntaFormulario[] = $derived.by(() =>
-		(form?.sections ?? []).flatMap((s) => s.questions)
-	);
-
-	/** De qual pergunta cada opção é — usado para resolver as perguntas condicionais. */
-	const perguntaDaOpcao = $derived.by(() => {
-		const mapa: Record<number, number> = {};
-		for (const q of todasPerguntas) {
-			for (const opt of q.options) mapa[opt.id] = q.id;
+	async function carregar() {
+		estado = 'carregando';
+		try {
+			const res = await getFormulario(preRegId);
+			if (res.error || !res.data) {
+				erroCarregar = res.error || 'Não foi possível carregar o formulário.';
+				estado = 'erro';
+				return;
+			}
+			aplicar(res.data);
+			estado = 'pronto';
+		} catch {
+			erroCarregar = 'Não foi possível carregar o formulário. Verifique sua conexão.';
+			estado = 'erro';
 		}
+	}
+
+	function aplicar(dados: FormularioData) {
+		form = dados;
+		const doServidor: Record<number, string> = {};
+		for (const s of dados.sections) for (const q of s.questions) doServidor[q.id] = q.answer ?? '';
+		respostas = doServidor;
+		mostrarErros = false;
+
+		if (!dados.formulario_disponivel) return;
+		if (!dados.editavel) {
+			modo = 'encerrado';
+			etapa = dados.sections.length + 1;
+			return;
+		}
+		const rascunho = lerRascunho();
+		// Rascunho mais novo que o último envio (ou sem envio): continua de onde parou.
+		if (rascunho && (!dados.enviado_em || rascunho.salvoEm > dados.enviado_em)) {
+			for (const [id, valor] of Object.entries(rascunho.respostas)) respostas[Number(id)] = valor;
+			etapa = Math.min(Math.max(0, rascunho.etapa), dados.sections.length + 1);
+			rascunhoAs = horaDe(rascunho.salvoEm);
+			modo = 'preenchendo';
+			return;
+		}
+		modo = dados.respondido ? 'enviado' : 'preenchendo';
+		etapa = 0;
+	}
+
+	// ─── Rascunho no aparelho ────────────────────────────────────────────
+	let chaveRascunho = $derived(auth.user?.id ? `rascunho-formulario:${auth.user.id}:${preRegId}` : null);
+
+	function lerRascunho(): Rascunho | null {
+		if (!chaveRascunho) return null;
+		try {
+			const bruto = localStorage.getItem(chaveRascunho);
+			return bruto ? (JSON.parse(bruto) as Rascunho) : null;
+		} catch {
+			return null;
+		}
+	}
+
+	function guardarRascunho() {
+		if (!chaveRascunho || !form?.editavel) return;
+		const agora = new Date();
+		try {
+			const rascunho: Rascunho = { respostas: { ...respostas }, etapa, salvoEm: isoLocal(agora) };
+			localStorage.setItem(chaveRascunho, JSON.stringify(rascunho));
+			rascunhoAs = horaDe(rascunho.salvoEm);
+		} catch {
+			// Navegador sem armazenamento (aba anônima, bloqueado): segue sem rascunho.
+		}
+	}
+
+	function apagarRascunho() {
+		if (!chaveRascunho) return;
+		try {
+			localStorage.removeItem(chaveRascunho);
+		} catch {
+			/* sem armazenamento: nada a apagar */
+		}
+	}
+
+	function responder(id: number, valor: string) {
+		respostas[id] = valor;
+		guardarRascunho();
+	}
+
+	// ─── Perguntas visíveis (condicionais) ───────────────────────────────
+	let todas = $derived.by(() => {
+		if (!form) return [] as PerguntaFormulario[];
+		return form.sections.flatMap((s) => s.questions);
+	});
+	let donoDaOpcao = $derived.by(() => {
+		const mapa = new Map<number, PerguntaFormulario>();
+		for (const q of todas) for (const o of q.options) mapa.set(o.id, q);
 		return mapa;
 	});
 
-	/**
-	 * Perguntas condicionais (ex.: "Qual remédio?") só aparecem quando a pergunta
-	 * da qual elas dependem foi respondida com a opção certa. A checagem é feita na
-	 * resposta daquela pergunta específica — e não em "alguma resposta do
-	 * formulário", que fazia perguntas aparecerem por coincidência de id.
-	 */
-	function perguntaVisivel(q: PerguntaFormulario, visitadas: Set<number> = new Set()): boolean {
-		if (!q.dependsOnOptionId) return true;
-
-		// Cadeia de dependências mal cadastrada (A depende de B que depende de A)
-		// não pode travar a tela.
-		if (visitadas.has(q.id)) return true;
-		visitadas.add(q.id);
-
-		const idMae = perguntaDaOpcao[q.dependsOnOptionId];
-		// Opção que não existe mais: não dá para avaliar a condição, então mostra.
-		if (!idMae) return true;
-
-		const mae = todasPerguntas.find((p) => p.id === idMae);
-		if (mae && !perguntaVisivel(mae, visitadas)) return false;
-
-		return respostaContemOpcao(answers[idMae], q.dependsOnOptionId);
-	}
-
-	/**
-	 * O valor de uma resposta como texto. Precisa existir porque `bind:value` num
-	 * `<input type="number">` guarda um número, e o resto do código trata resposta
-	 * como string (`.trim()`, JSON de múltipla escolha, comparação com id de opção).
-	 */
-	function texto(valor: unknown): string {
-		return String(valor ?? '').trim();
-	}
-
-	function respostaContemOpcao(resposta: unknown, optionId: number): boolean {
-		const valor = texto(resposta);
-		if (!valor) return false;
-		if (valor === String(optionId)) return true;
-		return parseMulti(valor).includes(optionId);
-	}
-
-	function parseMulti(raw: unknown): number[] {
-		if (!raw) return [];
+	function marcadas(valor: string | undefined): number[] {
+		const v = String(valor ?? '').trim();
+		if (!v) return [];
+		if (/^\d+$/.test(v)) return [Number(v)];
 		try {
-			const arr = JSON.parse(String(raw));
-			return Array.isArray(arr) ? arr.map(Number) : [];
+			const lista = JSON.parse(v);
+			return Array.isArray(lista) ? lista.map(Number) : [];
 		} catch {
 			return [];
 		}
 	}
 
-	const perguntasVisiveis = $derived(todasPerguntas.filter((q) => perguntaVisivel(q)));
+	/** Condicional aparece logo que a opção da pai é marcada; some (e não é enviada) se desmarcar. */
+	function visivel(q: PerguntaFormulario, vistas = new Set<number>()): boolean {
+		if (!q.dependsOnOptionId) return true;
+		if (vistas.has(q.id)) return true;
+		vistas.add(q.id);
+		const pai = donoDaOpcao.get(q.dependsOnOptionId);
+		if (!pai) return true; // opção que não existe mais: mostra
+		return visivel(pai, vistas) && marcadas(respostas[pai.id]).includes(q.dependsOnOptionId);
+	}
 
-	/** Quantas das perguntas que estão valendo já foram respondidas. */
-	const respondidas = $derived(perguntasVisiveis.filter((q) => texto(answers[q.id]) !== '').length);
+	const ehFilha = (q: PerguntaFormulario) => !!q.dependsOnOptionId && donoDaOpcao.has(q.dependsOnOptionId);
+	const visiveisDa = (s: SecaoFormulario) => s.questions.filter((q) => visivel(q));
+	const vazia = (q: PerguntaFormulario) => {
+		const v = String(respostas[q.id] ?? '').trim();
+		return v === '' || v === '[]';
+	};
+	const faltandoNa = (s: SecaoFormulario) => visiveisDa(s).filter((q) => q.isRequired && vazia(q));
+	const ehEscolha = (q: PerguntaFormulario) => ['sim_nao', 'unica_escolha', 'multipla_escolha', 'lista_suspensa'].includes(q.type);
 
-	const progresso = $derived(
-		perguntasVisiveis.length === 0
-			? 0
-			: Math.round((respondidas / perguntasVisiveis.length) * 100)
-	);
+	function textoDaResposta(q: PerguntaFormulario): string {
+		const v = String(respostas[q.id] ?? '').trim();
+		if (!v) return '';
+		if (ehEscolha(q)) {
+			const ids = marcadas(v);
+			return q.options
+				.filter((o) => ids.includes(o.id))
+				.map((o) => o.text)
+				.join(', ');
+		}
+		if (q.type === 'data' && /^\d{4}-\d{2}-\d{2}$/.test(v)) {
+			const [a, m, d] = v.split('-');
+			return `${d}/${m}/${a}`;
+		}
+		return v;
+	}
 
-	async function carregar() {
-		const res = await getFormulario(preRegId);
-		if (res.error) {
-			error = res.error;
-			loading = false;
+	// ─── Etapas ──────────────────────────────────────────────────────────
+	let secoes = $derived.by(() => {
+		if (!form) return [] as SecaoFormulario[];
+		return form.sections;
+	});
+	let totalEtapas = $derived(secoes.length + 2);
+	let ehRevisao = $derived(etapa === secoes.length + 1);
+	let secaoAtual = $derived(etapa >= 1 && etapa <= secoes.length ? secoes[etapa - 1] : null);
+	let faltando = $derived(secaoAtual ? faltandoNa(secaoAtual) : []);
+	let comErro = $derived(new Set(mostrarErros ? faltando.map((q) => q.id) : []));
+
+	let ehMirim = $derived.by(() => {
+		if (!form) return false;
+		return form.atividade?.categoria === 'Mirim';
+	});
+	let nomeDaEtapa = $derived(etapa === 0 ? (ehMirim ? 'Dados da criança' : 'Seus dados') : ehRevisao ? 'Revisão' : (secaoAtual?.title ?? ''));
+
+	async function irPara(n: number) {
+		etapa = n;
+		mostrarErros = false;
+		guardarRascunho();
+		await tick();
+		topo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	// ─── Documento de identidade ─────────────────────────────────────────
+	let enviandoDocumento = $state(false);
+	let erroDocumento = $state('');
+	/** Tentou continuar sem documento: o bloco fica marcado em vermelho. */
+	let faltaDocumento = $state(false);
+
+	async function escolherDocumento(e: Event & { currentTarget: HTMLInputElement }) {
+		const arquivo = e.currentTarget.files?.[0];
+		e.currentTarget.value = '';
+		if (!arquivo || !form) return;
+		if (arquivo.size > 5 * 1024 * 1024) {
+			erroDocumento = 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
 			return;
 		}
-		form = res.data ?? null;
-		const initial: Record<number, string> = {};
-		for (const secao of form?.sections ?? []) {
-			for (const q of secao.questions) {
-				initial[q.id] = q.answer ?? '';
+		enviandoDocumento = true;
+		erroDocumento = '';
+		try {
+			const res = await enviarDocumento(arquivo);
+			if (res.data) {
+				form.documento = res.data;
+				faltaDocumento = false;
+			} else {
+				erroDocumento = res.error || 'Não foi possível enviar o documento.';
 			}
+		} catch {
+			erroDocumento = 'Não foi possível enviar o documento. Verifique sua conexão e tente de novo.';
+		} finally {
+			enviandoDocumento = false;
 		}
-		answers = initial;
-		loading = false;
 	}
 
-	onMount(carregar);
-
-	function toggleMultiOption(questionId: number, optionId: number) {
-		const atual = parseMulti(answers[questionId]);
-		const idx = atual.indexOf(optionId);
-		if (idx >= 0) atual.splice(idx, 1);
-		else atual.push(optionId);
-		answers[questionId] = JSON.stringify(atual);
-	}
-
-	function formatarPrazo(iso: string): string {
-		const [data, hora] = iso.split('T');
-		const [y, m, d] = data.split('-');
-		return `${d}/${m}/${y} às ${hora}`;
-	}
-
-	function diasRestantes(iso: string): number {
-		return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
-	}
-
-	function formatarValor(v: number): string {
-		return v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-	}
-
-	async function handleSubmit(e: Event) {
-		e.preventDefault();
-		saving = true;
-		saveError = '';
-		saveSuccess = false;
-
-		// Conferência no navegador antes de mandar, para o erro aparecer na hora e
-		// apontando a pergunta — o backend valida de novo, ele é quem decide.
-		const faltando = perguntasVisiveis.find((q) => q.isRequired && !texto(answers[q.id]));
-		if (faltando) {
-			saveError = `A pergunta "${faltando.text}" é obrigatória.`;
-			saving = false;
-			document
-				.getElementById(`q-${faltando.id}`)
-				?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	async function proxima() {
+		if (etapa === 0 && !form?.documento) {
+			faltaDocumento = true;
+			await tick();
+			document.getElementById('bloco-documento')?.focus();
 			return;
 		}
+		if (secaoAtual && faltando.length) {
+			mostrarErros = true;
+			await tick();
+			document.getElementById('resumo-erros')?.focus();
+			return;
+		}
+		if (ehRevisao) {
+			await enviar();
+			return;
+		}
+		await irPara(etapa + 1);
+	}
 
-		const idsVisiveis = new Set(perguntasVisiveis.map((q) => q.id));
-		const payload = Object.entries(answers)
-			.filter(([question_id]) => idsVisiveis.has(Number(question_id)))
-			// String(): o campo numérico chega como number do bind:value.
-			.map(([question_id, answer]) => ({
-				question_id: Number(question_id),
-				answer: String(answer ?? '')
-			}));
-
-		const res = await salvarFormulario(preRegId, payload);
-		if (res.success) {
-			saveSuccess = true;
-			await carregar();
+	// ─── Envio ───────────────────────────────────────────────────────────
+	async function enviar() {
+		if (!form) return;
+		if (!form.documento) {
+			await irPara(0);
+			faltaDocumento = true;
+			return;
+		}
+		// Garante que nenhuma etapa ficou com obrigatória em branco (ex.: rascunho antigo).
+		const comFalta = secoes.findIndex((s) => faltandoNa(s).length > 0);
+		if (comFalta >= 0) {
+			await irPara(comFalta + 1);
+			mostrarErros = true;
+			return;
+		}
+		enviando = true;
+		erroEnvio = null;
+		const visiveis = todas.filter((q) => visivel(q));
+		const payload = visiveis.map((q) => ({ question_id: q.id, answer: String(respostas[q.id] ?? '').trim() }));
+		try {
+			const res = await salvarFormulario(preRegId, payload);
+			if (!res.success) {
+				erroEnvio = res.error ?? '';
+				return;
+			}
+			apagarRascunho();
+			const novo = await getFormulario(preRegId);
+			if (novo.data) aplicar(novo.data);
+			modo = 'enviado';
+			await tick();
 			window.scrollTo({ top: 0, behavior: 'smooth' });
-		} else {
-			saveError = res.error || 'Erro ao salvar.';
+		} catch {
+			erroEnvio = '';
+		} finally {
+			enviando = false;
 		}
-		saving = false;
 	}
 
-	async function handlePagar() {
+	function verRespostas() {
+		modo = 'preenchendo';
+		etapa = secoes.length + 1;
+	}
+
+	async function pagar() {
 		pagando = true;
-		pagamentoError = '';
-		const res = await iniciarPagamento(preRegId);
-		if (res.url) {
-			window.location.href = res.url;
-			return;
+		erroPagamento = '';
+		try {
+			const res = await iniciarPagamento(preRegId);
+			if (res.url) {
+				window.location.href = res.url;
+				return;
+			}
+			erroPagamento = res.error || 'Não foi possível iniciar o pagamento.';
+		} catch {
+			erroPagamento = 'Não foi possível iniciar o pagamento. Verifique sua conexão.';
 		}
-		pagamentoError = res.error || 'Não foi possível iniciar o pagamento.';
 		pagando = false;
 	}
 
-	function formatDate(d?: string | null) {
+	function sair() {
+		auth.clearToken();
+		goto('/');
+	}
+
+	// ─── Textos e datas ──────────────────────────────────────────────────
+	function isoLocal(d: Date): string {
+		const p = (n: number) => String(n).padStart(2, '0');
+		return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}T${p(d.getHours())}:${p(d.getMinutes())}`;
+	}
+	const horaDe = (iso: string) => iso.slice(11, 16);
+	const diaMes = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`;
+	/** "2026-11-20T23:59" → "20/11, às 23h59" */
+	const diaEHora = (iso: string) => `${diaMes(iso)}, às ${iso.slice(11, 13)}h${iso.slice(14, 16)}`;
+	const valorEmReais = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+	/** "27 a 29 de novembro · Chácara Recanto da Paz" */
+	let infoDoAcampamento = $derived.by(() => {
+		const a = form?.atividade;
+		if (!a) return '';
+		const partes: string[] = [];
+		if (a.inicio) {
+			const [ai, mi, di] = a.inicio.slice(0, 10).split('-').map(Number);
+			const fim = a.fim ?? a.inicio.slice(0, 10);
+			const [af, mf, df] = fim.split('-').map(Number);
+			partes.push(
+				di === df && mi === mf
+					? `${di} de ${MESES[mi - 1]}`
+					: mi === mf && ai === af
+						? `${di} a ${df} de ${MESES[mf - 1]}`
+						: `${di} de ${MESES[mi - 1]} a ${df} de ${MESES[mf - 1]}`
+			);
+		}
+		if (a.local) partes.push(a.local);
+		return partes.join(' · ');
+	});
+
+	let textoDoPrazo = $derived.by(() => {
+		const prazo = form?.prazo;
+		if (!prazo) return '';
+		if (prazo.vencido) return `O prazo terminou em ${diaMes(prazo.limite)}. As respostas não podem mais ser alteradas.`;
+		if (form?.respondido) return `Dá para alterar as respostas até ${diaEHora(prazo.limite)}.`;
+		if (prazo.eh_suplente) return `Envie até ${diaEHora(prazo.limite)}: só é chamado para uma vaga quem já enviou.`;
+		return `Envie até ${diaEHora(prazo.limite)}. Quem não enviar até lá perde a vaga.`;
+	});
+
+	let rotuloDoEnvio = $derived(ehRevisao && erroEnvio !== null ? 'Tentar de novo' : ehRevisao ? 'Enviar formulário' : etapa === 0 ? 'Está tudo certo, continuar' : 'Próxima etapa →');
+
+	function tipoDoCampo(q: PerguntaFormulario): { type: string; inputmode: 'text' | 'tel' | 'decimal' } {
+		if (q.type === 'data') return { type: 'date', inputmode: 'text' };
+		if (q.type === 'numero') return { type: 'text', inputmode: 'decimal' };
+		if (/(telefone|celular|whats)/i.test(q.text)) return { type: 'tel', inputmode: 'tel' };
+		return { type: 'text', inputmode: 'text' };
+	}
+
+	const mensagemDeErro = (q: PerguntaFormulario) => (ehEscolha(q) ? 'Escolha uma opção.' : 'Responda esta pergunta.');
+
+	function alternarMultipla(q: PerguntaFormulario, opcaoId: number) {
+		const atual = marcadas(respostas[q.id]);
+		const nova = atual.includes(opcaoId) ? atual.filter((x) => x !== opcaoId) : [...atual, opcaoId];
+		responder(q.id, nova.length ? JSON.stringify(nova) : '');
+	}
+
+	function formatarData(d?: string | null) {
 		if (!d) return '—';
 		const [y, m, day] = d.split('-');
 		return `${day}/${m}/${y}`;
 	}
+
+	function idadeDe(nascimento: string | null): string {
+		if (!nascimento) return '';
+		const [a, m, d] = nascimento.split('-').map(Number);
+		const hoje = new Date();
+		let idade = hoje.getFullYear() - a;
+		if (hoje.getMonth() + 1 < m || (hoje.getMonth() + 1 === m && hoje.getDate() < d)) idade--;
+		return ` · ${idade} anos`;
+	}
 </script>
 
 <svelte:head>
-	<title>{form?.atividade?.nome ?? 'Formulário de Inscrição'} | Formulário</title>
+	<title>{form?.atividade?.nome ?? 'Formulário de inscrição'} | Formulário</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link
+		href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
-<div class="fundo">
-	<div class="folha">
-		<a href="/dashboard/formularios" class="voltar">&larr; Meus formulários</a>
-
-		{#if loading}
-			<div class="cartao estado">
-				<div class="spinner"></div>
-				<p>Carregando formulário...</p>
-			</div>
-		{:else if error}
-			<div class="cartao estado erro">{error}</div>
-		{:else if form && !form.formulario_disponivel}
-			<!-- Estado explicado: antes qualquer caso caía num "ainda não está
-			     disponível" genérico, e acampamento sem perguntas abria um formulário
-			     vazio que podia ser enviado em branco. -->
-			<div class="cartao estado">
-				<div class="estado-icone">
-					{form.status === 'Prazo Perdido' ? '⏳' : form.formulario_montado ? '🔒' : '📝'}
-				</div>
-				<h3>
-					{#if form.status === 'Prazo Perdido'}
-						Prazo encerrado
-					{:else if !form.formulario_montado}
-						Formulário ainda não disponível
-					{:else}
-						Formulário indisponível
-					{/if}
-				</h3>
-				<p>{form.motivo_indisponivel}</p>
-				<p class="estado-status">
-					Situação da sua inscrição: <strong>{form.status}</strong>
-				</p>
-				<a href="/dashboard/formularios" class="botao botao--claro">Voltar</a>
-			</div>
-		{:else if form}
-			<!-- Cabeçalho do formulário, com a faixa verde do projeto -->
-			<header class="cartao cabecalho">
-				<div class="faixa"></div>
-				<div class="cabecalho-corpo">
-					<h1>{form.atividade?.nome ?? 'Formulário de Inscrição'}</h1>
-					<p class="cabecalho-sub">
-						Ficha de inscrição{form.atividade?.categoria
-							? ` · ${form.atividade.categoria}`
-							: ''}{form.atividade?.local ? ` · ${form.atividade.local}` : ''}
-					</p>
-
-					<div class="selos">
-						<span class="selo selo--status">{form.status}</span>
-						<!-- Para quem está como Suplente o status não diz que a ficha foi
-						     entregue, então o selo de enviado ainda faz falta. -->
-						{#if form.respondido && form.status !== 'Formulário Enviado'}
-							<span class="selo selo--ok">✓ Enviado</span>
+{#snippet campo(q: PerguntaFormulario)}
+	{@const erro = comErro.has(q.id)}
+	{@const idErro = `erro-${q.id}`}
+	<div class="pergunta" class:pergunta--filha={ehFilha(q)} id="q-{q.id}">
+		{#if q.type === 'sim_nao' || q.type === 'unica_escolha' || q.type === 'multipla_escolha'}
+			{@const multipla = q.type === 'multipla_escolha'}
+			<span class="rotulo" id="rotulo-{q.id}">
+				{q.text}{#if !q.isRequired}<span class="opcional">{' (opcional)'}</span>{/if}
+			</span>
+			<div
+				class={q.type === 'sim_nao' ? 'pilulas' : 'linhas'}
+				role={multipla ? 'group' : 'radiogroup'}
+				aria-labelledby="rotulo-{q.id}"
+				aria-invalid={erro || undefined}
+				aria-describedby={erro ? idErro : undefined}
+			>
+				{#each q.options as o (o.id)}
+					{@const marcada = marcadas(respostas[q.id]).includes(o.id)}
+					<label class={q.type === 'sim_nao' ? 'pilula' : 'linha'} class:marcada class:com-erro={erro}>
+						{#if multipla}
+							<input type="checkbox" class="escondido" checked={marcada} onchange={() => alternarMultipla(q, o.id)} />
+							<span class="marca marca--caixa" aria-hidden="true">{marcada ? '✓' : ''}</span>
+						{:else}
+							<input
+								type="radio"
+								class="escondido"
+								name="q-{q.id}"
+								checked={marcada}
+								onchange={() => responder(q.id, String(o.id))}
+							/>
+							<span class="marca" aria-hidden="true"></span>
 						{/if}
-					</div>
+						{o.text}
+					</label>
+				{/each}
+			</div>
+		{:else}
+			<label class="rotulo" for="in-{q.id}">
+				{q.text}{#if !q.isRequired}<span class="opcional">{' (opcional)'}</span>{/if}
+			</label>
+			{#if q.type === 'texto_longo'}
+				<textarea
+					id="in-{q.id}"
+					class="campo campo--longo"
+					class:com-erro={erro}
+					rows="3"
+					maxlength="2000"
+					value={respostas[q.id] ?? ''}
+					oninput={(e) => responder(q.id, e.currentTarget.value)}
+					aria-invalid={erro || undefined}
+					aria-describedby={erro ? idErro : undefined}
+				></textarea>
+			{:else if q.type === 'lista_suspensa'}
+				<select
+					id="in-{q.id}"
+					class="campo"
+					class:com-erro={erro}
+					value={respostas[q.id] ?? ''}
+					onchange={(e) => responder(q.id, e.currentTarget.value)}
+					aria-invalid={erro || undefined}
+					aria-describedby={erro ? idErro : undefined}
+				>
+					<option value="">Escolha uma opção</option>
+					{#each q.options as o (o.id)}
+						<option value={String(o.id)}>{o.text}</option>
+					{/each}
+				</select>
+			{:else}
+				{@const tipo = tipoDoCampo(q)}
+				<input
+					id="in-{q.id}"
+					class="campo"
+					class:campo--curto={q.type === 'numero' || q.type === 'data'}
+					class:com-erro={erro}
+					type={tipo.type}
+					inputmode={tipo.inputmode}
+					maxlength={q.type === 'texto_curto' ? 255 : undefined}
+					value={respostas[q.id] ?? ''}
+					oninput={(e) => responder(q.id, e.currentTarget.value)}
+					aria-invalid={erro || undefined}
+					aria-describedby={erro ? idErro : undefined}
+				/>
+			{/if}
+		{/if}
+		{#if erro}
+			<span class="erro-campo" id={idErro}><span class="erro-icone" aria-hidden="true">!</span>{mensagemDeErro(q)}</span>
+		{/if}
+	</div>
+{/snippet}
 
-					{#if form.prazo && !form.prazo.vencido}
-						<p class="aviso" class:aviso--urgente={diasRestantes(form.prazo.limite) <= 2}>
-							<strong>Prazo: {formatarPrazo(form.prazo.limite)}</strong><br />
-							{#if form.respondido}
-								Sua ficha já foi entregue. Dá para revisar e reenviar até essa data.
-							{:else if form.prazo.eh_suplente}
-								Você é suplente e também precisa enviar a ficha até essa data: só é chamado para
-								uma vaga quem já entregou. A taxa não é cobrada de suplentes.
-							{:else}
-								Se a ficha não for enviada até essa data, sua vaga será passada para o próximo
-								suplente da fila.
-							{/if}
-						</p>
+{#snippet revisao(podeEditar: boolean)}
+	{#each secoes as s, i (s.id)}
+		{@const itens = visiveisDa(s)}
+		{#if itens.length}
+			<div class="revisao-secao">
+				<div class="revisao-topo">
+					<h3>{s.title}</h3>
+					{#if podeEditar}
+						<button type="button" class="btn btn--leve" aria-label="Editar {s.title}" onclick={() => irPara(i + 1)}>Editar</button>
 					{/if}
-
-					<p class="obrigatorias"><span class="asterisco">*</span> Indica pergunta obrigatória</p>
 				</div>
-			</header>
-
-			{#if saveSuccess}
-				<div class="cartao faixa-aviso faixa-aviso--ok">
-					✓ Formulário enviado com sucesso!
-				</div>
-			{:else if form.respondido}
-				<div class="cartao faixa-aviso faixa-aviso--ok">
-					✓ Você já enviou este formulário.
-					{#if form.editavel}Pode revisar e reenviar se precisar corrigir algo.{/if}
-				</div>
-			{/if}
-
-			{#if !form.editavel}
-				<div class="cartao faixa-aviso faixa-aviso--erro">{form.motivo_indisponivel}</div>
-			{/if}
-
-			{#if saveError}
-				<div class="cartao faixa-aviso faixa-aviso--erro">{saveError}</div>
-			{/if}
-
-			<!-- Confirmação dos dados de cadastro -->
-			<section class="cartao">
-				<h2 class="secao-titulo">Confira seus dados</h2>
-				<p class="secao-dica">
-					Esses dados já estão no sistema. Se algo estiver errado, corrija no seu perfil antes de
-					enviar.
-				</p>
-				<div class="grade-dados">
-					<div><span>Nome</span><strong>{form.perfil.nome}</strong></div>
-					<div><span>CPF</span><strong>{form.perfil.cpf}</strong></div>
-					<div><span>Celular</span><strong>{form.perfil.telefone}</strong></div>
-					<div><span>E-mail</span><strong>{form.perfil.email}</strong></div>
-					<div><span>Nascimento</span><strong>{formatDate(form.perfil.data_nascimento)}</strong></div>
-					<div>
-						<span>Sexo</span><strong>{form.perfil.sexo === 'M' ? 'Masculino' : 'Feminino'}</strong>
-					</div>
-					<div><span>Estado civil</span><strong>{form.perfil.estado_civil ?? '—'}</strong></div>
-					{#if form.perfil.endereco}
-						<div class="largo">
-							<span>Endereço</span>
-							<strong>
-								{form.perfil.endereco.rua}, {form.perfil.endereco.numero} —
-								{form.perfil.endereco.bairro}, {form.perfil.endereco.cidade}
-								({form.perfil.endereco.cep})
-							</strong>
+				<dl class="revisao-lista">
+					{#each itens as q (q.id)}
+						{@const v = textoDaResposta(q)}
+						<div class:revisao-filha={ehFilha(q)}>
+							<dt>{ehFilha(q) ? '↳ ' : ''}{q.text}</dt>
+							<dd class:sem-resposta={!v}>{v || 'Não respondeu'}</dd>
 						</div>
+					{/each}
+				</dl>
+			</div>
+		{/if}
+	{/each}
+{/snippet}
+
+{#snippet pagamento()}
+	{#if form?.pagamento?.necessario}
+		{@const pg = form.pagamento}
+		<section class="cartao pagamento">
+			<div class="cartao-cabeca">
+				<h2>Pagamento da inscrição</h2>
+				<p class="valor">{valorEmReais(pg.valor)}</p>
+			</div>
+			{#if pg.pago}
+				<p class="faixa faixa--ok">✓ Pagamento confirmado. A inscrição está completa!</p>
+			{:else if pg.eh_suplente}
+				<p class="nota">
+					Suplentes não pagam a taxa. Esse é o valor para quem tem vaga: se uma vaga for liberada, o pagamento aparece aqui.
+				</p>
+			{:else if !form.respondido}
+				<p class="nota">Envie o formulário para liberar o pagamento.</p>
+			{:else if pg.prazo_vencido}
+				<p class="faixa faixa--erro">
+					O prazo para pagar terminou{pg.prazo ? ` em ${diaMes(pg.prazo)}` : ''}. Procure a organização.
+				</p>
+			{:else}
+				{#if pg.prazo}<p class="nota">Pague até {diaEHora(pg.prazo)}.</p>{/if}
+				{#if erroPagamento}<p class="faixa faixa--erro" role="alert">{erroPagamento}</p>{/if}
+				{#if pg.integracao_ativa}
+					<p class="nota">
+						Você vai para o Mercado Pago, onde dá para pagar por Pix, cartão ou boleto. A confirmação chega aqui sozinha.
+					</p>
+					<button type="button" class="btn btn--ouro btn--largo" onclick={pagar} disabled={pagando}>
+						{pagando ? 'Abrindo o Mercado Pago...' : 'Pagar com Mercado Pago'}
+					</button>
+					{#if pg.status_provedor === 'pending' && pg.url_pagamento}
+						<p class="nota">Já existe um pagamento em aberto: o botão abre o mesmo.</p>
 					{/if}
+				{:else if pg.link_manual}
+					<p class="nota">Use o link de pagamento informado pela organização:</p>
+					<a class="btn btn--ouro btn--largo" href={pg.link_manual} target="_blank" rel="noopener noreferrer">Abrir link de pagamento</a>
+				{:else}
+					<p class="nota">O pagamento online ainda está sendo configurado. Assim que for liberado, o botão aparece aqui.</p>
+				{/if}
+			{/if}
+		</section>
+	{/if}
+{/snippet}
+
+<div class="pagina">
+	<header class="cabecalho">
+		<a href="/dashboard" aria-label="Início"><img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" /></a>
+		{#if auth.user}
+			<div class="usuario">
+				<span class="avatar" aria-hidden="true">{auth.user.name?.charAt(0).toUpperCase()}</span>
+				<span class="usuario-nome"><span>Bem-vindo(a),</span><strong>{auth.user.name?.split(' ')[0]}</strong></span>
+				<button type="button" class="btn btn--leve" onclick={sair}>Sair</button>
+			</div>
+		{/if}
+	</header>
+
+	<main class="folha" bind:this={topo}>
+		<a href="/dashboard/formularios" class="voltar">← Meus Formulários</a>
+
+		{#if estado === 'inicio' || estado === 'carregando'}
+			<section class="cartao centro" role="status">
+				<span class="spinner"></span>
+				<p class="nota">Carregando o formulário...</p>
+			</section>
+		{:else if estado === 'erro' || !form}
+			<section class="cartao centro" role="alert">
+				<h2>Não foi possível abrir o formulário</h2>
+				<p class="nota">{erroCarregar}</p>
+				<button type="button" class="btn btn--ouro" onclick={carregar}>Tentar de novo</button>
+			</section>
+		{:else}
+			<!-- Topo em vitral -->
+			<section class="vitral">
+				<div class="vitral-trama"></div>
+				<div class="vitral-conteudo">
+					<span class="sobretitulo"><span class="sobretitulo-traco"></span>Formulário de inscrição</span>
+					<h1>{form.atividade?.nome ?? 'Formulário de inscrição'}</h1>
+					{#if infoDoAcampamento}<p>{infoDoAcampamento}</p>{/if}
 				</div>
 			</section>
 
-			<form onsubmit={handleSubmit}>
-				<fieldset class="sem-moldura" disabled={!form.editavel}>
-					{#each form.sections as secao}
-						{@const visiveis = secao.questions.filter((q) => perguntaVisivel(q))}
-						{#if visiveis.length > 0}
-							<div class="secao-marca">
-								<h2>{secao.title}</h2>
-								<span>{visiveis.length} {visiveis.length === 1 ? 'pergunta' : 'perguntas'}</span>
-							</div>
-
-							{#each visiveis as q}
-								<section class="cartao pergunta" id="q-{q.id}">
-									<p class="pergunta-texto">
-										{q.text}
-										{#if q.isRequired}<span class="asterisco">*</span>{/if}
-									</p>
-
-									{#if q.type === 'texto_curto'}
-										<input
-											class="entrada entrada--linha"
-											type="text"
-											maxlength="255"
-											placeholder="Sua resposta"
-											bind:value={answers[q.id]}
-											required={q.isRequired}
-										/>
-									{:else if q.type === 'texto_longo'}
-										<textarea
-											class="entrada entrada--caixa"
-											maxlength="2000"
-											rows="3"
-											placeholder="Sua resposta"
-											bind:value={answers[q.id]}
-											required={q.isRequired}
-										></textarea>
-									{:else if q.type === 'numero'}
-										<input
-											class="entrada entrada--linha entrada--curta"
-											type="number"
-											placeholder="0"
-											bind:value={answers[q.id]}
-											required={q.isRequired}
-										/>
-									{:else if q.type === 'data'}
-										<input
-											class="entrada entrada--linha entrada--curta"
-											type="date"
-											bind:value={answers[q.id]}
-											required={q.isRequired}
-										/>
-									{:else if q.type === 'lista_suspensa'}
-										<select class="entrada entrada--caixa entrada--curta" bind:value={answers[q.id]} required={q.isRequired}>
-											<option value="">Escolher</option>
-											{#each q.options as opt}
-												<option value={String(opt.id)}>{opt.text}</option>
-											{/each}
-										</select>
-									{:else if q.type === 'sim_nao' || q.type === 'unica_escolha'}
-										<div class="opcoes">
-											{#each q.options as opt}
-												<label class="opcao">
-													<input
-														type="radio"
-														name="q-{q.id}"
-														value={opt.id}
-														checked={String(opt.id) === texto(answers[q.id])}
-														onchange={() => (answers[q.id] = String(opt.id))}
-														required={q.isRequired}
-													/>
-													<span>{opt.text}</span>
-												</label>
-											{/each}
-										</div>
-									{:else if q.type === 'multipla_escolha'}
-										<div class="opcoes">
-											{#each q.options as opt}
-												<label class="opcao">
-													<input
-														type="checkbox"
-														checked={parseMulti(answers[q.id]).includes(opt.id)}
-														onchange={() => toggleMultiOption(q.id, opt.id)}
-													/>
-													<span>{opt.text}</span>
-												</label>
-											{/each}
-										</div>
-									{/if}
-								</section>
-							{/each}
-						{/if}
-					{/each}
-				</fieldset>
-
-				{#if form.editavel}
-					<div class="rodape">
-						<div class="progresso">
-							<div class="progresso-barra">
-								<div class="progresso-preenchido" style="width: {progresso}%"></div>
-							</div>
-							<span>{respondidas} de {perguntasVisiveis.length} respondidas</span>
-						</div>
-						<button type="submit" class="botao" disabled={saving}>
-							{saving ? 'Enviando...' : form.respondido ? 'Salvar alterações' : 'Enviar'}
-						</button>
+			{#if !form.formulario_disponivel}
+				<!-- Sem formulário agora: prazo perdido, não selecionado, desistência ou ainda não montado -->
+				<section class="cartao centro">
+					<div class="arco"><img src={logoAsas} alt="" /></div>
+					{#if form.status === 'Prazo Perdido'}
+						<h2>{form.prazo ? `O prazo terminou em ${diaMes(form.prazo.limite)}.` : 'O prazo terminou.'}</h2>
+						<p class="nota nota--centro">{form.motivo_indisponivel}</p>
+						<span class="selo selo--perigo"><span class="selo-ponto"></span>Prazo Perdido</span>
+						<p class="nota nota--centro">Se acha que houve um engano, fale com a organização do acampamento.</p>
+					{:else}
+						<h2>{form.formulario_montado ? 'Formulário indisponível' : 'O formulário ainda não está pronto'}</h2>
+						<p class="nota nota--centro">{form.motivo_indisponivel}</p>
+						<span class="selo"><span class="selo-ponto"></span>{form.status}</span>
+					{/if}
+					<a href="/dashboard/formularios" class="btn btn--leve">Voltar para Meus Formulários</a>
+				</section>
+			{:else}
+				{#if form.prazo}
+					<div class="faixa-prazo">
+						<span class="selo" class:selo--aviso={form.status === 'Suplente'}><span class="selo-ponto"></span>{form.status}</span>
+						<span>{textoDoPrazo}</span>
 					</div>
 				{/if}
-			</form>
 
-			<!-- Etapa final: pagamento da taxa, só para quem tem vaga -->
-			{#if form.pagamento?.necessario}
-				<section class="cartao pagamento">
-					<h2 class="secao-titulo">Pagamento da inscrição</h2>
-					<p class="valor">{formatarValor(form.pagamento.valor)}</p>
+				{#if ehMirim && modo === 'preenchendo'}
+					<p class="faixa faixa--info">
+						<strong>Pai, mãe ou responsável:</strong> o formulário é preenchido por vocês, aqui na conta da criança. As
+						perguntas são sobre a criança.
+					</p>
+				{/if}
 
-					{#if form.pagamento.pago}
-						<div class="faixa-aviso faixa-aviso--ok sem-cartao">
-							✓ Pagamento confirmado. Sua inscrição está completa!
-						</div>
-					{:else if form.pagamento.eh_suplente}
-						<!-- Suplente responde o formulário, mas a taxa é só de quem tem vaga. -->
-						<p class="secao-dica">
-							Suplentes não pagam a taxa. Esse é o valor da inscrição para quem tem vaga — se uma
-							vaga for liberada para você, o pagamento aparece aqui automaticamente.
+				{#if modo === 'enviado'}
+					<!-- ─── Enviado ─── -->
+					<section class="cartao centro">
+						<span class="check" aria-hidden="true">✓</span>
+						<h2>Formulário enviado!</h2>
+						<p class="nota nota--centro">
+							{form.enviado_em ? `Recebemos as respostas em ${diaEHora(form.enviado_em)}.` : 'Recebemos as respostas.'}
+							{#if form.editavel && form.prazo}Dá para alterar até {diaEHora(form.prazo.limite)}.{/if}
 						</p>
-					{:else if !form.respondido}
-						<p class="secao-dica">Envie o formulário acima para liberar o pagamento.</p>
-					{:else if form.pagamento.prazo_vencido}
-						<div class="faixa-aviso faixa-aviso--erro sem-cartao">
-							O prazo para pagar terminou{form.pagamento.prazo
-								? ` em ${formatarPrazo(form.pagamento.prazo)}`
-								: ''}. Procure a organização.
-						</div>
-					{:else}
-						{#if form.pagamento.prazo}
-							<p class="secao-dica">Pague até {formatarPrazo(form.pagamento.prazo)}.</p>
-						{/if}
-
-						{#if pagamentoError}
-							<div class="faixa-aviso faixa-aviso--erro sem-cartao">{pagamentoError}</div>
-						{/if}
-
-						{#if form.pagamento.integracao_ativa}
-							<p class="secao-dica">
-								Você será levado ao ambiente do Mercado Pago, onde pode pagar por Pix, cartão ou
-								boleto. A confirmação chega automaticamente aqui depois do pagamento.
-							</p>
-							<button type="button" class="botao" onclick={handlePagar} disabled={pagando}>
-								{pagando ? 'Abrindo o Mercado Pago...' : 'Pagar com Mercado Pago'}
-							</button>
-							{#if form.pagamento.status_provedor === 'pending' && form.pagamento.url_pagamento}
-								<p class="secao-dica">Já existe um pagamento em aberto — o botão acima abre o mesmo.</p>
+						<span class="selo"><span class="selo-ponto"></span>Formulário Enviado</span>
+						<div class="acoes-centro">
+							{#if form.editavel}
+								<button type="button" class="btn btn--contorno" onclick={verRespostas}>Ver ou alterar respostas</button>
 							{/if}
-						{:else if form.pagamento.link_manual}
-							<p class="secao-dica">Use o link de pagamento informado pela organização:</p>
-							<a
-								class="botao"
-								href={form.pagamento.link_manual}
-								target="_blank"
-								rel="noopener noreferrer"
-							>
-								Abrir link de pagamento
-							</a>
-						{:else}
-							<p class="secao-dica">
-								O pagamento online ainda está sendo configurado pela organização. Assim que estiver
-								liberado, o botão aparece aqui.
+							<a href="/dashboard" class="btn btn--ouro">Voltar para o início</a>
+						</div>
+					</section>
+					{@render pagamento()}
+				{:else if modo === 'encerrado'}
+					<!-- ─── Prazo encerrado depois de enviar: só leitura ─── -->
+					<section class="cartao">
+						<div class="cartao-cabeca">
+							<h2>{ehMirim ? 'Respostas sobre a criança' : 'Suas respostas'}</h2>
+							<p class="nota">
+								{form.enviado_em ? `Enviadas em ${diaEHora(form.enviado_em)}.` : 'O prazo terminou e as respostas não podem mais ser alteradas.'}
 							</p>
-						{/if}
-					{/if}
-				</section>
-			{/if}
+						</div>
+						{@render revisao(false)}
+					</section>
+					{@render pagamento()}
+				{:else}
+					<!-- ─── Preenchendo ─── -->
+					<div class="progresso">
+						<div class="progresso-texto">
+							<span><strong>Etapa {etapa + 1} de {totalEtapas}</strong> · {nomeDaEtapa}</span>
+							{#if rascunhoAs}<span class="progresso-rascunho">Rascunho guardado às {rascunhoAs}</span>{/if}
+						</div>
+						<div
+							class="segmentos"
+							role="progressbar"
+							aria-valuemin={1}
+							aria-valuemax={totalEtapas}
+							aria-valuenow={etapa + 1}
+							aria-label="Progresso do formulário"
+						>
+							{#each Array(totalEtapas) as _, i}
+								<span class="segmento" class:segmento--feito={i < etapa} class:segmento--atual={i === etapa}></span>
+							{/each}
+						</div>
+					</div>
 
-			<p class="rodape-nota">Acampamento São Miguel · não envie senhas por este formulário.</p>
+					<section class="cartao">
+						{#if etapa === 0}
+							<div class="cartao-cabeca">
+								<h2>{ehMirim ? 'Confira os dados da criança' : 'Confira seus dados'}</h2>
+								<p class="nota">
+									{ehMirim
+										? 'Eles vêm do cadastro da criança, então não precisa digitar de novo.'
+										: 'Eles vêm do seu cadastro, então não precisa digitar de novo.'}
+								</p>
+							</div>
+							<dl class="dados">
+								<div class="dados-largo"><dt>Nome</dt><dd>{form.perfil.nome}</dd></div>
+								<div><dt>CPF</dt><dd>{form.perfil.cpf}</dd></div>
+								<div><dt>Telefone</dt><dd>{form.perfil.telefone || '—'}</dd></div>
+								<div><dt>E-mail</dt><dd>{form.perfil.email || '—'}</dd></div>
+								<div>
+									<dt>Nascimento</dt>
+									<dd>{formatarData(form.perfil.data_nascimento)}{idadeDe(form.perfil.data_nascimento)}</dd>
+								</div>
+								<div><dt>Sexo</dt><dd>{form.perfil.sexo === 'M' ? 'Masculino' : 'Feminino'}</dd></div>
+								<div><dt>Estado civil</dt><dd>{form.perfil.estado_civil ?? '—'}</dd></div>
+								{#if form.perfil.endereco}
+									<div class="dados-largo">
+										<dt>Endereço</dt>
+										<dd>
+											{form.perfil.endereco.rua}, {form.perfil.endereco.numero} · {form.perfil.endereco.bairro} ·
+											{form.perfil.endereco.cidade}
+										</dd>
+									</div>
+								{/if}
+							</dl>
+							<p class="nota">Algo errado? Avise a organização do acampamento para corrigir. As respostas ficam guardadas.</p>
+
+							<div
+								class="documento"
+								class:documento--ok={!!form.documento}
+								class:documento--falta={faltaDocumento && !form.documento}
+								id="bloco-documento"
+								tabindex="-1"
+								role={faltaDocumento && !form.documento ? 'alert' : undefined}
+							>
+								<div class="documento-textos">
+									<span class="documento-titulo">
+										{ehMirim ? 'Documento de quem irá participar do acampamento' : 'Documento de identidade'}
+									</span>
+									{#if form.documento}
+										<span class="nota">
+											✓ Enviado{form.documento.enviado_em ? ` em ${diaMes(form.documento.enviado_em)}` : ''} · {form.documento.nome}.
+											Fica no cadastro e vale para os próximos acampamentos.
+										</span>
+									{:else}
+										<span class="nota">
+											{ehMirim
+												? 'Foto ou PDF do RG ou da certidão de nascimento da criança, para a organização conferir a idade.'
+												: 'Foto ou PDF do RG, da CNH ou de outro documento com foto e data de nascimento, para a organização conferir seus dados.'}
+											Só a organização vê.
+										</span>
+									{/if}
+									{#if faltaDocumento && !form.documento}
+										<span class="erro-campo"><span class="erro-icone" aria-hidden="true">!</span>Envie o documento para continuar.</span>
+									{/if}
+									{#if erroDocumento}
+										<span class="erro-campo" role="alert"><span class="erro-icone" aria-hidden="true">!</span>{erroDocumento}</span>
+									{/if}
+								</div>
+								<label class="btn" class:btn--ouro={!form.documento} class:btn--leve={!!form.documento} class:ocupado={enviandoDocumento}>
+									<input
+										type="file"
+										class="escondido"
+										accept="image/jpeg,image/png,image/webp,application/pdf"
+										disabled={enviandoDocumento}
+										onchange={escolherDocumento}
+									/>
+									{#if enviandoDocumento}
+										<span class="spinner spinner--pequeno"></span>Enviando...
+									{:else}
+										{form.documento ? 'Trocar documento' : 'Enviar foto ou PDF'}
+									{/if}
+								</label>
+							</div>
+						{:else if secaoAtual}
+							<div class="cartao-cabeca">
+								<h2>{secaoAtual.title}</h2>
+								<p class="nota">Todas as perguntas são obrigatórias, menos as marcadas “opcional”.</p>
+							</div>
+							{#if mostrarErros && faltando.length}
+								<div class="resumo-erros" id="resumo-erros" role="alert" tabindex="-1">
+									<span class="erro-icone erro-icone--grande" aria-hidden="true">!</span>
+									<div>
+										<strong>{faltando.length === 1 ? 'Falta 1 resposta nesta etapa:' : `Faltam ${faltando.length} respostas nesta etapa:`}</strong>
+										{#each faltando as q (q.id)}
+											<a href="#q-{q.id}">{q.text}</a>
+										{/each}
+									</div>
+								</div>
+							{/if}
+							{#each visiveisDa(secaoAtual) as q (q.id)}
+								{@render campo(q)}
+							{:else}
+								<p class="nota">Nenhuma pergunta desta etapa vale para as suas respostas. Pode seguir.</p>
+							{/each}
+						{:else if ehRevisao}
+							<div class="cartao-cabeca">
+								<h2>Revise antes de enviar</h2>
+								<p class="nota">
+									Confira tudo.{#if form.prazo && !form.prazo.vencido}
+										Depois de enviar, ainda dá para alterar até {diaEHora(form.prazo.limite)}.{/if}
+								</p>
+							</div>
+							{#if erroEnvio !== null}
+								<div class="resumo-erros" role="alert">
+									<span class="erro-icone erro-icone--grande" aria-hidden="true">!</span>
+									<span>
+										<strong>Não foi possível enviar.</strong>
+										{erroEnvio || 'Suas respostas continuam guardadas neste aparelho. Confira a internet e toque em “Tentar de novo”.'}
+									</span>
+								</div>
+							{/if}
+							{@render revisao(true)}
+						{/if}
+
+						<div class="navegacao">
+							<div class="navegacao-botoes">
+								{#if etapa > 0}
+									<button type="button" class="btn btn--contorno" disabled={enviando} onclick={() => irPara(etapa - 1)}>← Voltar</button>
+								{/if}
+								<button
+									type="button"
+									class="btn btn--ouro"
+									class:btn--largo={etapa === 0 || ehRevisao}
+									disabled={enviando}
+									onclick={proxima}
+								>
+									{#if enviando}<span class="spinner spinner--pequeno"></span>Enviando...{:else}{rotuloDoEnvio}{/if}
+								</button>
+							</div>
+							<span class="nota nota--centro">
+								{ehRevisao
+									? 'As respostas ficam guardadas neste aparelho até o envio.'
+									: 'Rascunho guardado neste aparelho. Pode parar e continuar depois.'}
+							</span>
+						</div>
+					</section>
+					{@render pagamento()}
+				{/if}
+			{/if}
 		{/if}
-	</div>
+	</main>
 </div>
 
 <style>
-	.fundo {
-		background: #f3f8f6;
-		min-height: 100%;
-		padding: 2rem 1rem 4rem;
+	.pagina {
+		--ouro: #b69e55;
+		--ouro-claro: #e2ce8a;
+		--ouro-texto: #7a6528;
+		--azul: #1b2f5e;
+		--azul-noite: #0f1d3d;
+		--vermelho: #9b2c2c;
+		--marfim: #f7f2e7;
+		--pergaminho: #fffdf8;
+		--borda: #d9cca6;
+		--borda-suave: #e3d8bc;
+		--linha: #efe7d3;
+		--tinta: #1e2233;
+		--tinta-2: #2b3045;
+		--tinta-3: #4f5468;
+		--campo-borda: #a39363;
+		--anel-foco: rgba(182, 158, 85, 0.45);
+		--margem: 16px;
+
+		min-height: 100vh;
+		background: var(--marfim);
+		font-family: 'Source Sans 3', system-ui, sans-serif;
+		color: var(--tinta);
 	}
 
+	.pagina :is(button, a, input, select, textarea, label) {
+		font-family: inherit;
+		box-sizing: border-box;
+	}
+
+	.pagina :is(button, a, input, select, textarea):focus-visible,
+	.pagina label:has(input:focus-visible),
+	.resumo-erros:focus-visible {
+		outline: none;
+		box-shadow: 0 0 0 4px var(--anel-foco);
+	}
+
+	/* ─── Cabeçalho ─── */
+	.cabecalho {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 10px var(--margem);
+		background: var(--pergaminho);
+		border-bottom: 1px solid var(--borda);
+		box-shadow:
+			0 3px 0 -1px #fffdf8,
+			0 4px 0 -1px #b69e55;
+	}
+
+	.banner {
+		display: block;
+		height: clamp(40px, 9vw, 56px);
+		width: auto;
+	}
+
+	.usuario {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+	}
+
+	.avatar {
+		width: 40px;
+		height: 40px;
+		border-radius: 50%;
+		background: var(--azul);
+		border: 2px solid var(--ouro);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font: 700 21px 'Cormorant Garamond', serif;
+		color: var(--ouro-claro);
+		box-sizing: border-box;
+	}
+
+	.usuario-nome {
+		display: none;
+		flex-direction: column;
+		line-height: 1.15;
+		font-size: 13px;
+		color: #5a5f72;
+	}
+
+	.usuario-nome strong {
+		font-size: 17px;
+		color: var(--tinta);
+	}
+
+	/* ─── Folha ─── */
 	.folha {
-		max-width: 720px;
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+		max-width: 760px;
 		margin: 0 auto;
-		/* Espaço para a barra de envio fixa não esconder o fim do formulário. */
-		padding-bottom: 5rem;
+		padding: 16px var(--margem) 48px;
+		scroll-margin-top: 8px;
 	}
 
 	.voltar {
-		display: inline-block;
-		margin-bottom: 1rem;
-		color: #1c8b6b;
-		text-decoration: none;
+		align-self: flex-start;
+		display: flex;
+		align-items: center;
+		min-height: 44px;
+		font-size: 16px;
 		font-weight: 600;
-		font-size: 0.9rem;
+		color: var(--azul);
+		text-decoration: none;
 	}
 
-	.cartao {
-		background: #fff;
-		border: 1px solid #e6e6e6;
-		border-radius: 12px;
-		padding: 1.5rem;
-		margin-bottom: 0.9rem;
-	}
-
-	/* ---------- Cabeçalho ---------- */
-
-	.cabecalho {
-		padding: 0;
+	/* ─── Vitral ─── */
+	.vitral {
+		position: relative;
 		overflow: hidden;
-		border-top: none;
+		border-radius: 16px;
+		background:
+			radial-gradient(circle at 12% 30%, rgba(214, 186, 104, 0.35), transparent 28%),
+			radial-gradient(circle at 70% 120%, rgba(31, 107, 110, 0.85), transparent 45%),
+			radial-gradient(circle at 95% 0%, rgba(155, 44, 44, 0.35), transparent 30%),
+			linear-gradient(150deg, #22397a 0%, #1b2f5e 45%, #0f1d3d 100%);
+		box-shadow:
+			inset 0 0 0 6px #0f1d3d,
+			inset 0 0 0 7px rgba(182, 158, 85, 0.75);
+	}
+
+	.vitral-trama {
+		position: absolute;
+		inset: 0;
+		background:
+			repeating-linear-gradient(45deg, transparent 0 46px, rgba(8, 14, 32, 0.32) 46px 48px),
+			repeating-linear-gradient(-45deg, transparent 0 46px, rgba(8, 14, 32, 0.32) 46px 48px);
+		pointer-events: none;
+	}
+
+	.vitral-conteudo {
+		position: relative;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: clamp(22px, 5vw, 40px) clamp(20px, 5vw, 40px);
+	}
+
+	.sobretitulo {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		font-size: 13px;
+		font-weight: 600;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--ouro-claro);
+	}
+
+	.sobretitulo-traco {
+		width: 28px;
+		height: 1px;
+		background: var(--ouro);
+	}
+
+	.vitral h1 {
+		margin: 0;
+		font: 600 clamp(32px, 7vw, 48px) / 1.05 'Cormorant Garamond', serif;
+		color: var(--pergaminho);
+		text-wrap: balance;
+	}
+
+	.vitral p {
+		margin: 0;
+		font-size: 17px;
+		color: #e6e9f2;
+	}
+
+	/* ─── Faixas ─── */
+	.faixa-prazo {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		flex-wrap: wrap;
+		padding: 12px 16px;
+		background: var(--pergaminho);
+		border: 1px solid var(--borda);
+		border-radius: 12px;
+		box-shadow:
+			inset 0 0 0 4px #fffdf8,
+			inset 0 0 0 5px rgba(182, 158, 85, 0.35);
+		font-size: 16px;
+		line-height: 1.4;
+		color: var(--tinta-2);
 	}
 
 	.faixa {
-		height: 10px;
-		background: linear-gradient(90deg, #115843, #1c8b6b 45%, #6fdec2);
-	}
-
-	.cabecalho-corpo {
-		padding: 1.6rem 1.5rem 1.4rem;
-	}
-
-	.cabecalho-corpo h1 {
 		margin: 0;
-		font-size: 1.7rem;
-		line-height: 1.2;
-		color: #14342a;
+		padding: 12px 16px;
+		border-radius: 10px;
+		font-size: 16px;
+		line-height: 1.45;
 	}
 
-	.cabecalho-sub {
-		margin: 0.4rem 0 0;
-		color: #6b7280;
-		font-size: 0.92rem;
+	.faixa--info {
+		color: #21376a;
+		background: #e6ebf5;
+		border: 1px solid #c4cfe6;
 	}
 
-	.selos {
-		display: flex;
-		gap: 0.4rem;
-		flex-wrap: wrap;
-		margin-top: 0.9rem;
+	.faixa--ok {
+		color: #1b5236;
+		background: #e4f1e8;
+		border: 1px solid #b9d9c4;
+	}
+
+	.faixa--erro {
+		color: #842424;
+		background: #f6e2df;
+		border: 1px solid #e6bdb6;
 	}
 
 	.selo {
-		font-size: 0.7rem;
-		font-weight: 800;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 0.22rem 0.65rem;
-		border-radius: 999px;
-	}
-
-	.selo--status {
-		background: #ecfdf5;
-		color: #065f46;
-		border: 1px solid #a7f3d0;
-	}
-
-	.selo--ok {
-		background: #6fdec2;
-		color: #115843;
-	}
-
-	.aviso {
-		margin: 1rem 0 0;
-		padding: 0.85rem 1rem;
-		background: #eff6ff;
-		border: 1px solid #bfdbfe;
-		color: #1e3a8a;
-		border-radius: 10px;
-		font-size: 0.87rem;
-		line-height: 1.5;
-	}
-
-	.aviso--urgente {
-		background: #fff7ed;
-		border-color: #fed7aa;
-		color: #9a3412;
-	}
-
-	.obrigatorias {
-		margin: 1rem 0 0;
-		font-size: 0.8rem;
-		color: #9a9a9a;
-	}
-
-	.asterisco {
-		color: #d93025;
-		font-weight: 700;
-	}
-
-	/* ---------- Avisos ---------- */
-
-	.faixa-aviso {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 10px;
+		font-size: 15px;
 		font-weight: 600;
-		font-size: 0.92rem;
+		color: #1b5236;
+		background: #e4f1e8;
+		border: 1px solid #b9d9c4;
+		border-radius: 8px;
 	}
 
-	.faixa-aviso--ok {
-		background: #ecfdf5;
-		border-color: #a7f3d0;
-		color: #065f46;
+	.selo-ponto {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: #2e7d4f;
 	}
 
-	.faixa-aviso--erro {
-		background: #fef2f2;
-		border-color: #fecaca;
-		color: #991b1b;
+	.selo--aviso {
+		color: #6a480c;
+		background: #fbf0d6;
+		border-color: #ebd39c;
 	}
 
-	.sem-cartao {
-		border: 1px solid;
-		border-radius: 10px;
-		padding: 0.85rem 1rem;
-		margin: 0.6rem 0;
+	.selo--aviso .selo-ponto {
+		background: #c08a1e;
 	}
 
-	/* ---------- Estados ---------- */
+	.selo--perigo {
+		color: #842424;
+		background: #f6e2df;
+		border-color: #e6bdb6;
+	}
 
-	.estado {
+	.selo--perigo .selo-ponto {
+		background: #b33a3a;
+	}
+
+	/* ─── Progresso ─── */
+	.progresso {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
+		gap: 8px;
+	}
+
+	.progresso-texto {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		gap: 12px;
+		flex-wrap: wrap;
+		font-size: 15px;
+		color: var(--tinta-3);
+	}
+
+	.progresso-texto strong {
+		color: var(--tinta);
+	}
+
+	.segmentos {
+		display: flex;
+		gap: 4px;
+	}
+
+	.segmento {
+		flex: 1;
+		height: 8px;
+		border-radius: 999px;
+		background: var(--borda-suave);
+	}
+
+	.segmento--feito {
+		background: var(--azul);
+	}
+
+	.segmento--atual {
+		background: var(--ouro);
+	}
+
+	/* ─── Cartão ─── */
+	.cartao {
+		display: flex;
+		flex-direction: column;
+		gap: 22px;
+		padding: clamp(20px, 5vw, 32px) clamp(18px, 5vw, 32px);
+		background: var(--pergaminho);
+		border: 1px solid var(--borda-suave);
+		border-radius: 16px;
+		box-shadow: 0 14px 28px -22px rgba(15, 29, 61, 0.45);
+	}
+
+	.cartao-cabeca {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.cartao h2 {
+		margin: 0;
+		font: 600 clamp(28px, 6vw, 34px) / 1.1 'Cormorant Garamond', serif;
+		color: var(--azul);
+	}
+
+	.nota {
+		margin: 0;
+		font-size: 16px;
+		line-height: 1.45;
+		color: var(--tinta-3);
+	}
+
+	.nota--centro {
 		text-align: center;
-		padding: 3rem 2rem;
-		color: #666;
+		max-width: 480px;
 	}
 
-	.estado.erro {
-		color: #b91c1c;
+	.centro {
+		align-items: center;
+		text-align: center;
+		gap: 14px;
 	}
 
-	.estado h3 {
-		margin: 0;
-		color: #222;
+	.acoes-centro {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: center;
+		gap: 10px;
+		width: 100%;
+		margin-top: 8px;
 	}
 
-	.estado p {
-		margin: 0;
-		max-width: 46ch;
-		line-height: 1.5;
-		font-size: 0.94rem;
+	.acoes-centro .btn {
+		flex: 1 1 220px;
+		max-width: 280px;
 	}
 
-	.estado-icone {
-		font-size: 2.4rem;
-	}
-
-	.estado-status {
-		font-size: 0.85rem !important;
-		color: #8a8a8a;
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 4px solid rgba(111, 222, 194, 0.3);
-		border-top-color: #6fdec2;
+	.check {
+		width: 72px;
+		height: 72px;
 		border-radius: 50%;
-		animation: spin 1s linear infinite;
+		background: #e4f1e8;
+		border: 2px solid #b9d9c4;
+		color: #2e7d4f;
+		font-size: 36px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
 	}
 
-	@keyframes spin {
+	.arco {
+		width: 110px;
+		height: 120px;
+		border: 1px solid #cdb878;
+		border-bottom: none;
+		border-radius: 50% 50% 0 0 / 40% 40% 0 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.arco img {
+		width: 100px;
+		opacity: 0.5;
+	}
+
+	/* ─── Seus dados ─── */
+	.dados {
+		margin: 0;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+		gap: 14px 28px;
+		padding: 18px;
+		background: #ffffff;
+		border: 1px solid var(--borda-suave);
+		border-radius: 12px;
+	}
+
+	.dados div {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.dados-largo {
+		grid-column: 1 / -1;
+	}
+
+	.dados dt {
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--ouro-texto);
+	}
+
+	.dados dd {
+		margin: 0;
+		font-size: 17px;
+		color: var(--tinta);
+		overflow-wrap: anywhere;
+	}
+
+	/* ─── Documento ─── */
+	.documento {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 14px;
+		padding: 16px 18px;
+		background: #ffffff;
+		border: 1.5px dashed var(--ouro);
+		border-radius: 12px;
+	}
+
+	.documento--ok {
+		border-style: solid;
+		border-color: #b9d9c4;
+		background: #f4faf6;
+	}
+
+	.documento--falta {
+		border-style: solid;
+		border-color: var(--vermelho);
+		background: #fdf4f2;
+	}
+
+	.documento-textos {
+		flex: 1 1 260px;
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.documento-titulo {
+		font-size: 18px;
+		font-weight: 600;
+		color: var(--tinta);
+	}
+
+	.documento .btn {
+		flex: 0 0 auto;
+		position: relative;
+	}
+
+	.ocupado {
+		cursor: progress;
+		opacity: 0.7;
+	}
+
+	/* ─── Perguntas ─── */
+	.pergunta {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		scroll-margin-top: 16px;
+	}
+
+	.pergunta--filha {
+		margin-left: 10px;
+		padding-left: 16px;
+		border-left: 2px solid var(--borda-suave);
+	}
+
+	.rotulo {
+		font-size: 18px;
+		font-weight: 600;
+		line-height: 1.35;
+		color: var(--tinta);
+	}
+
+	.opcional {
+		font-size: 15px;
+		font-weight: 400;
+		color: var(--tinta-3);
+	}
+
+	.campo {
+		width: 100%;
+		height: 52px;
+		padding: 0 16px;
+		font-size: 17px;
+		color: var(--tinta);
+		background: #ffffff;
+		border: 1.5px solid var(--campo-borda);
+		border-radius: 10px;
+	}
+
+	.campo:focus {
+		border-color: var(--azul);
+	}
+
+	.campo--curto {
+		max-width: 240px;
+	}
+
+	.campo--longo {
+		height: auto;
+		min-height: 104px;
+		padding: 12px 16px;
+		line-height: 1.45;
+		resize: vertical;
+	}
+
+	.com-erro {
+		border-color: var(--vermelho) !important;
+	}
+
+	.escondido {
+		position: absolute;
+		opacity: 0;
+		width: 1px;
+		height: 1px;
+		pointer-events: none;
+	}
+
+	.pilulas {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 160px));
+		gap: 10px;
+	}
+
+	.pilula {
+		position: relative;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		height: 52px;
+		font-size: 17px;
+		font-weight: 600;
+		color: var(--tinta);
+		background: #ffffff;
+		border: 1.5px solid var(--borda);
+		border-radius: 999px;
+		cursor: pointer;
+	}
+
+	.pilula.marcada {
+		color: var(--pergaminho);
+		background: var(--azul);
+		border-color: var(--azul);
+	}
+
+	.linhas {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.linha {
+		position: relative;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 52px;
+		padding: 8px 16px;
+		font-size: 17px;
+		font-weight: 500;
+		color: var(--tinta);
+		background: #ffffff;
+		border: 1.5px solid var(--borda);
+		border-radius: 10px;
+		cursor: pointer;
+	}
+
+	.linha.marcada {
+		background: #eef1f7;
+		border-color: var(--azul);
+	}
+
+	.marca {
+		flex: 0 0 20px;
+		height: 20px;
+		box-sizing: border-box;
+		border-radius: 50%;
+		border: 2px solid var(--campo-borda);
+		background: #ffffff;
+	}
+
+	.linha .marca {
+		flex-basis: 22px;
+		height: 22px;
+	}
+
+	.marcada .marca {
+		border-color: var(--azul);
+		background: var(--azul);
+		box-shadow: inset 0 0 0 4px #ffffff;
+	}
+
+	.pilula.marcada .marca {
+		border-color: var(--pergaminho);
+		background: var(--pergaminho);
+		box-shadow: inset 0 0 0 4px var(--azul);
+	}
+
+	.marca--caixa {
+		border-radius: 6px;
+		color: var(--pergaminho);
+		font-size: 14px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.marcada .marca--caixa {
+		box-shadow: none;
+	}
+
+	.erro-campo {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 15px;
+		font-weight: 600;
+		color: #842424;
+	}
+
+	.erro-icone {
+		flex: 0 0 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--vermelho);
+		color: var(--pergaminho);
+		font-size: 13px;
+		font-weight: 700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+	}
+
+	.erro-icone--grande {
+		flex-basis: 26px;
+		height: 26px;
+		font-size: 16px;
+	}
+
+	.resumo-erros {
+		display: flex;
+		gap: 12px;
+		align-items: flex-start;
+		padding: 14px 16px;
+		background: #f6e2df;
+		border: 1px solid #e6bdb6;
+		border-radius: 10px;
+		font-size: 16px;
+		line-height: 1.45;
+		color: #842424;
+	}
+
+	.resumo-erros div {
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+
+	.resumo-erros a {
+		color: #842424;
+		font-weight: 600;
+	}
+
+	/* ─── Revisão ─── */
+	.revisao-secao {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 16px 18px;
+		background: #ffffff;
+		border: 1px solid var(--borda-suave);
+		border-radius: 12px;
+	}
+
+	.revisao-topo {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.revisao-topo h3 {
+		margin: 0;
+		font: 600 24px/1.1 'Cormorant Garamond', serif;
+		color: var(--azul);
+	}
+
+	.revisao-lista {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.revisao-lista div {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.revisao-filha {
+		padding-left: 16px;
+	}
+
+	.revisao-lista dt {
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--ouro-texto);
+	}
+
+	.revisao-lista dd {
+		margin: 0;
+		font-size: 17px;
+		color: var(--tinta);
+		overflow-wrap: anywhere;
+	}
+
+	.sem-resposta {
+		color: #5e6272 !important;
+	}
+
+	/* ─── Navegação ─── */
+	.navegacao {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding-top: 18px;
+		border-top: 1px solid var(--linha);
+	}
+
+	.navegacao-botoes {
+		display: flex;
+		justify-content: space-between;
+		gap: 10px;
+	}
+
+	.navegacao-botoes .btn--ouro {
+		margin-left: auto;
+	}
+
+	/* ─── Botões ─── */
+	.btn {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		height: 52px;
+		padding: 0 22px;
+		font-size: 17px;
+		font-weight: 600;
+		color: var(--azul);
+		text-decoration: none;
+		background: transparent;
+		border: 1.5px solid transparent;
+		border-radius: 999px;
+		cursor: pointer;
+	}
+
+	.btn:disabled {
+		cursor: not-allowed;
+		opacity: 0.6;
+	}
+
+	.btn--ouro {
+		padding: 0 26px;
+		font-weight: 700;
+		color: var(--azul-noite);
+		background: linear-gradient(180deg, #d6be72, #b69e55);
+		border: 1px solid #9c8642;
+		box-shadow: 0 6px 16px -8px rgba(122, 101, 40, 0.9);
+	}
+
+	.btn--ouro:hover:not(:disabled) {
+		background: #b69e55;
+	}
+
+	.btn--contorno {
+		border-color: var(--azul);
+	}
+
+	.btn--contorno:hover:not(:disabled) {
+		background: #eef1f7;
+	}
+
+	.btn--leve {
+		height: 44px;
+		padding: 0 16px;
+		font-size: 15px;
+		background: var(--pergaminho);
+		border: 1px solid var(--borda);
+	}
+
+	.btn--leve:hover {
+		background: #fbf6e6;
+	}
+
+	.btn--largo {
+		flex: 1;
+	}
+
+	/* ─── Pagamento ─── */
+	.pagamento {
+		gap: 14px;
+	}
+
+	.valor {
+		margin: 0;
+		font: 600 30px 'Cormorant Garamond', serif;
+		color: var(--tinta);
+	}
+
+	/* ─── Carregando ─── */
+	.spinner {
+		width: 34px;
+		height: 34px;
+		border: 3px solid var(--borda-suave);
+		border-top-color: var(--azul);
+		border-radius: 50%;
+		animation: girar 0.9s linear infinite;
+	}
+
+	.spinner--pequeno {
+		width: 18px;
+		height: 18px;
+		border-width: 2px;
+	}
+
+	@keyframes girar {
 		to {
 			transform: rotate(360deg);
 		}
 	}
 
-	/* ---------- Dados de confirmação ---------- */
-
-	.secao-titulo {
-		margin: 0 0 0.3rem;
-		font-size: 1.05rem;
-		color: #14342a;
-	}
-
-	.secao-dica {
-		color: #7a7a7a;
-		font-size: 0.86rem;
-		margin: 0 0 1rem;
-		line-height: 1.5;
-	}
-
-	.grade-dados {
-		display: grid;
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-		gap: 0.8rem 1.5rem;
-	}
-
-	.grade-dados > div {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-		min-width: 0;
-	}
-
-	.grade-dados span {
-		font-size: 0.7rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		color: #a0a0a0;
-	}
-
-	.grade-dados strong {
-		font-weight: 500;
-		font-size: 0.92rem;
-		color: #333;
-		overflow-wrap: anywhere;
-	}
-
-	.largo {
-		grid-column: 1 / -1;
-	}
-
-	/* ---------- Seções e perguntas ---------- */
-
-	.sem-moldura {
-		border: none;
-		padding: 0;
-		margin: 0;
-		min-width: 0;
-	}
-
-	.sem-moldura:disabled {
-		opacity: 0.75;
-	}
-
-	.secao-marca {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 1rem;
-		margin: 1.8rem 0.3rem 0.7rem;
-	}
-
-	.secao-marca h2 {
-		margin: 0;
-		font-size: 0.82rem;
-		font-weight: 800;
-		text-transform: uppercase;
-		letter-spacing: 0.07em;
-		color: #1c8b6b;
-	}
-
-	.secao-marca span {
-		font-size: 0.75rem;
-		color: #a0a0a0;
-	}
-
-	.pergunta {
-		border-left: 4px solid transparent;
-		transition: border-color 0.15s ease;
-	}
-
-	.pergunta:focus-within {
-		border-left-color: #6fdec2;
-	}
-
-	.pergunta-texto {
-		margin: 0 0 1rem;
-		font-size: 0.98rem;
-		color: #202124;
-		line-height: 1.45;
-	}
-
-	.entrada {
-		font-family: inherit;
-		font-size: 0.95rem;
-		color: #202124;
-		width: 100%;
-		background: transparent;
-	}
-
-	.entrada--linha {
-		border: none;
-		border-bottom: 1px solid #dadce0;
-		padding: 0.45rem 0.1rem;
-		border-radius: 0;
-	}
-
-	.entrada--linha:focus {
-		outline: none;
-		border-bottom: 2px solid #1c8b6b;
-		padding-bottom: calc(0.45rem - 1px);
-	}
-
-	.entrada--caixa {
-		border: 1px solid #dadce0;
-		border-radius: 8px;
-		padding: 0.6rem 0.75rem;
-		resize: vertical;
-	}
-
-	.entrada--caixa:focus {
-		outline: none;
-		border-color: #1c8b6b;
-		box-shadow: 0 0 0 3px rgba(111, 222, 194, 0.28);
-	}
-
-	.entrada--curta {
-		max-width: 280px;
-	}
-
-	.opcoes {
-		display: flex;
-		flex-direction: column;
-		gap: 0.15rem;
-	}
-
-	.opcao {
-		display: flex;
-		align-items: center;
-		gap: 0.7rem;
-		padding: 0.5rem 0.4rem;
-		border-radius: 8px;
-		font-size: 0.93rem;
-		color: #202124;
-		cursor: pointer;
-	}
-
-	.opcao:hover {
-		background: #f5faf8;
-	}
-
-	.opcao input {
-		accent-color: #1c8b6b;
-		width: 1.05rem;
-		height: 1.05rem;
-		flex-shrink: 0;
-		cursor: pointer;
-	}
-
-	/* ---------- Rodapé com progresso e envio ---------- */
-
-	.rodape {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 1rem;
-		flex-wrap: wrap;
-		background: rgba(255, 255, 255, 0.97);
-		backdrop-filter: blur(6px);
-		border: 1px solid #cfe7de;
-		border-radius: 12px;
-		padding: 1rem 1.3rem;
-		margin-bottom: 0.9rem;
-		position: sticky;
-		bottom: 0.8rem;
-		box-shadow: 0 8px 24px rgba(17, 88, 67, 0.18);
-	}
-
-	.progresso {
-		display: flex;
-		flex-direction: column;
-		gap: 0.35rem;
-		flex: 1 1 200px;
-		min-width: 160px;
-	}
-
-	.progresso span {
-		font-size: 0.78rem;
-		color: #8a8a8a;
-	}
-
-	.progresso-barra {
-		height: 6px;
-		background: #eef2f0;
-		border-radius: 999px;
-		overflow: hidden;
-	}
-
-	.progresso-preenchido {
-		height: 100%;
-		background: linear-gradient(90deg, #1c8b6b, #6fdec2);
-		border-radius: 999px;
-		transition: width 0.25s ease;
-	}
-
-	.botao {
-		display: inline-block;
-		background: #1c8b6b;
-		color: #fff;
-		border: none;
-		padding: 0.7rem 2rem;
-		border-radius: 999px;
-		font-weight: 700;
-		font-size: 0.94rem;
-		cursor: pointer;
-		text-decoration: none;
-	}
-
-	.botao:hover:not(:disabled) {
-		background: #17755a;
-	}
-
-	.botao:disabled {
-		opacity: 0.6;
-		cursor: not-allowed;
-	}
-
-	.botao--claro {
-		background: #f3f4f6;
-		color: #374151;
-		border: 1px solid #e5e7eb;
-		margin-top: 0.8rem;
-	}
-
-	/* ---------- Pagamento ---------- */
-
-	.pagamento {
-		border-color: #cdeee3;
-		background: #fbfffd;
-	}
-
-	.valor {
-		margin: 0.2rem 0 1rem;
-		font-size: 1.9rem;
-		font-weight: 700;
-		color: #115843;
-	}
-
-	.rodape-nota {
-		text-align: center;
-		color: #a8b3ae;
-		font-size: 0.75rem;
-		margin: 1.5rem 0 0;
-	}
-
-	@media (max-width: 520px) {
-		.fundo {
-			padding: 1.2rem 0.7rem 3rem;
+	/* ─── Computador ─── */
+	@media (min-width: 720px) {
+		.pagina {
+			--margem: clamp(16px, 4vw, 48px);
 		}
 
-		.cartao {
-			padding: 1.2rem;
+		.usuario-nome {
+			display: flex;
 		}
 
-		.cabecalho-corpo h1 {
-			font-size: 1.35rem;
+		.folha {
+			padding-top: 24px;
+			gap: 20px;
 		}
 
-		.grade-dados {
-			grid-template-columns: 1fr;
+		.navegacao-botoes .btn--largo {
+			flex: 0 1 auto;
+			min-width: 280px;
 		}
 	}
 </style>

@@ -123,6 +123,12 @@ return function (RouteBuilder $routes): void {
             $builder->get('/admin/formularios/resumo', ['controller' => 'Questions', 'action' => 'resumo']);
             $builder->post('/admin/formularios/importar', ['controller' => 'Questions', 'action' => 'importar']);
             $builder->get('/admin/formularios/respostas', ['controller' => 'Respostas', 'action' => 'index']);
+
+            // --- Documento de identidade ---
+            $builder->get('/me/documento', ['controller' => 'Documentos', 'action' => 'meu']);
+            $builder->post('/me/documento', ['controller' => 'Documentos', 'action' => 'enviar']);
+            $builder->get('/admin/documentos/{id}/arquivo', ['controller' => 'Documentos', 'action' => 'arquivo'])->setPass(['id']);
+            $builder->post('/admin/documentos/{id}/conferir', ['controller' => 'Documentos', 'action' => 'conferir'])->setPass(['id']);
             $builder->get('/admin/secoes', ['controller' => 'Questions', 'action' => 'secoes']);
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
             $builder->patch('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'editarSecao'])->setPass(['id']);

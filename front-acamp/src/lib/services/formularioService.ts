@@ -34,6 +34,15 @@ export interface PerfilConfirmacao {
 	endereco: { rua: string; numero: string; bairro: string; cidade: string; cep: string } | null;
 }
 
+/** Documento de identidade do cadastro (sem o arquivo: ele só abre no painel). */
+export interface DocumentoResumo {
+	id: number;
+	nome: string;
+	tipo: 'imagem' | 'pdf';
+	enviado_em: string | null;
+	conferido_em: string | null;
+}
+
 export interface PrazoFormulario {
 	/** Data-limite para responder, no formato YYYY-MM-DDTHH:mm. */
 	limite: string;
@@ -67,6 +76,8 @@ export interface AtividadeFormulario {
 	categoria: string | null;
 	local: string | null;
 	inicio: string | null;
+	/** Último dia (YYYY-MM-DD). */
+	fim: string | null;
 }
 
 export interface FormularioData {
@@ -81,9 +92,13 @@ export interface FormularioData {
 	/** Explicação pronta de por que não é possível responder agora. */
 	motivo_indisponivel: string | null;
 	respondido: boolean;
+	/** Primeiro envio (YYYY-MM-DDTHH:mm); null em envios de antes de o sistema guardar a data. */
+	enviado_em: string | null;
 	total_perguntas: number;
 	prazo: PrazoFormulario | null;
 	perfil: PerfilConfirmacao;
+	/** Sem documento o formulário não é enviado. */
+	documento: DocumentoResumo | null;
 	sections: SecaoFormulario[];
 	pagamento: PagamentoInscricao | null;
 }
@@ -108,6 +123,17 @@ export async function salvarFormulario(
 	const data = await res.json();
 	if (res.ok) return { success: true, pagamento: data.pagamento };
 	return { success: false, error: data.error || 'Erro ao salvar formulário' };
+}
+
+/** Envia (ou troca) a foto/PDF do documento de identidade do cadastro. */
+export async function enviarDocumento(arquivo: File): Promise<{ data?: DocumentoResumo; error?: string }> {
+	const corpo = new FormData();
+	corpo.append('arquivo', arquivo);
+	const res = await apiFetch('/me/documento', { method: 'POST', body: corpo });
+	const data = await res.json().catch(() => ({}));
+	if (res.ok) return { data: data.data };
+	if (res.status === 413) return { error: 'O arquivo é grande demais. Envie uma foto ou PDF de até 5 MB.' };
+	return { error: data.error || 'Não foi possível enviar o documento.' };
 }
 
 /**

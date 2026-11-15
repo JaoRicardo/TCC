@@ -44,7 +44,7 @@ Config/secrets live in `backend/config/.env` (DB, JWT secret, Mercado Pago) and 
 
 - Tests run against a real MySQL database: connection `test` in `config/app_local.php` reuses the `DATABASE_*` vars with `DATABASE_TEST_NAME` (default `<DATABASE_NAME>_test`). `tests/bootstrap.php` aborts if the test DB equals the app DB, runs all migrations via `Migrator`, then clears the `_cake_model_` schema cache.
 - The real tests are in `tests/TestCase/Regras/` and extend `RegrasTestCase` (transaction per test; factories `criarUsuario(admin: true)` = all permissions, `criarAcampamento`, `inscrever`, `jaFoiCampista`, `criarPergunta`, `autenticarComo`, `respostaJson`). Each business rule has a test file there — add/extend one when changing a rule.
-- In `IntegrationTestTrait`, request config is reset after each request: call `autenticarComo()` again before every `get`/`post`.
+- In `IntegrationTestTrait`, only the request *headers* are cleared after each request: call `autenticarComo()` again before every `get`/`post`. Other `configRequest` keys accumulate (`array_merge_recursive`) — for uploads, `unset($this->_request['files'])` before each `configRequest(['files' => …])` (see `DocumentoIdentidadeTest`).
 - Mercado Pago is mocked with `Client::addMockResponse` (see `PagamentoTest`).
 
 ## Backend architecture
@@ -60,6 +60,7 @@ Config/secrets live in `backend/config/.env` (DB, JWT secret, Mercado Pago) and 
 - **Permissions**: the `user_permissions` table is the *only* access rule (`users.is_admin`/`is_counselor` were dropped). Screen keys and dependencies live in `PermissoesService::TELAS`/`AREAS`; anyone with ≥1 screen enters the admin panel. Team roles inside an activity (servo geral / líder de setor / servo comum) are a separate, per-activity mechanism in `ActivitiesController` (`activities_general_servants`, `is_coordinator`).
 - **Services** (`src/Service/`) hold the heavy business logic; controllers are thin wrappers: `SorteioService` (campista/servo raffles), `PrazoFormularioService` (form/payment deadlines, open slots, "chamar próximo"), `MercadoPagoService` (Checkout Pro; unconfigured on purpose — `configurado()` is false without a token), `PermissoesService`, `JwtService`, `TravaExecucao` (MySQL `GET_LOCK` wrapper).
 - **Lazy-cron**: pending raffles and deadline sweeps run opportunistically at the top of `ActivitiesController::index`, `SorteioController::resultado` and several `InscricoesController` actions (guarded by `TravaExecucao`, each raffle date handled once). Consequence: simply hitting `GET /activities` or `/me/inscricoes` can mutate the dev DB — intercept those in browser tests when a raffle date is near.
+- **Identity documents** (`user_documents`, `DocumentosController`) are stored in `backend/storage/documentos/` — outside `webroot`, gitignored — and served only through `GET /admin/documentos/{id}/arquivo` (permission `documentos`). Never put them in `webroot/uploads` (public URLs). A form can't be submitted without the person's document.
 - **Soft delete**: most tables have a `deleted` column; queries must filter `deleted IS NULL` (including on joined `Users`) — this has caused leaks before.
 
 ### Backend pitfalls that have bitten this project

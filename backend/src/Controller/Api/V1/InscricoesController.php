@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Model\Table\UserDocumentsTable;
 use App\Service\MercadoPagoService;
 use App\Service\PrazoFormularioService;
 use Cake\Http\Response;
@@ -392,6 +393,7 @@ class InscricoesController extends ApiController
         $preRegs = $this->PreRegistrations->find()
             ->contain(['Activities.Categories', 'SelectionMethods'])
             ->where([
+                'Activities.deleted IS'         => null, // atividade excluída some da área do participante
                 'PreRegistrations.user_id'   => $identity->id,
                 'PreRegistrations.deleted IS' => null,
             ])
@@ -420,6 +422,7 @@ class InscricoesController extends ApiController
         $preReg = $this->PreRegistrations->find()
             ->contain(['Activities.Categories', 'SelectionMethods'])
             ->where([
+                'Activities.deleted IS'         => null, // atividade excluída some da área do participante
                 'PreRegistrations.id'         => $id,
                 'PreRegistrations.user_id'    => $identity->id,
                 'PreRegistrations.deleted IS' => null,
@@ -455,7 +458,7 @@ class InscricoesController extends ApiController
         $editavel          = $temFormulario && !$prazoVencido;
 
         $respostas = [];
-        foreach ($this->Answers->find()->where(['pre_registration_id' => $preReg->id])->all() as $ans) {
+        foreach ($this->Answers->find()->where(['pre_registration_id' => $preReg->id, 'deleted IS' => null])->all() as $ans) {
             $respostas[(int)$ans->question_id] = $ans->answer;
         }
 
@@ -476,6 +479,8 @@ class InscricoesController extends ApiController
                     (string)$preReg->disqualification_reason
                 ),
                 'respondido'            => (bool)$preReg->form_submitted,
+                // Primeiro envio (guardado desde 2026-11-15; envios anteriores vêm null).
+                'enviado_em'            => $preReg->form_submitted_at?->format('Y-m-d\TH:i'),
                 'total_perguntas'       => count($questions),
                 'prazo'                 => $prazo === null ? null : [
                     'limite'      => $prazo->format('Y-m-d\TH:i'),
@@ -489,8 +494,13 @@ class InscricoesController extends ApiController
                     'categoria' => $activity->category->name ?? null,
                     'local'     => $activity->place,
                     'inicio'    => $activity->start_date?->format('Y-m-d\TH:i'),
+                    'fim'       => $activity->start_date
+                        ?->modify('+' . max(0, (int)$activity->duration_days - 1) . ' days')
+                        ->format('Y-m-d'),
                 ] : null,
                 'perfil'    => $this->serializePerfilConfirmacao($identity),
+                // Documento de identidade do cadastro; sem ele o formulário não é enviado.
+                'documento' => UserDocumentsTable::resumo($this->fetchTable('UserDocuments')->daPessoa((int)$identity->id)),
                 'sections'  => $temFormulario ? $this->montarSections($questions, $respostas) : [],
                 'pagamento' => $activity ? $this->serializePagamento($preReg, $activity) : null,
             ],
@@ -700,6 +710,7 @@ class InscricoesController extends ApiController
         $preReg = $this->PreRegistrations->find()
             ->contain(['Activities.Categories', 'SelectionMethods'])
             ->where([
+                'Activities.deleted IS'         => null, // atividade excluída some da área do participante
                 'PreRegistrations.id'         => $id,
                 'PreRegistrations.user_id'    => $identity->id,
                 'PreRegistrations.deleted IS' => null,
@@ -749,6 +760,14 @@ class InscricoesController extends ApiController
             );
         }
 
+        // O documento confirma idade e dados; sem ele o formulário não conta como enviado.
+        if (!$this->fetchTable('UserDocuments')->daPessoa((int)$identity->id)) {
+            return $this->apiError(
+                'Envie a foto ou o PDF do documento de identidade na etapa "Seus dados" antes de enviar o formulário.',
+                422
+            );
+        }
+
         $enviadas = [];
         foreach ((array)($this->request->getData('answers') ?? []) as $item) {
             $qId = (int)($item['question_id'] ?? 0);
@@ -781,22 +800,29 @@ class InscricoesController extends ApiController
 
         $salvas = 0;
         $ok = $this->Answers->getConnection()->transactional(function () use ($questions, $visiveis, $enviadas, $preReg, &$salvas) {
+            // Inclui as excluídas: uma pergunta respondida de novo reaproveita a
+            // mesma linha em vez de criar outra.
             $existentes = $this->Answers->find()
                 ->where(['pre_registration_id' => $preReg->id])
+                ->orderBy(['id' => 'ASC'])
                 ->all()
                 ->indexBy('question_id')
                 ->toArray();
+            $agora = date('Y-m-d H:i:s');
 
             foreach ($questions as $q) {
                 $qId   = (int)$q->id;
                 $valor = $enviadas[$qId] ?? '';
 
                 if (!isset($visiveis[$qId]) || $valor === '') {
-                    // Resposta que deixou de valer não pode ficar guardada: se a
+                    // Resposta que deixou de valer não pode continuar valendo: se a
                     // pessoa marcou "tem alergia: amendoim" e depois trocou para
                     // "não tem alergia", a ficha não pode continuar dizendo amendoim.
-                    if (isset($existentes[$qId])) {
-                        $this->Answers->delete($existentes[$qId]);
+                    // Exclusão lógica: a linha fica no banco, marcada como excluída.
+                    $antiga = $existentes[$qId] ?? null;
+                    if ($antiga && $antiga->deleted === null) {
+                        $antiga->deleted = $agora;
+                        if (!$this->Answers->save($antiga)) return false;
                     }
                     continue;
                 }
@@ -806,6 +832,7 @@ class InscricoesController extends ApiController
                     'question_id'         => $qId,
                 ]);
                 $ans->answer = $valor;
+                $ans->deleted = null;
 
                 if (!$this->Answers->save($ans)) {
                     return false;

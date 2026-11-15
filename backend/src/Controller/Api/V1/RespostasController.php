@@ -4,6 +4,7 @@ declare(strict_types=1);
 namespace App\Controller\Api\V1;
 
 use App\Controller\Api\ApiController;
+use App\Model\Table\UserDocumentsTable;
 use Cake\Http\Response;
 
 /**
@@ -173,12 +174,18 @@ class RespostasController extends ApiController
             if ($quando !== null && (!isset($atualizado[$p]) || $quando > $atualizado[$p])) $atualizado[$p] = $quando;
         }
 
+        // Documento só vai para quem tem a permissão "documentos" (dado pessoal sensível).
+        $comDocumento = $this->temPermissao($this->request->getAttribute('identity'), 'documentos');
+        $documentos = $comDocumento
+            ? $this->fetchTable('UserDocuments')->dasPessoas(array_map(fn($i) => (int)$i->user_id, $inscricoes))
+            : [];
+
         $hoje = new \DateTimeImmutable('today');
         $pessoas = [];
         foreach ($inscricoes as $i) {
             $u = $i->user;
             $metodo = $i->selection_method->method ?? '';
-            $pessoas[] = [
+            $pessoa = [
                 'inscricao_id'  => (int)$i->id,
                 'nome'          => $u->name,
                 'idade'         => $u->birthday
@@ -194,6 +201,10 @@ class RespostasController extends ApiController
                 'atualizado_em' => isset($atualizado[(int)$i->id]) ? date('Y-m-d\TH:i:s', $atualizado[(int)$i->id]) : null,
                 'respostas'     => (object)($respostas[(int)$i->id] ?? []),
             ];
+            if ($comDocumento) {
+                $pessoa['documento'] = UserDocumentsTable::resumo($documentos[(int)$i->user_id] ?? null);
+            }
+            $pessoas[] = $pessoa;
         }
 
         return $pessoas;

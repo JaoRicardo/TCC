@@ -241,7 +241,9 @@ class PagamentosController extends ApiController
 
     private function buscarInscricaoDoUsuario(int $id, int $userId): ?object
     {
+        // Inscrição de atividade excluída não é cobrada.
         return $this->PreRegistrations->find()
+            ->innerJoinWith('Activities', fn($q) => $q->where(['Activities.deleted IS' => null]))
             ->where([
                 'PreRegistrations.id'         => $id,
                 'PreRegistrations.user_id'    => $userId,
