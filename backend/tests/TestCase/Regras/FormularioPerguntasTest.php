@@ -360,6 +360,74 @@ class FormularioPerguntasTest extends RegrasTestCase
         $this->assertNotNull($this->fetchTable('Questions')->get($qual['id'])->deleted);
     }
 
+    // ─── Excluir as perguntas de uma seção ───────────────────────────────
+
+    public function testExcluirPerguntasDaSecaoSoNesteFormularioEDesfazer(): void
+    {
+        $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
+        $sim = $this->opcoes($alergia['id'])['Sim'];
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto', dependeDe: $sim);
+        $antiga = $this->criarPerguntaPelaTela('Excluída antes', 'texto_curto');
+        $this->fetchTable('Questions')->updateAll(['deleted' => $this->ontem()], ['id' => $antiga['id']]);
+
+        // Condicional montada por script em outra seção: sai junto com a pai.
+        $outraSecao = (int)$this->salvar('Sections', ['title' => 'Outra seção', 'order' => 2])->id;
+        $longe = $this->salvar('Questions', [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $outraSecao,
+            'text' => 'Desde quando?', 'type' => 'texto_curto', 'is_required' => true, 'order' => 1,
+            'accept_generic_answer' => false, 'depends_on_option_id' => $sim,
+        ]);
+        $outraDoForm = $this->salvar('Questions', [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $outraSecao,
+            'text' => 'Fica', 'type' => 'texto_curto', 'is_required' => true, 'order' => 2, 'accept_generic_answer' => false,
+        ]);
+
+        // Mesma seção (compartilhada) no formulário de servo: não pode ser tocada.
+        $this->autenticarComo($this->admin);
+        $this->post('/api/v1/admin/perguntas', [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Servo', 'section_id' => $this->secaoId,
+            'text' => 'Pergunta do servo', 'type' => 'texto_curto',
+        ]);
+        $doServo = $this->respostaJson()['data']['id'];
+
+        $this->autenticarComo($this->admin);
+        $this->post("/api/v1/admin/secoes/{$this->secaoId}/excluir-perguntas", [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista',
+        ]);
+        $this->assertResponseOk();
+        $resposta = $this->respostaJson();
+        $this->assertSame(3, $resposta['excluidas']);
+
+        $perguntas = $this->fetchTable('Questions');
+        foreach ([$alergia['id'], $qual['id'], $longe->id] as $id) {
+            $this->assertNotNull($perguntas->get($id)->deleted);
+        }
+        $this->assertNull($perguntas->get($doServo)->deleted, 'O formulário de servo usa a mesma seção e não muda.');
+        $this->assertNull($perguntas->get($outraDoForm->id)->deleted);
+        $this->assertNull($this->fetchTable('Sections')->get($this->secaoId)->deleted, 'A seção continua existindo.');
+
+        $this->autenticarComo($this->admin);
+        $this->post("/api/v1/admin/secoes/{$this->secaoId}/restaurar-perguntas", [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'quando' => $resposta['quando'],
+        ]);
+        $this->assertResponseOk();
+        $this->assertEqualsCanonicalizing(
+            [$alergia['id'], $qual['id'], $longe->id],
+            array_column($this->respostaJson()['data'], 'id'),
+        );
+        $this->assertNotNull($perguntas->get($antiga['id'])->deleted, 'O que foi excluído antes não volta.');
+        $this->assertSame($sim, $perguntas->get($qual['id'])->depends_on_option_id);
+    }
+
+    public function testExcluirPerguntasDeSecaoVaziaNoFormularioDa404(): void
+    {
+        $this->autenticarComo($this->admin);
+        $this->post("/api/v1/admin/secoes/{$this->secaoId}/excluir-perguntas", [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista',
+        ]);
+        $this->assertResponseCode(404);
+    }
+
     // ─── Importar ────────────────────────────────────────────────────────
 
     public function testImportarCopiaAsPerguntasERefazAsCondicionaisComOsIdsNovos(): void

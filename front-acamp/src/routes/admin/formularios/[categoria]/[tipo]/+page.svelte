@@ -22,6 +22,8 @@
 		editarPergunta,
 		excluirPergunta,
 		restaurarPergunta,
+		excluirPerguntasDaSecao,
+		restaurarPerguntasDaSecao,
 		criarSecao,
 		editarSecao,
 		type OpcaoParaSalvar,
@@ -29,7 +31,7 @@
 		type ResumoFormulario,
 		type Secao
 	} from '$lib/services/perguntaService';
-	import { diaEMes, normalizar, quemEnvia, tituloDoFormulario, type TipoInscricao } from '$lib/formularios';
+	import { diaEMes, normalizar, quemEnvia, rolarSuave, tituloDoFormulario, type TipoInscricao } from '$lib/formularios';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 
 	type OpcaoLocal = { id: number | null; text: string };
@@ -51,6 +53,7 @@
 	type Modal =
 		| null
 		| { tipo: 'excluir'; id: number | string }
+		| { tipo: 'excluirSecao'; secaoId: number }
 		| { tipo: 'primeira' }
 		| { tipo: 'secao' }
 		| { tipo: 'importar' }
@@ -765,6 +768,65 @@
 		extras = extras.filter((e) => e !== secaoId);
 	}
 
+	/** Perguntas salvas que saem ao excluir a seção: as dela e as condicionais delas (mesmo em outra seção). */
+	function saemComASecao(secaoId: number): PerguntaLocal[] {
+		const daSecao = perguntas.filter((q) => q.secaoId === secaoId && !q.rascunho);
+		const filhas = daSecao.flatMap((q) => filhosDe(q)).filter((f) => !daSecao.includes(f) && !f.rascunho);
+		return [...daSecao, ...new Set(filhas)];
+	}
+
+	async function confirmarExclusaoDaSecao() {
+		if (modal?.tipo !== 'excluirSecao' || !tipo) return;
+		const { secaoId } = modal;
+		const saem = new Set(saemComASecao(secaoId));
+		ocupadoModal = true;
+		erroModal = '';
+		try {
+			const res = await salvando(() => excluirPerguntasDaSecao(secaoId, { category_id: categoryId, subscription_type: tipo }));
+			if (res.error || !res.data) {
+				erroModal = res.error || 'Não foi possível excluir as perguntas da seção.';
+				return;
+			}
+			const { quando, excluidas } = res.data;
+			// Rascunhos da seção e o cartão aberto nela também saem.
+			const abertaSai = ed !== null && (ed.secaoId === secaoId || [...saem].some((x) => x.id === ed!.id));
+			if (abertaSai) {
+				aberta = null;
+				ed = null;
+			}
+			perguntas = perguntas.filter((x) => !saem.has(x) && x.secaoId !== secaoId);
+			extras = extras.filter((e) => e !== secaoId);
+			modal = null;
+			const nome = nomeDaSecao(secaoId);
+			avisar(`${excluidas} ${excluidas === 1 ? 'pergunta excluída' : 'perguntas excluídas'} de ${nome}.`, () =>
+				desfazerExclusaoDaSecao(secaoId, quando)
+			);
+		} catch {
+			erroModal = 'Não foi possível excluir as perguntas. Verifique sua conexão e tente de novo.';
+		} finally {
+			ocupadoModal = false;
+		}
+	}
+
+	async function desfazerExclusaoDaSecao(secaoId: number, quando: string) {
+		if (!tipo) return;
+		fecharAviso();
+		try {
+			const res = await salvando(() =>
+				restaurarPerguntasDaSecao(secaoId, { category_id: categoryId, subscription_type: tipo, quando })
+			);
+			if (res.error || !res.data) {
+				avisar(res.error || 'Não foi possível desfazer a exclusão.');
+				return;
+			}
+			await recarregarPerguntas();
+			avisar(`${res.data.length} ${res.data.length === 1 ? 'pergunta restaurada' : 'perguntas restauradas'}.`);
+			mostrarSecao(secaoId);
+		} catch {
+			avisar('Não foi possível desfazer a exclusão. Verifique sua conexão.');
+		}
+	}
+
 	async function salvarRenomear() {
 		if (modal?.tipo !== 'renomear') return;
 		const { secaoId, nome } = modal;
@@ -789,7 +851,8 @@
 
 	async function mostrarSecao(secaoId: number) {
 		await tick();
-		document.getElementById(`sec-${secaoId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		const secao = document.getElementById(`sec-${secaoId}`);
+		if (secao) rolarSuave(secao);
 	}
 
 	function adicionarSecaoExistente(secao: Secao) {
@@ -986,7 +1049,14 @@
 					<div class="indice">
 						<span class="fm-rotulo indice-titulo">Seções</span>
 						{#each secoesNaTela as s (s.secao.id)}
-							<a class="indice-item" href="#sec-{s.secao.id}">
+							<a
+								class="indice-item"
+								href="#sec-{s.secao.id}"
+								onclick={(e) => {
+									e.preventDefault();
+									mostrarSecao(s.secao.id);
+								}}
+							>
 								<span>{s.secao.titulo}</span><span class="contador">{s.salvasAqui}</span>
 							</a>
 						{/each}
@@ -1065,6 +1135,21 @@
 													onclick={() => moverSecao(s.secao.id, 1)}
 												>
 													Descer seção
+												</button>
+												<button
+													type="button"
+													role="menuitem"
+													class="fm-menu-item fm-menu-item--perigo"
+													disabled={s.salvasAqui === 0}
+													onclick={async () => {
+														menuSecao = null;
+														if (!(await fecharAberta())) return;
+														erroModal = '';
+														modal = { tipo: 'excluirSecao', secaoId: s.secao.id };
+													}}
+												>
+													Excluir as perguntas desta seção…
+													<span class="fm-menu-nota">Só neste formulário. Dá para desfazer logo depois.</span>
 												</button>
 												<button
 													type="button"
@@ -1433,6 +1518,51 @@
 				{#if ocupadoModal}<span class="fm-spinner fm-spinner--pequeno"></span>Excluindo...{:else}{filhas.length
 						? `Excluir as ${filhas.length + 1} perguntas`
 						: 'Excluir pergunta'}{/if}
+			</button>
+		</div>
+	</Janela>
+{/if}
+
+{#if modal?.tipo === 'excluirSecao'}
+	{@const saem = saemComASecao(modal.secaoId)}
+	{@const condicionais = saem.filter((q) => q.dependsOn !== null).length}
+	{@const responderam = Math.max(0, ...saem.map((q) => q.respostas))}
+	{@const nomeSecao = nomeDaSecao(modal.secaoId)}
+	{@const outros = formulariosQueUsam(modal.secaoId).filter((f) => f !== titulo)}
+	<Janela idTitulo="t-excluir-secao" faixa="linear-gradient(90deg,#9b2c2c,#b69e55)" travada={ocupadoModal} onfechar={() => (modal = null)}>
+		<h2 id="t-excluir-secao" class="fm-janela-titulo">Excluir as perguntas de “{nomeSecao}”?</h2>
+		<div class="fm-janela-alvo">
+			<strong>{nomeSecao}</strong>
+			<span>
+				{saem.length} {saem.length === 1 ? 'pergunta' : 'perguntas'}{condicionais > 0
+					? ` (${condicionais} ${condicionais === 1 ? 'condicional' : 'condicionais'})`
+					: ''} · {titulo}
+			</span>
+		</div>
+		<ul class="fm-janela-lista">
+			<li>Todas as perguntas desta seção saem <strong>só deste formulário</strong>.</li>
+			{#if responderam > 0}
+				<li>As respostas de até {responderam} {responderam === 1 ? 'pessoa' : 'pessoas'} a estas perguntas deixam de aparecer.</li>
+			{/if}
+			{#if uso && saem.length === salvas.length}
+				<li>
+					O formulário fica vazio: enquanto estiver assim, <strong>ninguém perde a vaga pelo prazo</strong> do {uso.nome}.
+				</li>
+			{/if}
+			<li>
+				A seção continua existindo{outros.length ? ` em ${outros.join(', ')}` : ' para os outros formulários'}.
+			</li>
+			<li>Logo depois de excluir, dá para desfazer.</li>
+		</ul>
+		{#if erroModal}<p class="fm-erro-linha" role="alert">{erroModal}</p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" data-foco-inicial disabled={ocupadoModal} onclick={() => (modal = null)}>
+				Cancelar
+			</button>
+			<button type="button" class="fm-btn fm-btn--perigo-cheio fm-btn--grande" disabled={ocupadoModal} onclick={confirmarExclusaoDaSecao}>
+				{#if ocupadoModal}<span class="fm-spinner fm-spinner--pequeno"></span>Excluindo...{:else}{saem.length === 1
+						? 'Excluir a pergunta'
+						: `Excluir as ${saem.length} perguntas`}{/if}
 			</button>
 		</div>
 	</Janela>

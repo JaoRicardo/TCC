@@ -624,6 +624,141 @@ class QuestionsController extends ApiController
         return $this->apiResponse(['deleted' => true]);
     }
 
+    /**
+     * POST /admin/secoes/{id}/excluir-perguntas  (category_id, subscription_type)
+     *
+     * Exclui de uma vez as perguntas da seção em UM formulário, com as
+     * condicionais delas. A seção é compartilhada e continua existindo nos
+     * outros formulários. Devolve `quando` (o instante da exclusão), que o
+     * "Desfazer" manda de volta para restaurar exatamente essas perguntas.
+     */
+    public function excluirPerguntasDaSecao(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('formularios');
+        if ($identity instanceof Response) return $identity;
+
+        $formulario = $this->formularioDoPedido();
+        if ($formulario instanceof Response) return $formulario;
+        [$categoryId, $subscriptionType] = $formulario;
+
+        $ids = $this->Questions->find()
+            ->select(['id'])
+            ->where([
+                'category_id'       => $categoryId,
+                'subscription_type' => $subscriptionType,
+                'section_id'        => $id,
+                'deleted IS'        => null,
+            ])
+            ->all()
+            ->extract('id')
+            ->toList();
+        if (!$ids) return $this->apiError('Esta seção não tem perguntas neste formulário', 404);
+
+        // Condicionais das perguntas da seção saem junto, mesmo se estiverem em outra seção.
+        $opcoes = $this->Options->find()
+            ->select(['id'])
+            ->where(['question_id IN' => $ids, 'deleted IS' => null])
+            ->all()
+            ->extract('id')
+            ->toList();
+        if ($opcoes) {
+            $filhas = $this->Questions->find()
+                ->select(['id'])
+                ->where(['depends_on_option_id IN' => $opcoes, 'deleted IS' => null])
+                ->all()
+                ->extract('id')
+                ->toList();
+            $ids = array_values(array_unique([...$ids, ...$filhas]));
+        }
+
+        $quando = date('Y-m-d H:i:s');
+        $this->Questions->updateAll(['deleted' => $quando], ['id IN' => $ids]);
+
+        return $this->apiResponse(['excluidas' => count($ids), 'quando' => $quando]);
+    }
+
+    /**
+     * POST /admin/secoes/{id}/restaurar-perguntas  (category_id, subscription_type, quando)
+     *
+     * O "Desfazer" de excluirPerguntasDaSecao: volta as perguntas da seção
+     * excluídas naquele instante e as condicionais delas que saíram junto.
+     */
+    public function restaurarPerguntasDaSecao(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('formularios');
+        if ($identity instanceof Response) return $identity;
+
+        $formulario = $this->formularioDoPedido();
+        if ($formulario instanceof Response) return $formulario;
+        [$categoryId, $subscriptionType] = $formulario;
+
+        $quando = (string)$this->request->getData('quando');
+        $data = \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $quando);
+        if ($data === false || $data->format('Y-m-d H:i:s') !== $quando) {
+            return $this->apiError('Informe quando as perguntas foram excluídas', 422);
+        }
+
+        $daSecao = $this->Questions->find()
+            ->select(['id'])
+            ->where([
+                'category_id'       => $categoryId,
+                'subscription_type' => $subscriptionType,
+                'section_id'        => $id,
+                'deleted'           => $quando,
+            ])
+            ->all()
+            ->extract('id')
+            ->toList();
+        if (!$daSecao) return $this->apiError('Não há perguntas desta seção para restaurar', 404);
+
+        $ids = $daSecao;
+        $opcoes = $this->Options->find()
+            ->select(['id'])
+            ->where(['question_id IN' => $daSecao, 'deleted IS' => null])
+            ->all()
+            ->extract('id')
+            ->toList();
+        if ($opcoes) {
+            $filhas = $this->Questions->find()
+                ->select(['id'])
+                ->where(['depends_on_option_id IN' => $opcoes, 'deleted' => $quando])
+                ->all()
+                ->extract('id')
+                ->toList();
+            $ids = array_values(array_unique([...$ids, ...$filhas]));
+        }
+        $this->Questions->updateAll(['deleted' => null], ['id IN' => $ids]);
+
+        $restauradas = $this->Questions->find()
+            ->contain(['Options', 'Sections'])
+            ->where(['Questions.id IN' => $ids])
+            ->all()
+            ->toArray();
+        $respostas = $this->contarRespostas($ids);
+
+        return $this->apiResponse([
+            'data' => array_map(fn($q) => $this->serializePergunta($q, $respostas[(int)$q->id] ?? 0), $restauradas),
+        ]);
+    }
+
+    /**
+     * category_id e subscription_type do corpo do pedido, ou o erro 422.
+     *
+     * @return array{0: int, 1: string}|\Cake\Http\Response
+     */
+    private function formularioDoPedido(): array|Response
+    {
+        $categoryId       = intval($this->request->getData('category_id') ?? 0);
+        $subscriptionType = $this->request->getData('subscription_type');
+        if (!$categoryId || !in_array($subscriptionType, ['Campista', 'Servo'], true)) {
+            return $this->apiError('Informe category_id e subscription_type (Campista|Servo)', 422);
+        }
+
+        return [$categoryId, $subscriptionType];
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────────
 
     /**

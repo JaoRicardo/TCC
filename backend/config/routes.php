@@ -126,6 +126,8 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
             $builder->patch('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'editarSecao'])->setPass(['id']);
             $builder->delete('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'excluirSecao'])->setPass(['id']);
+            $builder->post('/admin/secoes/{id}/excluir-perguntas', ['controller' => 'Questions', 'action' => 'excluirPerguntasDaSecao'])->setPass(['id']);
+            $builder->post('/admin/secoes/{id}/restaurar-perguntas', ['controller' => 'Questions', 'action' => 'restaurarPerguntasDaSecao'])->setPass(['id']);
 
             // --- Admin: categorias ---
             $builder->post('/admin/categories', ['controller' => 'Categories', 'action' => 'add']);

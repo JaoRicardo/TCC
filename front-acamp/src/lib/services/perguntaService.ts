@@ -142,6 +142,27 @@ export async function editarSecao(id: number, dados: { titulo?: string; ordem?: 
 	return { success: false, error: data.error || 'Erro ao atualizar seção' };
 }
 
+/** Exclui as perguntas da seção só neste formulário. `quando` volta no "Desfazer". */
+export async function excluirPerguntasDaSecao(
+	secaoId: number,
+	formulario: { category_id: number; subscription_type: 'Campista' | 'Servo' }
+): Promise<{ data?: { excluidas: number; quando: string }; error?: string }> {
+	const res = await apiFetch(`/admin/secoes/${secaoId}/excluir-perguntas`, { method: 'POST', body: JSON.stringify(formulario) });
+	const data = await res.json();
+	if (res.ok) return { data: { excluidas: data.excluidas, quando: data.quando } };
+	return { error: data.error || 'Erro ao excluir as perguntas da seção' };
+}
+
+export async function restaurarPerguntasDaSecao(
+	secaoId: number,
+	formulario: { category_id: number; subscription_type: 'Campista' | 'Servo'; quando: string }
+): Promise<{ data?: Pergunta[]; error?: string }> {
+	const res = await apiFetch(`/admin/secoes/${secaoId}/restaurar-perguntas`, { method: 'POST', body: JSON.stringify(formulario) });
+	const data = await res.json();
+	if (res.ok) return { data: data.data };
+	return { error: data.error || 'Erro ao desfazer a exclusão' };
+}
+
 export async function excluirSecao(id: number): Promise<{ success: boolean; error?: string }> {
 	const res = await apiFetch(`/admin/secoes/${id}`, { method: 'DELETE' });
 	const data = await res.json();
