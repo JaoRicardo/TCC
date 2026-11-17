@@ -48,6 +48,8 @@ class PreRegistration extends Entity
         'form_submitted'     => true,
         'disqualified_at'    => true,
         'disqualification_reason' => true,
+        'removed_from_raffle_at' => true,
+        'removed_from_raffle_reason' => true,
         'promoted_at'        => true,
         'selection_method_id' => true,
         'spouse_id'          => true,

@@ -15,15 +15,22 @@
 	}
 </script>
 
+<!-- Com senha provisória, a pessoa não sai da tela de criar a senha: só "Sair". -->
 <header class="cabecalho">
-	<a href="/dashboard" aria-label="Início"><img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" /></a>
+	{#if auth.user?.trocar_senha}
+		<img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" />
+	{:else}
+		<a href="/dashboard" aria-label="Início"><img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" /></a>
+	{/if}
 	{#if auth.user}
 		<div class="usuario">
 			<span class="avatar" aria-hidden="true">{auth.user.name?.charAt(0).toUpperCase()}</span>
 			<span class="usuario-nome"><span>Bem-vindo(a),</span><strong>{auth.user.name?.split(' ')[0]}</strong></span>
-			<a href="/dashboard/perfil" class="botao">Meu cadastro</a>
-			{#if acessaPainel()}
-				<a href={primeiraTela()} class="botao">Painel</a>
+			{#if !auth.user.trocar_senha}
+				<a href="/dashboard/perfil" class="botao">Meu cadastro</a>
+				{#if acessaPainel()}
+					<a href={primeiraTela()} class="botao">Painel</a>
+				{/if}
 			{/if}
 			<button type="button" class="botao" onclick={sair}>Sair</button>
 		</div>

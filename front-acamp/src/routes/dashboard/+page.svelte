@@ -87,7 +87,7 @@
 	function inscricaoSlug(status?: string) {
 		if (status === "Sorteado" || status === "Indicado" || status === "Formulário Enviado") return "confirmed";
 		if (status === "Suplente") return "waiting";
-		if (status === "Desistência" || status === "Prazo Perdido") return "cancelled";
+		if (status === "Desistência" || status === "Prazo Perdido" || status === "Retirado do sorteio") return "cancelled";
 		return "pending";
 	}
 

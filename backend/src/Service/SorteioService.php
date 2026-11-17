@@ -51,6 +51,12 @@ class SorteioService
         return str_replace($comAcento, $semAcento, $cidade);
     }
 
+    /** A cidade está na área dos sorteios (Primavera do Leste ou Poxoréu)? */
+    public static function moraNaArea(?string $cidade): bool
+    {
+        return in_array(self::normalizeCidade((string)$cidade), self::CIDADES_ELEGIVEIS, true);
+    }
+
     // IDs de usuário cuja cidade cadastrada está na lista de cidades elegíveis
     // pra sorteio/indicação (residentes de fora não são escolhidos).
     private function getEligibleCityUserIds(): array
@@ -62,7 +68,7 @@ class SorteioService
 
         $ids = [];
         foreach ($enderecos as $end) {
-            if (in_array(self::normalizeCidade((string)$end->city), self::CIDADES_ELEGIVEIS, true)) {
+            if (self::moraNaArea($end->city)) {
                 $ids[$end->user_id] = true;
             }
         }
@@ -227,6 +233,8 @@ class SorteioService
                 'PreRegistrations.deleted IS'              => null,
                 'PreRegistrations.is_quitter'              => false,
                 'PreRegistrations.selection_method_id IS' => null,
+                // Retirado do sorteio ao corrigir nascimento, sexo ou cidade na ficha.
+                'PreRegistrations.removed_from_raffle_at IS' => null,
             ])
             ->all()
             ->toArray();
@@ -413,6 +421,7 @@ class SorteioService
                 'PreRegistrations.subscription_type' => 'Servo',
                 'PreRegistrations.deleted IS'         => null,
                 'PreRegistrations.is_quitter'         => false,
+                'PreRegistrations.removed_from_raffle_at IS' => null,
                 'Users.deleted IS'                    => null,
             ]);
         if (!empty($excludedUserIds)) {

@@ -36,6 +36,9 @@ abstract class ApiController extends AppController
             // Telas do painel liberadas (o menu é montado só com elas). Só vai nas
             // respostas sobre a própria pessoa logada: login, cadastro e /users/me.
             'permissoes' => $this->permissoes()->daPessoa($user),
+            // Entrou com a senha provisória: o site só mostra a tela de criar a
+            // senha até ela ser trocada (o servidor também recusa o resto).
+            'trocar_senha' => (bool)$user->must_change_password,
         ];
     }
 

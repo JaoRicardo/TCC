@@ -121,7 +121,7 @@
 	function inscricaoSlug(status?: string) {
 		if (status === "Sorteado" || status === "Indicado" || status === "Formulário Enviado" || status === "Inscrito") return "confirmed";
 		if (status === "Suplente") return "waiting";
-		if (status === "Desistência" || status === "Prazo Perdido") return "cancelled";
+		if (status === "Desistência" || status === "Prazo Perdido" || status === "Retirado do sorteio") return "cancelled";
 		return "pending";
 	}
 
@@ -286,11 +286,18 @@
 									<p>Responda o formulário para concluir a inscrição. A vaga só fica garantida quando você envia.</p>
 									<a href="/dashboard/formulario/{minhaInscricao.id}" class="form-link-btn">Responder e concluir a inscrição</a>
 								{:else}
-									<strong>Você já está inscrito(a) neste {isCamping ? "acampamento" : "evento"}!</strong>
+									{#if minhaInscricao.status === "Retirado do sorteio"}
+										<strong>Você não está mais concorrendo ao sorteio deste acampamento.</strong>
+									{:else}
+										<strong>Você já está inscrito(a) neste {isCamping ? "acampamento" : "evento"}!</strong>
+									{/if}
 									<p>
 										Inscrição como <strong>{minhaInscricao.tipo}</strong> · Status atual:
 										<strong>{minhaInscricao.status}</strong>
 									</p>
+									{#if minhaInscricao.status === "Retirado do sorteio"}
+										<p>Seus dados foram corrigidos e você não pode mais participar deste sorteio. Fale com a organização.</p>
+									{/if}
 									{#if ["Sorteado", "Indicado", "Suplente", "Formulário Enviado"].includes(minhaInscricao.status) || (!isCamping && minhaInscricao.temFormulario && minhaInscricao.formularioEnviado)}
 										<a href="/dashboard/formulario/{minhaInscricao.id}" class="form-link-btn">
 											{minhaInscricao.status === "Formulário Enviado" || minhaInscricao.formularioEnviado

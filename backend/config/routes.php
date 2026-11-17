@@ -200,7 +200,11 @@ return function (RouteBuilder $routes): void {
 
             // --- Admin: usuários ---
             $builder->get('/admin/users', ['controller' => 'Users', 'action' => 'adminIndex']);
+            $builder->get('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminFicha'])->setPass(['id']); // ficha da pessoa
+            $builder->post('/admin/users/{id}/senha-provisoria', ['controller' => 'Users', 'action' => 'adminSenhaProvisoria'])->setPass(['id']);
+            $builder->get('/admin/users/{id}/inscricoes', ['controller' => 'Inscricoes', 'action' => 'daPessoa'])->setPass(['id']);
             $builder->patch('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminEdit'])->setPass(['id']);
+            $builder->post('/admin/users/{id}/previa', ['controller' => 'Users', 'action' => 'adminPrevia'])->setPass(['id']); // "Conferir antes de salvar"
             $builder->delete('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminDelete'])->setPass(['id']);
         });
     });

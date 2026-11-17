@@ -29,3 +29,19 @@ export function destinoSeguro(destino: string | null): string | null {
 	}
 	return destino;
 }
+
+/**
+ * Tela em que fica presa quem entrou com a senha provisória gerada pela
+ * organização, até criar a própria senha (o servidor recusa todo o resto).
+ */
+export const TELA_CRIAR_SENHA = '/dashboard/perfil/senha';
+
+/** Leva para criar a senha e, depois, para `destino` (se for uma tela que faça sentido). */
+export function criarSenhaUrl(destino: string | null): string {
+	const seguro = destinoSeguro(destino);
+	if (!seguro || seguro === '/' || seguro.startsWith(TELA_CRIAR_SENHA)) return TELA_CRIAR_SENHA;
+	// Saindo do login ou do cadastro: segue para onde eles iam levar.
+	const url = new URL(seguro, 'http://site');
+	if (url.pathname === '/login' || url.pathname === '/registro') return criarSenhaUrl(url.searchParams.get('redirect'));
+	return `${TELA_CRIAR_SENHA}?redirect=${encodeURIComponent(seguro)}`;
+}

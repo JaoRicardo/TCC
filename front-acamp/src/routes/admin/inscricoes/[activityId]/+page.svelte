@@ -120,8 +120,8 @@
 		if (status === 'Sorteado' || status === 'Indicado') return 'badge-drawn';
 		if (status === 'Formulário Enviado') return 'badge-form';
 		if (status === 'Suplente') return 'badge-reserve';
-		// Perdeu o prazo do formulário ou do pagamento.
-		if (status === 'Desistência' || status === 'Prazo Perdido') return 'badge-cancelled';
+		// Perdeu o prazo do formulário ou do pagamento, ou saiu do sorteio ao ter a ficha corrigida.
+		if (status === 'Desistência' || status === 'Prazo Perdido' || status === 'Retirado do sorteio') return 'badge-cancelled';
 		return 'badge-waiting';
 	}
 

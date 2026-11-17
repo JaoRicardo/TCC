@@ -9,6 +9,7 @@ use App\Model\Table\UserDocumentsTable;
 use App\Service\FormulariosService;
 use App\Service\MercadoPagoService;
 use App\Service\PrazoFormularioService;
+use App\Service\RetiradaDoSorteioService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -419,6 +420,46 @@ class InscricoesController extends ApiController
         ]);
     }
 
+    /**
+     * GET /api/v1/admin/users/{userId}/inscricoes — inscrições da pessoa, só
+     * para consulta na ficha do painel. "Em andamento" = a atividade ainda não
+     * terminou. A situação é a mesma que a pessoa vê no site.
+     */
+    public function daPessoa(int $userId): Response
+    {
+        $this->request->allowMethod(['get']);
+
+        $identity = $this->requirePermissao('usuarios');
+        if ($identity instanceof Response) return $identity;
+
+        $preRegs = $this->PreRegistrations->find()
+            ->contain(['Activities', 'SelectionMethods'])
+            ->where([
+                'Activities.deleted IS'       => null,
+                'PreRegistrations.user_id'    => $userId,
+                'PreRegistrations.deleted IS' => null,
+            ])
+            ->orderBy(['Activities.start_date' => 'DESC'])
+            ->all();
+
+        $hoje = new \DateTimeImmutable('today');
+        $data = [];
+        foreach ($preRegs as $preReg) {
+            $activity = $preReg->activity;
+            $fim = $activity->start_date?->modify('+' . max(0, (int)$activity->duration_days - 1) . ' days');
+            $data[] = [
+                'id'        => $preReg->id,
+                'atividade' => $activity->name,
+                'ano'       => $activity->year ?? $activity->start_date?->format('Y'),
+                'como'      => $this->ehEvento($preReg) ? 'Participante de evento' : $preReg->subscription_type,
+                'status'    => $this->calcularStatus($preReg),
+                'andamento' => $fim === null || $fim->format('Y-m-d') >= $hoje->format('Y-m-d'),
+            ];
+        }
+
+        return $this->apiResponse(['data' => $data]);
+    }
+
     // GET /api/v1/inscricoes/{id}/formulario
     public function formulario(int $id): Response
     {
@@ -569,6 +610,9 @@ class InscricoesController extends ApiController
             }
             if ($status === 'Desistência') {
                 return 'Esta inscrição foi cancelada, então não há formulário para responder.';
+            }
+            if ($status === 'Retirado do sorteio') {
+                return 'Seus dados foram corrigidos e você não pode mais participar deste sorteio. Fale com a organização.';
             }
 
             return 'O formulário fica disponível depois que você for sorteado, indicado ou entrar na lista de suplentes deste acampamento.';
@@ -1131,13 +1175,9 @@ class InscricoesController extends ApiController
     // pelas categorias da cadeia principal.
     private const CATEGORY_CHAIN = ['Mirim' => 1, 'FAC' => 2, 'Juvenil' => 3, 'Sênior' => 4];
 
-    private const CATEGORY_AGE_RANGES = [
-        'Mirim'   => [10, 12],
-        'FAC'     => [14, 17],
-        'Juvenil' => [18, 24],
-        'Sênior'  => [25, 60],
-        // Casais: sem restrição de idade. Discipulados: nenhuma faixa definida.
-    ];
+    // Casais: sem restrição de idade. Discipulados: nenhuma faixa definida. A
+    // mesma tabela decide quem sai do sorteio quando a ficha tem o nascimento corrigido.
+    private const CATEGORY_AGE_RANGES = RetiradaDoSorteioService::FAIXAS_DE_IDADE;
 
     /**
      * Regras de elegibilidade específicas de Acampamento: uma pessoa só pode ser
@@ -1309,6 +1349,9 @@ class InscricoesController extends ApiController
             $metodo = $preReg->selection_method?->method ?? '';
             return $metodo === 'Sorteio' ? 'Sorteado' : 'Indicado';
         }
+        // A organização corrigiu nascimento, sexo ou cidade e a pessoa deixou de
+        // poder concorrer (RetiradaDoSorteioService). Uma indicação depois disso vale.
+        if ($preReg->removed_from_raffle_at !== null) return 'Retirado do sorteio';
         return 'Inscrito';
     }
 

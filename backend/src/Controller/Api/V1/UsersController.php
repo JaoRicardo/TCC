@@ -6,6 +6,7 @@ namespace App\Controller\Api\V1;
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Service\JwtService;
+use App\Service\RetiradaDoSorteioService;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -97,42 +98,313 @@ class UsersController extends ApiController
         return $this->apiResponse(['data' => $data, 'catalogo' => $this->permissoes()->catalogo()]);
     }
 
-    // -------------------------------------------------------------------------
-    // PATCH /api/v1/admin/users/{id}  (admin)
-    // -------------------------------------------------------------------------
-    public function adminEdit(int $id): Response
+    /**
+     * GET /api/v1/admin/users/{id} — a ficha da pessoa no painel: dados,
+     * endereço e o que a tela precisa para decidir o que mostrar (se a pessoa
+     * usa o painel, se é a última que cuida das permissões). As telas liberadas
+     * e o catálogo só vão para quem tem "Cargos e permissões".
+     */
+    public function adminFicha(int $id): Response
     {
-        $this->request->allowMethod(['patch']);
+        $this->request->allowMethod(['get']);
 
         $identity = $this->requirePermissao('usuarios');
         if ($identity instanceof Response) return $identity;
 
-        $user = $this->Users->find()
-            ->contain(['MaritalStatuses'])
-            ->where(['Users.id' => $id, 'Users.deleted IS' => null])
-            ->first();
-
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
         if (!$user) return $this->apiError('Usuário não encontrado', 404);
 
-        $data  = $this->request->getData();
-        $patch = [];
+        return $this->apiResponse($this->ficha($user, $identity));
+    }
 
-        if (isset($data['name']))             $patch['name']             = $data['name'];
-        if (isset($data['email']))            $patch['email']            = $data['email'];
-        if (isset($data['phone']))            $patch['phone']            = preg_replace('/\D/', '', (string)$data['phone']);
-        if (isset($data['birthday']))         $patch['birthday']         = $data['birthday'];
-        if (isset($data['sex']))              $patch['sex']              = $data['sex'];
-        if (isset($data['marital_status_id'])) $patch['marital_status_id'] = intval($data['marital_status_id']);
+    /**
+     * PATCH /api/v1/admin/users/{id} — a organização corrige o cadastro de uma
+     * pessoa, inclusive CPF e nascimento (que a própria pessoa não muda em "Meu
+     * cadastro"). Vem a ficha inteira, com a `versao` que a tela carregou: se
+     * alguém salvou depois disso (a própria pessoa, outro voluntário), recusa em
+     * vez de sobrescrever.
+     *
+     * Trocar o CPF de quem usa o painel dá acesso à conta dessa pessoa, então só
+     * quem cuida das permissões pode.
+     */
+    public function adminEdit(int $id): Response
+    {
+        $this->request->allowMethod(['patch']);
 
-        $this->Users->patchEntity($user, $patch, ['validate' => false]);
+        return $this->editarFicha($id, previa: false);
+    }
 
-        if (!$this->Users->save($user)) {
-            return $this->apiResponse(['errors' => $user->getErrors()], 422);
+    /**
+     * POST /api/v1/admin/users/{id}/previa — o mesmo corpo do salvar, sem gravar:
+     * confere a versão e os campos e diz quais inscrições sairiam do sorteio,
+     * para a janela "Conferir antes de salvar" mostrar exatamente o que acontece.
+     */
+    public function adminPrevia(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+
+        return $this->editarFicha($id, previa: true);
+    }
+
+    private function editarFicha(int $id, bool $previa): Response
+    {
+        $identity = $this->requirePermissao('usuarios');
+        if ($identity instanceof Response) return $identity;
+
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
+        if (!$user) return $this->apiError('Usuário não encontrado', 404);
+
+        $enderecos = $this->fetchTable('Addresses');
+        $endereco = $enderecos->find()->where(['user_id' => $id, 'deleted IS' => null])->first();
+
+        $data = $this->request->getData();
+        if ((string)($data['versao'] ?? '') !== $this->versaoDaFicha($user, $endereco)) {
+            return $this->apiResponse([
+                'error'  => 'Esta ficha foi alterada por outra pessoa. Recarregue para ver a versão nova antes de salvar.',
+                'conflito' => true,
+            ], 409);
         }
 
-        $updated = $this->Users->find()->contain(['MaritalStatuses'])->where(['Users.id' => $id])->first();
+        [$dados, $novoEndereco, $erros, $outraConta] = $this->validarFicha($data, $id);
 
-        return $this->apiResponse(['data' => $this->serializeUserAdmin($updated)]);
+        $cpfMudou = $dados['cpf'] !== (string)$user->cpf;
+        if ($cpfMudou && !isset($erros['cpf']) && $this->permissoes()->daPessoa($user)
+            && !$this->temPermissao($identity, 'permissoes')) {
+            return $this->apiError('Não foi possível concluir esta ação.', 403);
+        }
+
+        if ($erros) {
+            return $this->apiResponse([
+                'error'       => 'Confira os campos marcados.',
+                'errors'      => $erros,
+                'outra_conta' => $outraConta,
+            ], 422);
+        }
+
+        // Nascimento, sexo ou cidade corrigidos podem tirar inscrições do sorteio.
+        $retirada = new RetiradaDoSorteioService();
+        $sorteio = $retirada->prever($id, [
+            'birthday'          => $user->birthday?->format('Y-m-d'),
+            'sex'               => $user->sex,
+            'marital_status_id' => $user->marital_status_id,
+            'city'              => $endereco?->city,
+        ], $dados + ['city' => $novoEndereco['city']]);
+
+        if ($previa) {
+            return $this->apiResponse(['data' => [
+                'afetadas' => array_map(fn(array $a) => [
+                    'id'        => $a['inscricao']->id,
+                    'atividade' => $a['inscricao']->activity->name,
+                    'ano'       => $a['inscricao']->activity->year ?? $a['inscricao']->activity->start_date?->format('Y'),
+                    'como'      => $a['inscricao']->subscription_type,
+                    'motivo'    => $a['motivo'],
+                ], $sorteio['afetadas']),
+                'ja_sorteadas' => $sorteio['ja_sorteadas'],
+                'saiu_da_area' => $sorteio['saiu_da_area'],
+            ]]);
+        }
+
+        $this->Users->patchEntity($user, $dados, [
+            'validate' => false,
+            'fields'   => ['name', 'cpf', 'birthday', 'sex', 'marital_status_id', 'phone', 'email'],
+        ]);
+        $endereco ??= $enderecos->newEntity(['user_id' => $id]);
+        $enderecos->patchEntity($endereco, $novoEndereco);
+
+        $retiradas = $this->Users->getConnection()->transactional(function () use ($user, $endereco, $enderecos, $retirada, $sorteio) {
+            $this->Users->saveOrFail($user);
+            $enderecos->saveOrFail($endereco);
+
+            return $retirada->aplicar($sorteio['afetadas']);
+        });
+
+        return $this->apiResponse($this->ficha($this->Users->get($id), $identity) + ['retiradas' => $retiradas]);
+    }
+
+    /**
+     * POST /api/v1/admin/users/{id}/senha-provisoria — a pessoa esqueceu a
+     * senha: gera uma provisória, fácil de ditar ("Cedro-4827"), que vai só
+     * nesta resposta. A senha antiga e os logins abertos deixam de valer na
+     * hora, e no próximo acesso a pessoa tem que criar uma senha própria.
+     *
+     * Ninguém gera para si mesmo (usa "Meu cadastro"), e a senha de quem usa o
+     * painel só é gerada por quem cuida das permissões — dá acesso à conta.
+     */
+    public function adminSenhaProvisoria(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+
+        $identity = $this->requirePermissao('usuarios');
+        if ($identity instanceof Response) return $identity;
+
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
+        if (!$user) return $this->apiError('Usuário não encontrado', 404);
+
+        if ((int)$identity->id === $id
+            || ($this->permissoes()->daPessoa($user) && !$this->temPermissao($identity, 'permissoes'))) {
+            return $this->apiError('Não foi possível concluir esta ação.', 403);
+        }
+
+        $senha = self::senhaFacilDeDitar();
+        $user->password = $senha;
+        $user->must_change_password = true;
+        $user->temporary_password_at = new \DateTime();
+        $user->access_token = null;
+        $user->refresh_token = null;
+        $this->Users->saveOrFail($user);
+
+        return $this->apiResponse(['data' => [
+            'senha'               => $senha,
+            'senha_provisoria_em' => $user->temporary_password_at->format('Y-m-d H:i:s'),
+        ]]);
+    }
+
+    /** Palavra comum + hífen + 4 números, sem letras ou números que se confundem (l/I, 0/O, 1). */
+    private static function senhaFacilDeDitar(): string
+    {
+        $palavras = [
+            'Cedro', 'Barco', 'Ponte', 'Trigo', 'Manga', 'Serra', 'Cravo', 'Rocha', 'Prata', 'Campo',
+            'Verde', 'Pomba', 'Jarra', 'Tempo', 'Fruta', 'Nuvem', 'Mesa', 'Sapato', 'Porta', 'Vento',
+            'Arara', 'Banco', 'Cama', 'Dente', 'Feno', 'Gato', 'Morro', 'Neve', 'Pera', 'Ramo',
+        ];
+        $numeros = '';
+        for ($i = 0; $i < 4; $i++) {
+            $numeros .= (string)random_int(2, 9);
+        }
+
+        return $palavras[random_int(0, count($palavras) - 1)] . '-' . $numeros;
+    }
+
+    /** Payload da ficha (GET e PATCH /admin/users/{id}). */
+    private function ficha(object $user, object $identity): array
+    {
+        $endereco = $this->fetchTable('Addresses')->find()
+            ->where(['user_id' => $user->id, 'deleted IS' => null])
+            ->first();
+        $telas = $this->permissoes()->daPessoa($user);
+
+        $dados = [
+            'id'                => $user->id,
+            'name'              => $user->name,
+            'cpf'               => $this->maskCpf((string)$user->cpf),
+            'birthday'          => $user->birthday?->format('Y-m-d'),
+            'sex'               => $user->sex,
+            'marital_status_id' => $user->marital_status_id,
+            'phone'             => $this->maskPhone((string)$user->phone),
+            'email'             => $user->email,
+            'address'           => $endereco ? [
+                'cep'          => $endereco->cep,
+                'city'         => $endereco->city,
+                'street'       => $endereco->street,
+                'number'       => $endereco->number,
+                'neighborhood' => $endereco->neighborhood,
+            ] : null,
+            'created'           => $user->created?->format('Y-m-d H:i:s'),
+            'versao'            => $this->versaoDaFicha($user, $endereco),
+            // Quem usa o painel tem o CPF e a senha protegidos: só quem cuida das
+            // permissões mexe neles.
+            'usa_painel'        => $telas !== [],
+            // Senha provisória gerada e ainda não trocada pela pessoa.
+            'senha_provisoria_em' => $user->must_change_password ? $user->temporary_password_at?->format('Y-m-d H:i:s') : null,
+            'ultimo_gestor'     => $this->permissoes()->ehUltimoGestor((int)$user->id),
+        ];
+
+        if (!$this->temPermissao($identity, 'permissoes')) {
+            return ['data' => $dados];
+        }
+        $dados['telas_liberadas'] = $telas;
+
+        return ['data' => $dados, 'catalogo' => $this->permissoes()->catalogo()];
+    }
+
+    /** Muda sempre que a pessoa ou o endereço dela são salvos. */
+    private function versaoDaFicha(object $user, ?object $endereco): string
+    {
+        $datas = array_filter([$user->modified?->format('Y-m-d H:i:s'), $endereco?->modified?->format('Y-m-d H:i:s')]);
+
+        return $datas ? max($datas) : '';
+    }
+
+    /**
+     * Confere a ficha enviada pelo painel. Todos os campos são obrigatórios; as
+     * mensagens são as da tela, para aparecerem embaixo de cada campo.
+     *
+     * @return array{0: array, 1: array, 2: array, 3: ?array} dados da pessoa, endereço, erros e a conta que já usa o CPF
+     */
+    private function validarFicha(array $data, int $id): array
+    {
+        $texto = fn(string $campo, ?array $de = null) => trim((string)(($de ?? $data)[$campo] ?? ''));
+        $digitos = fn(string $valor) => preg_replace('/\D/', '', $valor);
+
+        $dados = [
+            'name'              => $texto('name'),
+            'cpf'               => $digitos($texto('cpf')),
+            'birthday'          => $texto('birthday'),
+            'sex'               => $texto('sex'),
+            'marital_status_id' => (int)($data['marital_status_id'] ?? 0),
+            'phone'             => $digitos($texto('phone')),
+            'email'             => $texto('email'),
+        ];
+        $endereco = is_array($data['address'] ?? null) ? $data['address'] : [];
+        $novoEndereco = [
+            'cep'          => $digitos($texto('cep', $endereco)),
+            'city'         => $texto('city', $endereco),
+            'street'       => $texto('street', $endereco),
+            'number'       => $texto('number', $endereco),
+            'neighborhood' => $texto('neighborhood', $endereco),
+        ];
+
+        $erros = [];
+        $erro = function (string $campo, string $mensagem) use (&$erros) {
+            $erros[$campo] ??= ['_' => $mensagem];
+        };
+
+        foreach ($dados as $campo => $valor) {
+            if ($valor === '' || $valor === 0) $erro($campo, 'Preencha este campo.');
+        }
+        foreach ($novoEndereco as $campo => $valor) {
+            if ($valor === '') $erro("address.{$campo}", 'Preencha este campo.');
+        }
+        if ($dados['name'] === '') $erros['name'] = ['_' => 'Escreva o nome completo.'];
+
+        $outraConta = null;
+        if ($dados['cpf'] !== '' && !$this->Users->isValidCpf($dados['cpf'])) {
+            $erro('cpf', 'CPF inválido. Confira os números.');
+        } elseif ($dados['cpf'] !== '') {
+            $dono = $this->Users->find()
+                ->select(['id', 'name'])
+                ->where(['cpf' => $dados['cpf'], 'id !=' => $id, 'deleted IS' => null])
+                ->first();
+            if ($dono) {
+                $erro('cpf', 'Este CPF já está em outra conta.');
+                $outraConta = ['id' => $dono->id, 'name' => $dono->name];
+            }
+        }
+
+        if ($dados['birthday'] !== '') {
+            $nascimento = \DateTime::createFromFormat('!Y-m-d', $dados['birthday']);
+            $valida = $nascimento && $nascimento->format('Y-m-d') === $dados['birthday']
+                && (int)$nascimento->format('Y') >= 1900 && $nascimento <= new \DateTime('today');
+            if (!$valida) $erro('birthday', 'Data inválida. Use dia/mês/ano, por exemplo 18/11/2005.');
+        }
+        if ($dados['sex'] !== '' && !in_array($dados['sex'], ['M', 'F'], true)) {
+            $erro('sex', 'Preencha este campo.');
+        }
+        if ($dados['marital_status_id'] > 0
+            && !$this->fetchTable('MaritalStatuses')->exists(['id' => $dados['marital_status_id']])) {
+            $erro('marital_status_id', 'Preencha este campo.');
+        }
+        if ($dados['phone'] !== '' && (strlen($dados['phone']) < 10 || strlen($dados['phone']) > 11)) {
+            $erro('phone', 'Telefone incompleto. Use o DDD e o número, por exemplo (66) 99714-8315.');
+        }
+        if ($dados['email'] !== '' && !preg_match('/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/', $dados['email'])) {
+            $erro('email', 'E-mail inválido. Confira se tem @ e o final, como nome@gmail.com.');
+        }
+        if ($novoEndereco['cep'] !== '' && strlen($novoEndereco['cep']) !== 8) {
+            $erro('address.cep', 'CEP incompleto. São 8 números.');
+        }
+
+        return [$dados, $novoEndereco, $erros, $outraConta];
     }
 
     // -------------------------------------------------------------------------
@@ -292,7 +564,9 @@ class UsersController extends ApiController
 
     /**
      * POST /api/v1/users/me/senha  (senha_atual, nova_senha)
-     * Troca a própria senha, conferindo a atual.
+     * Troca a própria senha, conferindo a atual. Quem entrou com a senha
+     * provisória acabou de digitá-la no login, então não precisa repetir: só
+     * cria a nova, que não pode ser a provisória.
      */
     public function trocarSenha(): Response
     {
@@ -305,14 +579,20 @@ class UsersController extends ApiController
         $nova  = (string)$this->request->getData('nova_senha');
         $user  = $this->Users->get($identity->id);
 
-        if (!password_verify($atual, (string)$user->password)) {
+        $provisoria = (bool)$user->must_change_password;
+
+        if (!$provisoria && !password_verify($atual, (string)$user->password)) {
             return $this->apiError('A senha atual não confere.', 422);
         }
         if (mb_strlen($nova) < 6) {
             return $this->apiError('A nova senha precisa ter pelo menos 6 caracteres.', 422);
         }
+        if ($provisoria && password_verify($nova, (string)$user->password)) {
+            return $this->apiError('Escolha uma senha diferente da senha provisória.', 422);
+        }
 
         $user->password = $nova;
+        $user->must_change_password = false;
         $this->Users->saveOrFail($user);
 
         return $this->apiResponse(['ok' => true]);

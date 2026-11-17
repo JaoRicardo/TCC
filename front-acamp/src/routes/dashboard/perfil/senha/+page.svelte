@@ -1,9 +1,15 @@
 <script lang="ts">
-	/** Alterar senha — aberta pelo botão "Alterar senha" de Meu cadastro. */
+	/**
+	 * Alterar senha — aberta pelo botão "Alterar senha" de Meu cadastro.
+	 *
+	 * Também é onde fica presa quem entrou com a senha provisória gerada pela
+	 * organização: sem "Cancelar" nem volta, até criar a própria senha. Aí não
+	 * pede a senha atual (a pessoa acabou de digitá-la no login).
+	 */
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
-	import { loginUrl } from '$lib/redirect';
+	import { destinoSeguro, loginUrl } from '$lib/redirect';
 	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
 	import { trocarMinhaSenha } from '$lib/services/userService';
 
@@ -19,6 +25,12 @@
 	let trocando = $state(false);
 	let erro = $state('');
 	let trocada = $state(false);
+	/** Senha provisória: a troca é obrigatória. */
+	let obrigatoria = $derived(!!auth.user?.trocar_senha);
+	/** Guardado ao trocar, porque o cadastro recarregado já vem sem a marca. */
+	let criouAPrimeira = $state(false);
+	/** Para onde seguir depois de criar a senha (ex.: a atividade em que ia se inscrever). */
+	let destino = $derived(destinoSeguro($page.url.searchParams.get('redirect')) ?? '/dashboard');
 	/** "Mostrar" de cada campo, como na tela de login. */
 	let mostrar = $state({ atual: false, nova: false, confirmar: false });
 
@@ -36,9 +48,11 @@
 		trocando = true;
 		erro = '';
 		try {
-			const res = await trocarMinhaSenha(senhaAtual, novaSenha);
+			const res = await trocarMinhaSenha(obrigatoria ? '' : senhaAtual, novaSenha);
 			if (res.success) {
 				senhaAtual = novaSenha = confirmarSenha = '';
+				criouAPrimeira = obrigatoria;
+				await auth.refreshUser();
 				trocada = true;
 			} else {
 				erro = res.error || 'Não foi possível trocar a senha.';
@@ -60,6 +74,39 @@
 	/>
 </svelte:head>
 
+{#snippet camposNovaSenha()}
+	<div class="campo-grupo">
+		<label class="rotulo" for="senha-nova">Nova senha</label>
+		<div class="senha">
+			<input
+				id="senha-nova"
+				class="campo"
+				type={mostrar.nova ? 'text' : 'password'}
+				bind:value={novaSenha}
+				autocomplete="new-password"
+			/>
+			{@render botaoMostrar('nova')}
+		</div>
+	</div>
+	<div class="campo-grupo">
+		<label class="rotulo" for="senha-confirmar">Confirme a nova senha</label>
+		<div class="senha">
+			<input
+				id="senha-confirmar"
+				class="campo"
+				type={mostrar.confirmar ? 'text' : 'password'}
+				bind:value={confirmarSenha}
+				autocomplete="new-password"
+			/>
+			{@render botaoMostrar('confirmar')}
+		</div>
+	</div>
+
+	{#if erro}
+		<span class="erro-campo" role="alert"><span class="erro-icone" aria-hidden="true">!</span>{erro}</span>
+	{/if}
+{/snippet}
+
 {#snippet botaoMostrar(campo: keyof typeof mostrar)}
 	<button
 		type="button"
@@ -75,6 +122,32 @@
 	<CabecalhoSite />
 
 	<main class="folha">
+		{#if !auth.user}
+			<!-- Esperando o cadastro: decide entre "Alterar senha" e "Crie sua senha". -->
+		{:else if criouAPrimeira}
+			<section class="cartao centro" role="status">
+				<div class="check" aria-hidden="true">✓</div>
+				<h2>Senha criada</h2>
+				<p class="nota">A partir de agora, entre com o seu CPF e esta senha.</p>
+				<a href={destino} class="btn btn--ouro">Continuar</a>
+			</section>
+		{:else if obrigatoria}
+			<form class="cartao" onsubmit={trocarSenha} novalidate>
+				<div class="cartao-cabeca">
+					<h2>Crie sua senha</h2>
+					<p class="nota">
+						Você entrou com uma senha provisória. Para continuar, crie uma senha só sua, com pelo menos 6
+						caracteres.
+					</p>
+				</div>
+				{@render camposNovaSenha()}
+				<div class="acoes">
+					<button type="submit" class="btn btn--ouro" disabled={trocando || !novaSenha || !confirmarSenha}>
+						{#if trocando}<span class="spinner"></span>Salvando...{:else}Criar senha{/if}
+					</button>
+				</div>
+			</form>
+		{:else}
 		<a href="/dashboard/perfil" class="voltar">← Meu cadastro</a>
 
 		{#if trocada}
@@ -104,36 +177,7 @@
 						{@render botaoMostrar('atual')}
 					</div>
 				</div>
-				<div class="campo-grupo">
-					<label class="rotulo" for="senha-nova">Nova senha</label>
-					<div class="senha">
-						<input
-							id="senha-nova"
-							class="campo"
-							type={mostrar.nova ? 'text' : 'password'}
-							bind:value={novaSenha}
-							autocomplete="new-password"
-						/>
-						{@render botaoMostrar('nova')}
-					</div>
-				</div>
-				<div class="campo-grupo">
-					<label class="rotulo" for="senha-confirmar">Confirme a nova senha</label>
-					<div class="senha">
-						<input
-							id="senha-confirmar"
-							class="campo"
-							type={mostrar.confirmar ? 'text' : 'password'}
-							bind:value={confirmarSenha}
-							autocomplete="new-password"
-						/>
-						{@render botaoMostrar('confirmar')}
-					</div>
-				</div>
-
-				{#if erro}
-					<span class="erro-campo" role="alert"><span class="erro-icone" aria-hidden="true">!</span>{erro}</span>
-				{/if}
+				{@render camposNovaSenha()}
 
 				<div class="acoes">
 					<a href="/dashboard/perfil" class="btn btn--leve">Cancelar</a>
@@ -142,6 +186,7 @@
 					</button>
 				</div>
 			</form>
+		{/if}
 		{/if}
 	</main>
 </div>

@@ -640,7 +640,7 @@
 					{:else}
 						<h2>{form.formulario_montado ? 'Formulário indisponível' : 'O formulário ainda não está pronto'}</h2>
 						<p class="nota nota--centro">{form.motivo_indisponivel}</p>
-						<span class="selo"><span class="selo-ponto"></span>{form.status}</span>
+						<span class="selo" class:selo--perigo={form.status === 'Retirado do sorteio'}><span class="selo-ponto"></span>{form.status}</span>
 					{/if}
 					<a href="/dashboard/formularios" class="btn btn--leve">Voltar para Meus Formulários</a>
 				</section>

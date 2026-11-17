@@ -12,6 +12,8 @@ export interface MinhaInscricao {
         | 'Desistência'
         /** Selecionado, mas não respondeu o formulário no prazo: vaga repassada a um suplente. */
         | 'Prazo Perdido'
+        /** A organização corrigiu nascimento, sexo ou cidade e a pessoa não concorre mais. */
+        | 'Retirado do sorteio'
         | string;
     dataInscricao?: string;
     isPago?: boolean;

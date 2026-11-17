@@ -1,4 +1,4 @@
-import { loginUrl } from '$lib/redirect';
+import { criarSenhaUrl, loginUrl, TELA_CRIAR_SENHA } from '$lib/redirect';
 
 export const API_BASE_URL = import.meta.env.VITE_API_URL;
 export const API_HOST = API_BASE_URL.replace('/api/v1', '');
@@ -35,6 +35,13 @@ export async function apiFetch(endpoint: string, { redirectOnUnauthorized = true
 		if (redirectOnUnauthorized && window.location.pathname !== '/login') {
 			window.location.href = loginUrl(window.location.pathname + window.location.search);
 		}
+	}
+
+	// Entrou com a senha provisória e ainda não criou a própria: o servidor
+	// recusa tudo e a pessoa volta para a tela de criar a senha.
+	if (response.status === 403 && typeof window !== 'undefined' && window.location.pathname !== TELA_CRIAR_SENHA) {
+		const corpo = await response.clone().json().catch(() => null);
+		if (corpo?.trocar_senha) window.location.href = criarSenhaUrl(window.location.pathname + window.location.search);
 	}
 
 	return response;

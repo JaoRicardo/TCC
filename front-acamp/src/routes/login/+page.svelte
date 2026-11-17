@@ -3,7 +3,7 @@
 	import { auth } from "$lib/stores/auth.svelte";
 	import { goto } from "$app/navigation";
 	import { page } from "$app/stores";
-	import { atividadeDaInscricao, destinoSeguro, registroUrl } from "$lib/redirect";
+	import { atividadeDaInscricao, criarSenhaUrl, destinoSeguro, registroUrl } from "$lib/redirect";
 	import { mascaraCpf } from "$lib/mascaras";
 	import AcessoLayout from "$lib/components/AcessoLayout.svelte";
 
@@ -67,7 +67,8 @@
 				auth.setToken(data.access_token!);
 				auth.user = data.user;
 				await auth.refreshUser();
-				await goto(destino ?? "/dashboard");
+				// Senha provisória: antes de qualquer coisa, a pessoa cria a própria.
+				await goto(data.user?.trocar_senha ? criarSenhaUrl(destino) : (destino ?? "/dashboard"));
 			} else {
 				errorMessage =
 					data.error ||
