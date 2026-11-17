@@ -9,8 +9,16 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import { loginUrl } from '$lib/redirect';
 	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
+	import Janela from '$lib/components/painel/Janela.svelte';
+	import '$lib/styles/formularios.css';
 	import { mascaraCep, mascaraTelefone } from '$lib/mascaras';
-	import { getMeuCadastro, salvarMeuCadastro, getEstadosCivis, type MeuCadastro } from '$lib/services/userService';
+	import {
+		getMeuCadastro,
+		salvarMeuCadastro,
+		getEstadosCivis,
+		type MeuCadastro,
+		type PreviaDaFicha
+	} from '$lib/services/userService';
 	import { meuDocumento, enviarDocumento, type DocumentoResumo } from '$lib/services/formularioService';
 
 	type Estado = 'inicio' | 'carregando' | 'pronto' | 'erro';
@@ -42,6 +50,10 @@
 	let erros: Record<string, string> = $state({});
 	let erroSalvar = $state('');
 	let salvoAgora = $state(false);
+	/** Quantas inscrições saíram do sorteio no último salvar. */
+	let retiradasAgora = $state(0);
+	/** Com os dados novos, a pessoa sai do sorteio: a janela pede confirmação antes de gravar. */
+	let saidaDoSorteio = $state<PreviaDaFicha | null>(null);
 
 	// ─── Entrar e carregar ───────────────────────────────────────────────
 	$effect(() => {
@@ -93,6 +105,10 @@
 	// ─── Salvar ──────────────────────────────────────────────────────────
 	async function salvar(e: SubmitEvent) {
 		e.preventDefault();
+		await gravar(false);
+	}
+
+	async function gravar(confirmouSaidaDoSorteio: boolean) {
 		if (salvando) return;
 		salvoAgora = false;
 		erroSalvar = '';
@@ -108,22 +124,29 @@
 
 		salvando = true;
 		try {
-			const res = await salvarMeuCadastro({
-				name: dados.name.trim(),
-				sex: dados.sex,
-				marital_status_id: dados.marital_status_id ? Number(dados.marital_status_id) : null,
-				phone: dados.phone,
-				email: dados.email.trim(),
-				address: {
-					cep: dados.cep,
-					street: dados.street.trim(),
-					number: dados.number.trim(),
-					neighborhood: dados.neighborhood.trim(),
-					city: dados.city.trim()
-				}
-			});
-			if (res.user) {
+			const res = await salvarMeuCadastro(
+				{
+					name: dados.name.trim(),
+					sex: dados.sex,
+					marital_status_id: dados.marital_status_id ? Number(dados.marital_status_id) : null,
+					phone: dados.phone,
+					email: dados.email.trim(),
+					address: {
+						cep: dados.cep,
+						street: dados.street.trim(),
+						number: dados.number.trim(),
+						neighborhood: dados.neighborhood.trim(),
+						city: dados.city.trim()
+					}
+				},
+				confirmouSaidaDoSorteio
+			);
+			saidaDoSorteio = null;
+			if (res.sorteio) {
+				saidaDoSorteio = res.sorteio;
+			} else if (res.user) {
 				erros = {};
+				retiradasAgora = res.retiradas ?? 0;
 				aplicar(res.user);
 				// O nome no cabeçalho e os dados das próximas inscrições já saem atualizados.
 				auth.user = res.user;
@@ -133,11 +156,22 @@
 				erroSalvar = res.error || 'Não foi possível salvar o cadastro.';
 			}
 		} catch {
+			saidaDoSorteio = null;
 			erroSalvar = 'Não foi possível salvar. Verifique sua conexão e tente de novo.';
 		} finally {
 			salvando = false;
 		}
 	}
+
+	/** Por que a inscrição sai do sorteio, dito para a própria pessoa. */
+	function motivoParaPessoa(motivo: string) {
+		if (motivo === 'cidade') return 'só quem mora em Primavera do Leste ou Poxoréu participa';
+		if (motivo === 'sexo') return `este acampamento não tem vagas de sorteio para ${dados.sex === 'M' ? 'homens' : 'mulheres'}`;
+		return 'você não tem a idade da categoria';
+	}
+
+	const comAno = (atividade: string, ano: number | string | null) =>
+		ano && !atividade.includes(String(ano)) ? `${atividade} ${ano}` : atividade;
 
 	function desfazer() {
 		const antes = JSON.parse(original);
@@ -388,7 +422,11 @@
 						{#if erroSalvar}
 							<span class="erro-campo"><span class="erro-icone" aria-hidden="true">!</span>{erroSalvar}</span>
 						{:else if salvoAgora && !alterado}
-							<span class="sucesso">✓ Cadastro atualizado.</span>
+							<span class="sucesso">
+								✓ Cadastro atualizado.{#if retiradasAgora}
+									{retiradasAgora === 1 ? ' 1 inscrição saiu do sorteio.' : ` ${retiradasAgora} inscrições saíram do sorteio.`}
+								{/if}
+							</span>
 						{:else if alterado}
 							<span class="nota">Você tem alterações que ainda não foram salvas.</span>
 						{/if}
@@ -454,7 +492,50 @@
 	</main>
 </div>
 
+{#if saidaDoSorteio}
+	{@const n = saidaDoSorteio.afetadas.length}
+	<Janela
+		idTitulo="t-sorteio"
+		largura={620}
+		faixa="linear-gradient(90deg,#C08A1E,#B69E55)"
+		travada={salvando}
+		onfechar={() => (saidaDoSorteio = null)}
+	>
+		<h2 id="t-sorteio" class="fm-janela-titulo">Antes de salvar</h2>
+		<p class="janela-texto">
+			Com os dados novos, você deixa de concorrer ao sorteio {n === 1 ? 'desta inscrição' : `destas ${n} inscrições`}:
+		</p>
+		<ul class="fm-janela-lista">
+			{#each saidaDoSorteio.afetadas as a (a.id)}
+				<li><strong>{comAno(a.atividade, a.ano)}</strong> ({a.como}): {motivoParaPessoa(a.motivo)}.</li>
+			{/each}
+		</ul>
+		<p class="janela-texto">Se for um engano, volte e corrija. Depois de salvar, só a organização consegue rever.</p>
+		<div class="fm-janela-acoes">
+			<button
+				type="button"
+				class="fm-btn fm-btn--contorno fm-btn--grande"
+				data-foco-inicial
+				onclick={() => (saidaDoSorteio = null)}
+				disabled={salvando}
+			>
+				Voltar e revisar
+			</button>
+			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={() => gravar(true)} disabled={salvando}>
+				{#if salvando}Salvando...{:else}Salvar mesmo assim{/if}
+			</button>
+		</div>
+	</Janela>
+{/if}
+
 <style>
+	.janela-texto {
+		margin: 0;
+		font-size: 17px;
+		line-height: 1.45;
+		color: #2b3045;
+	}
+
 	.pagina {
 		--ouro: #b69e55;
 		--ouro-claro: #e2ce8a;

@@ -72,4 +72,24 @@ class UserDocumentsTable extends Table
             'conferido_em' => $doc->checked_at?->format('Y-m-d\TH:i'),
         ];
     }
+
+    /** resumo() e mais quem enviou e quem conferiu (para a ficha da pessoa). */
+    public function resumoComNomes(?EntityInterface $doc): ?array
+    {
+        $resumo = self::resumo($doc);
+        if ($resumo === null) return null;
+
+        // Sem uploaded_by: documento antigo, enviado pela própria pessoa.
+        $enviou = (int)($doc->uploaded_by ?? $doc->user_id);
+        $ids = array_filter([$enviou, $doc->checked_by ? (int)$doc->checked_by : null]);
+        $nomes = $this->Users->find()->select(['id', 'name'])->where(['id IN' => $ids])->all()
+            ->combine('id', 'name')->toArray();
+
+        return $resumo + [
+            'extensao'      => strtoupper(pathinfo((string)$doc->file, PATHINFO_EXTENSION)),
+            'enviado_por'   => $nomes[$enviou] ?? null,
+            'pela_pessoa'   => $enviou === (int)$doc->user_id,
+            'conferido_por' => $doc->checked_by ? ($nomes[(int)$doc->checked_by] ?? null) : null,
+        ];
+    }
 }

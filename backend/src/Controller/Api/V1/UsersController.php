@@ -191,17 +191,7 @@ class UsersController extends ApiController
         ], $dados + ['city' => $novoEndereco['city']]);
 
         if ($previa) {
-            return $this->apiResponse(['data' => [
-                'afetadas' => array_map(fn(array $a) => [
-                    'id'        => $a['inscricao']->id,
-                    'atividade' => $a['inscricao']->activity->name,
-                    'ano'       => $a['inscricao']->activity->year ?? $a['inscricao']->activity->start_date?->format('Y'),
-                    'como'      => $a['inscricao']->subscription_type,
-                    'motivo'    => $a['motivo'],
-                ], $sorteio['afetadas']),
-                'ja_sorteadas' => $sorteio['ja_sorteadas'],
-                'saiu_da_area' => $sorteio['saiu_da_area'],
-            ]]);
+            return $this->apiResponse(['data' => $this->sorteioParaTela($sorteio)]);
         }
 
         $this->Users->patchEntity($user, $dados, [
@@ -259,6 +249,22 @@ class UsersController extends ApiController
         ]]);
     }
 
+    /** O resultado de RetiradaDoSorteioService::prever() no formato das telas. */
+    private function sorteioParaTela(array $sorteio): array
+    {
+        return [
+            'afetadas' => array_map(fn(array $a) => [
+                'id'        => $a['inscricao']->id,
+                'atividade' => $a['inscricao']->activity->name,
+                'ano'       => $a['inscricao']->activity->year ?? $a['inscricao']->activity->start_date?->format('Y'),
+                'como'      => $a['inscricao']->subscription_type,
+                'motivo'    => $a['motivo'],
+            ], $sorteio['afetadas']),
+            'ja_sorteadas' => $sorteio['ja_sorteadas'],
+            'saiu_da_area' => $sorteio['saiu_da_area'],
+        ];
+    }
+
     /** Palavra comum + hífen + 4 números, sem letras ou números que se confundem (l/I, 0/O, 1). */
     private static function senhaFacilDeDitar(): string
     {
@@ -308,6 +314,12 @@ class UsersController extends ApiController
             'senha_provisoria_em' => $user->must_change_password ? $user->temporary_password_at?->format('Y-m-d H:i:s') : null,
             'ultimo_gestor'     => $this->permissoes()->ehUltimoGestor((int)$user->id),
         ];
+
+        // Documento de identidade: a chave só vem para quem tem "Documentos".
+        if ($this->temPermissao($identity, 'documentos')) {
+            $documentos = $this->fetchTable('UserDocuments');
+            $dados['documento'] = $documentos->resumoComNomes($documentos->daPessoa((int)$user->id));
+        }
 
         if (!$this->temPermissao($identity, 'permissoes')) {
             return ['data' => $dados];
@@ -516,6 +528,14 @@ class UsersController extends ApiController
         // Telefone guardado só com os números, como no cadastro (a tela mostra com máscara).
         if (isset($data['phone'])) $data['phone'] = preg_replace('/\D/', '', (string)$data['phone']);
         $user = $this->Users->get($identity->id);
+        $enderecos = $this->fetchTable('Addresses');
+        $enderecoAtual = $enderecos->find()->where(['user_id' => $identity->id, 'deleted IS' => null])->first();
+        $antes = [
+            'birthday'          => $user->birthday?->format('Y-m-d'),
+            'sex'               => $user->sex,
+            'marital_status_id' => $user->marital_status_id,
+            'city'              => $enderecoAtual?->city,
+        ];
         $this->Users->patchEntity($user, $data, [
             'fields' => ['name', 'sex', 'phone', 'email', 'marital_status_id'],
         ]);
@@ -543,15 +563,32 @@ class UsersController extends ApiController
             return $this->apiResponse(['error' => 'Confira os campos marcados.', 'errors' => $erros], 422);
         }
 
-        $enderecos = $this->fetchTable('Addresses');
-        $ok = $this->Users->getConnection()->transactional(function () use ($user, $enderecoNovo, $enderecos, $identity) {
+        // Mesma regra da ficha no painel: mudar o sexo ou a cidade pode tirar do
+        // sorteio as inscrições que ainda aguardam sorteio. A pessoa vê quais
+        // antes, e só grava quando confirma.
+        $retirada = new RetiradaDoSorteioService();
+        $sorteio = $retirada->prever((int)$identity->id, $antes, [
+            'birthday'          => $antes['birthday'],
+            'sex'               => $user->sex,
+            'marital_status_id' => $user->marital_status_id,
+            'city'              => $enderecoNovo['city'] ?? $antes['city'],
+        ]);
+        if ($sorteio['afetadas'] && !filter_var($data['confirmar_saida_do_sorteio'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            return $this->apiResponse([
+                'error'             => 'Com estes dados, você sai do sorteio de algumas inscrições.',
+                'confirmar_sorteio' => true,
+                'sorteio'           => $this->sorteioParaTela($sorteio),
+            ], 409);
+        }
+
+        $ok = $this->Users->getConnection()->transactional(function () use ($user, $enderecoNovo, $enderecos, $enderecoAtual, $identity, $retirada, $sorteio) {
             if (!$this->Users->save($user)) return false;
             if ($enderecoNovo !== null) {
-                $endereco = $enderecos->find()->where(['user_id' => $identity->id, 'deleted IS' => null])->first()
-                    ?? $enderecos->newEntity(['user_id' => $identity->id]);
+                $endereco = $enderecoAtual ?? $enderecos->newEntity(['user_id' => $identity->id]);
                 $enderecos->patchEntity($endereco, $enderecoNovo);
                 if (!$enderecos->save($endereco)) return false;
             }
+            $retirada->aplicar($sorteio['afetadas']);
 
             return true;
         });
@@ -559,7 +596,10 @@ class UsersController extends ApiController
             return $this->apiResponse(['error' => 'Não foi possível salvar o cadastro.', 'errors' => $user->getErrors()], 422);
         }
 
-        return $this->apiResponse(['user' => $this->perfilCompleto((int)$identity->id)]);
+        return $this->apiResponse([
+            'user'      => $this->perfilCompleto((int)$identity->id),
+            'retiradas' => count($sorteio['afetadas']),
+        ]);
     }
 
     /**

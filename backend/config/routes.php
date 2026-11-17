@@ -132,6 +132,7 @@ return function (RouteBuilder $routes): void {
             $builder->post('/me/documento', ['controller' => 'Documentos', 'action' => 'enviar']);
             $builder->get('/admin/documentos/{id}/arquivo', ['controller' => 'Documentos', 'action' => 'arquivo'])->setPass(['id']);
             $builder->post('/admin/documentos/{id}/conferir', ['controller' => 'Documentos', 'action' => 'conferir'])->setPass(['id']);
+            $builder->post('/admin/users/{id}/documento', ['controller' => 'Documentos', 'action' => 'enviarPorPessoa'])->setPass(['id']); // ficha da pessoa
             $builder->get('/admin/secoes', ['controller' => 'Questions', 'action' => 'secoes']);
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
             $builder->patch('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'editarSecao'])->setPass(['id']);

@@ -181,6 +181,45 @@ class RetiradaDoSorteioTest extends RegrasTestCase
         $this->assertSame('Indicado', $this->situacao($joao, $inscricao));
     }
 
+    public function testMeuCadastroPedeConfirmacaoAntesDeTirarDoSorteio(): void
+    {
+        $ana = $this->criarUsuario('Ana Souza', idade: 20, sexo: 'F');
+        $soMulheres = $this->inscrever($ana, $this->criarAcampamento('Juvenil', ['raffle_man_vacancies' => 0, 'raffle_woman_vacancies' => 5]));
+        $dados = [
+            'name' => 'Ana Souza', 'sex' => 'F', 'phone' => '(66) 99714-8315', 'email' => 'ana@exemplo.com',
+            'marital_status_id' => $this->recarregarUsuario($ana)->marital_status_id,
+            'address' => ['cep' => '78850-000', 'street' => 'Rua Teste', 'number' => '1', 'neighborhood' => 'Centro', 'city' => 'Cuiabá'],
+        ];
+
+        // Sem confirmar: diz o que acontece e não grava nada.
+        $this->autenticarComo($ana);
+        $this->patch('/api/v1/users/me', $dados);
+        $this->assertResponseCode(409);
+        $resposta = $this->respostaJson();
+        $this->assertTrue($resposta['confirmar_sorteio']);
+        $this->assertSame([$soMulheres->id], array_column($resposta['sorteio']['afetadas'], 'id'));
+        $this->assertSame('Inscrito', $this->situacao($ana, $soMulheres));
+        $this->assertSame('Ana Souza', $this->recarregarUsuario($ana)->name);
+        $this->assertNotSame('Cuiabá', $this->fetchTable('Addresses')->find()->where(['user_id' => $ana->id])->first()->city);
+
+        // Confirmando: grava e tira do sorteio.
+        $this->autenticarComo($ana);
+        $this->patch('/api/v1/users/me', $dados + ['confirmar_saida_do_sorteio' => true]);
+        $this->assertResponseOk();
+        $this->assertSame(1, $this->respostaJson()['retiradas']);
+        $this->assertSame('Retirado do sorteio', $this->situacao($ana, $soMulheres));
+
+        // Mudança que não tira ninguém do sorteio salva direto.
+        $this->autenticarComo($ana);
+        $this->patch('/api/v1/users/me', ['phone' => '(66) 99633-1027'] + $dados);
+        $this->assertResponseOk();
+    }
+
+    private function recarregarUsuario(EntityInterface $pessoa): EntityInterface
+    {
+        return $this->fetchTable('Users')->get($pessoa->id);
+    }
+
     public function testPreviaConfereVersaoECamposComoOSalvar(): void
     {
         $ana = $this->criarUsuario('Ana Souza', idade: 20, sexo: 'F');

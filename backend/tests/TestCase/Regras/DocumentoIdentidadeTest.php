@@ -39,20 +39,20 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         }
     }
 
-    private function enviarArquivo(string $conteudo, string $nome): void
+    private function enviarArquivo(string $conteudo, string $nome, ?EntityInterface $quem = null, ?string $rota = null, array $dados = []): void
     {
         $temporario = tempnam(sys_get_temp_dir(), 'doc');
         file_put_contents($temporario, $conteudo);
         $this->criados[] = $temporario;
 
-        $this->autenticarComo($this->pessoa);
+        $this->autenticarComo($quem ?? $this->pessoa);
         // configRequest acumula (só os cabeçalhos são limpos a cada requisição): sem isto o
         // arquivo do envio anterior iria junto.
         unset($this->_request['files']);
         $this->configRequest([
             'files' => ['arquivo' => new UploadedFile($temporario, strlen($conteudo), UPLOAD_ERR_OK, $nome, 'image/png')],
         ]);
-        $this->post('/api/v1/me/documento');
+        $this->post($rota ?? '/api/v1/me/documento', $dados);
     }
 
     public function testEnviaTrocaEGuardaForaDaPastaPublica(): void
@@ -74,6 +74,45 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         $this->autenticarComo($this->pessoa);
         $this->get('/api/v1/me/documento');
         $this->assertSame('rg-nova-foto.png', $this->respostaJson()['data']['nome']);
+    }
+
+    public function testOrganizacaoEnviaNoLugarDaPessoaPelaFicha(): void
+    {
+        $secretaria = $this->criarUsuario('Secretaria', idade: 40);
+        (new PermissoesService())->definir((int)$secretaria->id, ['documentos']);
+        $soPessoas = $this->criarUsuario('Voluntário', idade: 40);
+        (new PermissoesService())->definir((int)$soPessoas->id, ['usuarios']);
+        $rota = "/api/v1/admin/users/{$this->pessoa->id}/documento";
+
+        // A pessoa já tinha enviado um; a secretaria troca pelo que recebeu em papel.
+        $this->enviarArquivo(base64_decode(self::PNG), 'foto-borrada.png');
+        $antigo = $this->respostaJson()['data']['id'];
+
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg-escaneado.png', $secretaria, $rota, ['conferido' => 'true']);
+        $this->assertResponseCode(201);
+        $novo = $this->respostaJson()['data'];
+        $this->assertSame('rg-escaneado.png', $novo['nome']);
+        $this->assertSame('Secretaria', $novo['enviado_por']);
+        $this->assertFalse($novo['pela_pessoa']);
+        $this->assertSame('Secretaria', $novo['conferido_por']);
+        $this->assertNotNull($novo['conferido_em']);
+        $this->assertNotNull($this->fetchTable('UserDocuments')->get($antigo)->deleted, 'O antigo vai para o histórico.');
+
+        // Sem marcar "Já conferi", fica para conferir.
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg-2.png', $secretaria, $rota, ['conferido' => 'false']);
+        $this->assertNull($this->respostaJson()['data']['conferido_em']);
+
+        // Na ficha, o documento só vem para quem tem "Documentos".
+        $this->autenticarComo($secretaria);
+        $this->get("/api/v1/admin/users/{$this->pessoa->id}");
+        $this->assertSame('rg-2.png', $this->respostaJson()['data']['documento']['nome']);
+        $this->autenticarComo($soPessoas);
+        $this->get("/api/v1/admin/users/{$this->pessoa->id}");
+        $this->assertArrayNotHasKey('documento', $this->respostaJson()['data']);
+
+        // E só quem tem "Documentos" envia.
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg-3.png', $soPessoas, $rota);
+        $this->assertResponseCode(403);
     }
 
     public function testRecusaArquivoQueNaoEFotoNemPdf(): void
@@ -98,9 +137,9 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         $conferente = $this->criarUsuario('Secretaria', idade: 40);
         (new PermissoesService())->definir((int)$conferente->id, ['documentos']);
         $this->assertSame(
-            ['respostas_formularios', 'documentos'],
+            ['usuarios', 'documentos'],
             (new PermissoesService())->daPessoa($conferente),
-            'Documentos depende de Respostas: é na ficha da aba Respostas que ele aparece.'
+            'Documentos depende de Pessoas e acessos: é na ficha da pessoa que ele é visto e trocado.'
         );
         $this->autenticarComo($conferente);
         $this->get("/api/v1/admin/documentos/{$id}/arquivo");
