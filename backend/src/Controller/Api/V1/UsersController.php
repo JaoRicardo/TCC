@@ -224,27 +224,121 @@ class UsersController extends ApiController
             return $identity;
         }
 
-        // Recarrega do banco para dados atualizados
-        $user = $this->Users->get($identity->id, contain: ['MaritalStatuses']);
+        return $this->apiResponse(['user' => $this->perfilCompleto((int)$identity->id)]);
+    }
+
+    /**
+     * PATCH /api/v1/users/me — a própria pessoa corrige ou atualiza o cadastro
+     * (tela "Meu cadastro"): nome, telefone, e-mail, sexo, estado civil e
+     * endereço. CPF e data de nascimento não mudam por aqui: o CPF é o login e
+     * a idade decide a categoria do acampamento — corrigir passa pela organização.
+     */
+    public function atualizarMe(): Response
+    {
+        $this->request->allowMethod(['patch', 'put']);
+
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $data = $this->request->getData();
+        // Telefone guardado só com os números, como no cadastro (a tela mostra com máscara).
+        if (isset($data['phone'])) $data['phone'] = preg_replace('/\D/', '', (string)$data['phone']);
+        $user = $this->Users->get($identity->id);
+        $this->Users->patchEntity($user, $data, [
+            'fields' => ['name', 'sex', 'phone', 'email', 'marital_status_id'],
+        ]);
+        $erros = $user->getErrors();
+
+        // Endereço: os cinco campos juntos (a cidade decide quem entra no sorteio).
+        $enderecoNovo = null;
+        if (isset($data['address']) && is_array($data['address'])) {
+            $enderecoNovo = [];
+            $nomes = ['street' => 'rua', 'number' => 'número', 'neighborhood' => 'bairro', 'city' => 'cidade', 'cep' => 'CEP'];
+            foreach ($nomes as $campo => $nome) {
+                $valor = trim((string)($data['address'][$campo] ?? ''));
+                if ($campo === 'cep') $valor = preg_replace('/\D/', '', $valor);
+                if ($valor === '') {
+                    $erros["address.{$campo}"] = ['_empty' => "Informe {$nome}."];
+                }
+                $enderecoNovo[$campo] = $valor;
+            }
+            if ($enderecoNovo['cep'] !== '' && strlen($enderecoNovo['cep']) !== 8) {
+                $erros['address.cep'] = ['tamanho' => 'O CEP tem 8 números.'];
+            }
+        }
+
+        if ($erros) {
+            return $this->apiResponse(['error' => 'Confira os campos marcados.', 'errors' => $erros], 422);
+        }
+
+        $enderecos = $this->fetchTable('Addresses');
+        $ok = $this->Users->getConnection()->transactional(function () use ($user, $enderecoNovo, $enderecos, $identity) {
+            if (!$this->Users->save($user)) return false;
+            if ($enderecoNovo !== null) {
+                $endereco = $enderecos->find()->where(['user_id' => $identity->id, 'deleted IS' => null])->first()
+                    ?? $enderecos->newEntity(['user_id' => $identity->id]);
+                $enderecos->patchEntity($endereco, $enderecoNovo);
+                if (!$enderecos->save($endereco)) return false;
+            }
+
+            return true;
+        });
+        if (!$ok) {
+            return $this->apiResponse(['error' => 'Não foi possível salvar o cadastro.', 'errors' => $user->getErrors()], 422);
+        }
+
+        return $this->apiResponse(['user' => $this->perfilCompleto((int)$identity->id)]);
+    }
+
+    /**
+     * POST /api/v1/users/me/senha  (senha_atual, nova_senha)
+     * Troca a própria senha, conferindo a atual.
+     */
+    public function trocarSenha(): Response
+    {
+        $this->request->allowMethod(['post']);
+
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $atual = (string)$this->request->getData('senha_atual');
+        $nova  = (string)$this->request->getData('nova_senha');
+        $user  = $this->Users->get($identity->id);
+
+        if (!password_verify($atual, (string)$user->password)) {
+            return $this->apiError('A senha atual não confere.', 422);
+        }
+        if (mb_strlen($nova) < 6) {
+            return $this->apiError('A nova senha precisa ter pelo menos 6 caracteres.', 422);
+        }
+
+        $user->password = $nova;
+        $this->Users->saveOrFail($user);
+
+        return $this->apiResponse(['ok' => true]);
+    }
+
+    /** Dados do usuário com estado civil e endereço (GET e PATCH /users/me). */
+    private function perfilCompleto(int $userId): array
+    {
+        $user = $this->Users->get($userId, contain: ['MaritalStatuses']);
 
         $address = $this->fetchTable('Addresses')->find()
-            ->where(['user_id' => $identity->id, 'deleted IS' => null])
+            ->where(['user_id' => $userId, 'deleted IS' => null])
             ->first();
 
-        return $this->apiResponse([
-            'user' => array_merge($this->serializeUser($user), [
-                'marital_status' => $user->marital_status
-                    ? ['id' => $user->marital_status->id, 'title' => $user->marital_status->title]
-                    : null,
-                'address' => $address ? [
-                    'street'       => $address->street,
-                    'number'       => $address->number,
-                    'neighborhood' => $address->neighborhood,
-                    'city'         => $address->city,
-                    'cep'          => $address->cep,
-                ] : null,
-                'created' => $user->created?->format('Y-m-d H:i:s'),
-            ]),
+        return array_merge($this->serializeUser($user), [
+            'marital_status' => $user->marital_status
+                ? ['id' => $user->marital_status->id, 'title' => $user->marital_status->title]
+                : null,
+            'address' => $address ? [
+                'street'       => $address->street,
+                'number'       => $address->number,
+                'neighborhood' => $address->neighborhood,
+                'city'         => $address->city,
+                'cep'          => $address->cep,
+            ] : null,
+            'created' => $user->created?->format('Y-m-d H:i:s'),
         ]);
     }
 

@@ -120,6 +120,7 @@
 						<span class="usuario-primeiro-nome">{auth.user.name?.split(" ")[0]}</span>
 					</div>
 				</div>
+				<a href="/dashboard/perfil" class="btn-sair">Meu cadastro</a>
 				{#if acessaPainel()}
 					<a href={primeiraTela()} class="btn-admin">Painel</a>
 				{/if}

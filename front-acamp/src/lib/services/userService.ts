@@ -75,3 +75,76 @@ export async function deactivateUser(userId: number): Promise<{ success: boolean
     }
     return { success: false, error: data.error || data.message || 'Erro ao desativar conta' };
 }
+
+// ─── Meu cadastro (a própria pessoa) ────────────────────────────────────
+
+export interface EnderecoCadastro {
+    street: string;
+    number: string;
+    neighborhood: string;
+    city: string;
+    cep: string;
+}
+
+export interface MeuCadastro {
+    id: number;
+    name: string;
+    /** Só leitura: é o login. */
+    cpf: string;
+    email: string | null;
+    phone: string;
+    birthday: string | null;
+    sex: 'M' | 'F' | null;
+    marital_status: { id: number; title: string } | null;
+    address: EnderecoCadastro | null;
+    permissoes: string[];
+    created: string | null;
+}
+
+export interface DadosDoCadastro {
+    name: string;
+    email: string;
+    phone: string;
+    sex: string;
+    marital_status_id: number | null;
+    address: EnderecoCadastro;
+}
+
+export async function getMeuCadastro(): Promise<{ user?: MeuCadastro; error?: string }> {
+    const res = await apiFetch('/users/me');
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { user: data.user };
+    return { error: data.error || 'Não foi possível carregar o seu cadastro.' };
+}
+
+/** Erros por campo vêm com a chave do campo ("email", "address.city"...). */
+export async function salvarMeuCadastro(
+    dados: DadosDoCadastro
+): Promise<{ user?: MeuCadastro; error?: string; errors?: Record<string, string> }> {
+    const res = await apiFetch('/users/me', { method: 'PATCH', body: JSON.stringify(dados) });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { user: data.user };
+
+    const errors: Record<string, string> = {};
+    for (const [campo, mensagens] of Object.entries((data.errors ?? {}) as Record<string, Record<string, string>>)) {
+        const primeira = Object.values(mensagens ?? {})[0];
+        if (primeira) errors[campo] = primeira;
+    }
+    return { error: data.error || 'Não foi possível salvar o cadastro.', errors };
+}
+
+export async function trocarMinhaSenha(senhaAtual: string, novaSenha: string): Promise<{ success: boolean; error?: string }> {
+    const res = await apiFetch('/users/me/senha', {
+        method: 'POST',
+        body: JSON.stringify({ senha_atual: senhaAtual, nova_senha: novaSenha })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { success: true };
+    return { success: false, error: data.error || 'Não foi possível trocar a senha.' };
+}
+
+export async function getEstadosCivis(): Promise<{ id: number; title: string }[]> {
+    const res = await apiFetch('/marital-statuses');
+    const data = await res.json().catch(() => ({}));
+    return res.ok ? data.data ?? [] : [];
+}

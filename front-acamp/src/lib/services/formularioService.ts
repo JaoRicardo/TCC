@@ -127,6 +127,14 @@ export async function salvarFormulario(
 	return { success: false, error: data.error || 'Erro ao salvar formulário' };
 }
 
+/** Documento de identidade guardado no cadastro (null = ainda não enviou). */
+export async function meuDocumento(): Promise<{ data?: DocumentoResumo | null; error?: string }> {
+	const res = await apiFetch('/me/documento');
+	const data = await res.json().catch(() => ({}));
+	if (res.ok) return { data: data.data ?? null };
+	return { error: data.error || 'Não foi possível carregar o documento.' };
+}
+
 /** Envia (ou troca) a foto/PDF do documento de identidade do cadastro. */
 export async function enviarDocumento(arquivo: File): Promise<{ data?: DocumentoResumo; error?: string }> {
 	const corpo = new FormData();

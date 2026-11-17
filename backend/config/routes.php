@@ -195,6 +195,8 @@ return function (RouteBuilder $routes): void {
             // --- Usuários ---
             $builder->post('/users', ['controller' => 'Users', 'action' => 'add']);        // cadastro (público)
             $builder->get('/users/me', ['controller' => 'Users', 'action' => 'me']);       // perfil completo (protegido)
+            $builder->patch('/users/me', ['controller' => 'Users', 'action' => 'atualizarMe']); // "Meu cadastro"
+            $builder->post('/users/me/senha', ['controller' => 'Users', 'action' => 'trocarSenha']);
 
             // --- Admin: usuários ---
             $builder->get('/admin/users', ['controller' => 'Users', 'action' => 'adminIndex']);

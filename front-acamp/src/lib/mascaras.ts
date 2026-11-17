@@ -38,3 +38,8 @@ export function dataParaIso(valor: string): string | null {
 	}
 	return `${partes[3]}-${partes[2]}-${partes[1]}`;
 }
+
+/** 00000-000 */
+export function mascaraCep(valor: string): string {
+	return digitos(valor, 8).replace(/(\d{5})(\d{1,3})$/, '$1-$2');
+}

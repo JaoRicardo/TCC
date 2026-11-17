@@ -17,7 +17,7 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { loginUrl } from '$lib/redirect';
-	import banner from '$lib/imgs/banner.png';
+	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 	import {
 		getFormulario,
@@ -336,10 +336,6 @@
 		pagando = false;
 	}
 
-	function sair() {
-		auth.clearToken();
-		goto('/');
-	}
 
 	// ─── Textos e datas ──────────────────────────────────────────────────
 	function isoLocal(d: Date): string {
@@ -599,16 +595,7 @@
 {/snippet}
 
 <div class="pagina">
-	<header class="cabecalho">
-		<a href="/dashboard" aria-label="Início"><img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" /></a>
-		{#if auth.user}
-			<div class="usuario">
-				<span class="avatar" aria-hidden="true">{auth.user.name?.charAt(0).toUpperCase()}</span>
-				<span class="usuario-nome"><span>Bem-vindo(a),</span><strong>{auth.user.name?.split(' ')[0]}</strong></span>
-				<button type="button" class="btn btn--leve" onclick={sair}>Sair</button>
-			</div>
-		{/if}
-	</header>
+	<CabecalhoSite />
 
 	<main class="folha" bind:this={topo}>
 		{#if ehEvento && form?.atividade}
@@ -767,7 +754,7 @@
 									</div>
 								{/if}
 							</dl>
-							<p class="nota">Algo errado? Avise a organização do acampamento para corrigir. As respostas ficam guardadas.</p>
+							<p class="nota">Algo errado ou mudou? Corrija em <a href="/dashboard/perfil">Meu cadastro</a> — as respostas ficam guardadas.</p>
 
 							<div
 								class="documento"
@@ -923,59 +910,6 @@
 	.resumo-erros:focus-visible {
 		outline: none;
 		box-shadow: 0 0 0 4px var(--anel-foco);
-	}
-
-	/* ─── Cabeçalho ─── */
-	.cabecalho {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 10px var(--margem);
-		background: var(--pergaminho);
-		border-bottom: 1px solid var(--borda);
-		box-shadow:
-			0 3px 0 -1px #fffdf8,
-			0 4px 0 -1px #b69e55;
-	}
-
-	.banner {
-		display: block;
-		height: clamp(40px, 9vw, 56px);
-		width: auto;
-	}
-
-	.usuario {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.avatar {
-		width: 40px;
-		height: 40px;
-		border-radius: 50%;
-		background: var(--azul);
-		border: 2px solid var(--ouro);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font: 700 21px 'Cormorant Garamond', serif;
-		color: var(--ouro-claro);
-		box-sizing: border-box;
-	}
-
-	.usuario-nome {
-		display: none;
-		flex-direction: column;
-		line-height: 1.15;
-		font-size: 13px;
-		color: #5a5f72;
-	}
-
-	.usuario-nome strong {
-		font-size: 17px;
-		color: var(--tinta);
 	}
 
 	/* ─── Folha ─── */
@@ -1745,10 +1679,6 @@
 	@media (min-width: 720px) {
 		.pagina {
 			--margem: clamp(16px, 4vw, 48px);
-		}
-
-		.usuario-nome {
-			display: flex;
 		}
 
 		.folha {
