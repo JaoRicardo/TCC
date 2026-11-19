@@ -1167,10 +1167,21 @@ class ActivitiesController extends ApiController
                 'fimFormulario'         => $camping->camper_registration_end_date?->format('Y-m-d\TH:i'),
                 'editalEvento'          => $camping->notice ? 'http://localhost:8765/' . $camping->notice : null,
                 'termoAutorizacao'      => $camping->term   ? 'http://localhost:8765/' . $camping->term   : null,
+                // Tamanho em bytes (null sem arquivo: o banco guarda "#").
+                'editalTamanho'         => $this->tamanhoDoArquivo($camping->notice),
+                'termoTamanho'          => $this->tamanhoDoArquivo($camping->term),
             ]);
         }
 
         return $base;
+    }
+
+    private function tamanhoDoArquivo(?string $caminho): ?int
+    {
+        if (!$caminho || $caminho === '#') return null;
+        $arquivo = WWW_ROOT . ltrim($caminho, '/');
+
+        return is_file($arquivo) ? (int)filesize($arquivo) : null;
     }
 
     private function calcEndDate(?\Cake\I18n\DateTime $startDate, int $durationDays): ?string

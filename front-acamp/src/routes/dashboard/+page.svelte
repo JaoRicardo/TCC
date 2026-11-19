@@ -2,7 +2,7 @@
 	import { auth } from "$lib/stores/auth.svelte";
 	import { acessaPainel, primeiraTela } from "$lib/permissoes";
 	import { getActivities } from "$lib/services/activityService";
-	import { getMinhasInscricoes } from "$lib/services/inscricaoService";
+	import { getMinhasInscricoes, type MinhaInscricao } from "$lib/services/inscricaoService";
 	import { API_HOST } from "$lib/api";
 	import { loginUrl } from "$lib/redirect";
 	import type { Activity } from "$lib/types/models";
@@ -12,14 +12,22 @@
 
 	let activities: Activity[] = $state([]);
 	let loading = $state(true);
+	// O filtro fica guardado na aba: "Voltar" da página da atividade volta para ele.
+	const CHAVE_FILTRO = "filtroInicio";
 	let currentFilter = $state("Todos");
-	let minhasInscricoesMap: Record<number, string> = $state({});
+	let minhasInscricoesMap: Record<number, MinhaInscricao> = $state({});
 	/** Formulários que o usuário precisa responder — vira o contador do menu. */
 	let formulariosPendentes = $state(0);
 
 	// A lista de atividades é pública: visitante vê tudo, e só precisa entrar
 	// (ou criar a conta) na hora de se inscrever.
 	onMount(async () => {
+		try {
+			const salvo = sessionStorage.getItem(CHAVE_FILTRO);
+			if (salvo && FILTROS.some((f) => f.chave === salvo)) currentFilter = salvo;
+		} catch {
+			// sem armazenamento (aba anônima): começa em "Todos"
+		}
 		try {
 			const activitiesRes = await getActivities();
 			if (!activitiesRes.error) {
@@ -40,9 +48,9 @@
 		inscricoesCarregadas = true;
 		getMinhasInscricoes()
 			.then((inscricoesRes) => {
-				const map: Record<number, string> = {};
+				const map: Record<number, MinhaInscricao> = {};
 				for (const insc of inscricoesRes.inscricoes) {
-					if (insc.activity) map[insc.activity.id] = insc.status;
+					if (insc.activity) map[insc.activity.id] = insc;
 				}
 				minhasInscricoesMap = map;
 				formulariosPendentes = inscricoesRes.inscricoes.filter(
@@ -71,6 +79,15 @@
 
 	let filteredActivities = $derived(doFiltro(currentFilter, activities));
 
+	function escolherFiltro(chave: string) {
+		currentFilter = chave;
+		try {
+			sessionStorage.setItem(CHAVE_FILTRO, chave);
+		} catch {
+			// sem armazenamento: o filtro só não é lembrado
+		}
+	}
+
 	function handleLogout() {
 		auth.clearToken();
 		minhasInscricoesMap = {};
@@ -84,11 +101,31 @@
 		return "soon";
 	}
 
-	function inscricaoSlug(status?: string) {
-		if (status === "Sorteado" || status === "Indicado" || status === "Formulário Enviado") return "confirmed";
-		if (status === "Suplente") return "waiting";
-		if (["Desistência", "Prazo Perdido", "Retirado do sorteio", "Cancelada pela organização", "Recusada"].includes(status ?? "")) return "cancelled";
-		return "pending";
+	const ENCERRADAS: Record<string, string> = {
+		"Cancelada pela organização": "Inscrição cancelada pela organização",
+		Recusada: "Inscrição recusada",
+		"Prazo Perdido": "Prazo perdido",
+		"Desistência": "Você desistiu desta inscrição",
+		"Retirado do sorteio": "Retirado do sorteio",
+	};
+
+	/** O aviso do cartão: cor, texto antes do destaque, destaque e texto depois. */
+	function avisoDoCartao(i: MinhaInscricao): { tom: string; antes: string; forte: string; depois: string } {
+		const evento = i.activity?.tipo === "Evento";
+		if (ENCERRADAS[i.status]) return { tom: "cancelled", antes: "", forte: ENCERRADAS[i.status], depois: "" };
+		if (i.status === "Correção pedida") {
+			const ate = i.prazoCorrecao ? new Date(i.prazoCorrecao) : null;
+			const dm = ate ? `${String(ate.getDate()).padStart(2, "0")}/${String(ate.getMonth() + 1).padStart(2, "0")}` : "";
+			return { tom: "waiting", antes: "", forte: "Correção pedida", depois: dm ? ` · corrija até ${dm}` : "" };
+		}
+		if (i.status === "Inscrição em andamento") return { tom: "waiting", antes: "", forte: "Falta concluir a inscrição", depois: "" };
+		if (i.status === "Inscrito") {
+			if (evento) return { tom: "confirmed", antes: "", forte: "Você está inscrito(a)", depois: "" };
+			if (i.naoSorteado) return { tom: "cinza", antes: "", forte: "Não sorteado(a) desta vez", depois: "" };
+			return { tom: "pending", antes: "Você está inscrito(a) · ", forte: "aguardando o sorteio", depois: "" };
+		}
+		if (i.status === "Suplente") return { tom: "waiting", antes: "Você está inscrito(a) · ", forte: i.status, depois: "" };
+		return { tom: "confirmed", antes: "Você está inscrito(a) · ", forte: i.status, depois: "" };
 	}
 
 	function imagemDe(item: Activity) {
@@ -154,7 +191,7 @@
 				<button
 					class="filtro"
 					class:ativo={currentFilter === filtro.chave}
-					onclick={() => (currentFilter = filtro.chave)}
+					onclick={() => escolherFiltro(filtro.chave)}
 				>
 					{filtro.rotulo}
 					<span class="filtro-contador">{doFiltro(filtro.chave, activities).length}</span>
@@ -261,9 +298,10 @@
 							</dl>
 
 							{#if minhasInscricoesMap[item.id]}
-								<div class="inscrito inscrito-{inscricaoSlug(minhasInscricoesMap[item.id])}">
+								{@const aviso = avisoDoCartao(minhasInscricoesMap[item.id])}
+								<div class="inscrito inscrito-{aviso.tom}">
 									<span class="inscrito-ponto"></span>
-									<span>Você está inscrito(a) · <strong>{minhasInscricoesMap[item.id]}</strong></span>
+									<span>{aviso.antes}<strong>{aviso.forte}</strong>{aviso.depois}</span>
 								</div>
 							{/if}
 
@@ -1054,6 +1092,17 @@
 
 	.inscrito-pending .inscrito-ponto {
 		background: #3c5aa0;
+	}
+
+	/* Não sorteado: não é erro de ninguém, por isso não é vermelho. */
+	.inscrito-cinza {
+		background: #efebe1;
+		color: #4f5468;
+		border-color: #e3d8bc;
+	}
+
+	.inscrito-cinza .inscrito-ponto {
+		background: #8a8c99;
 	}
 
 	.card-botoes {

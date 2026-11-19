@@ -68,6 +68,39 @@ class InscricoesController extends ApiController
         return in_array($cidade, ['primavera do leste', 'poxoreu'], true);
     }
 
+    /**
+     * GET /activities/{id}/elegibilidade — para a pessoa logada: pode se
+     * inscrever como campista e como servo? Quando não pode, vem o código do
+     * motivo (a página escolhe o texto) e a mensagem do servidor. Evento: só
+     * "participante", sempre liberado (as vagas e o prazo são conferidos na hora).
+     */
+    public function elegibilidade(int $activityId): Response
+    {
+        $this->request->allowMethod(['get']);
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $activity = $this->Activities->find()
+            ->contain(['Categories'])
+            ->where(['Activities.id' => $activityId, 'Activities.deleted IS' => null])
+            ->first();
+        if (!$activity) return $this->apiError('Atividade não encontrada', 404);
+
+        $resultado = fn(?array $erro) => [
+            'pode'     => $erro === null,
+            'codigo'   => $erro['codigo'] ?? null,
+            'mensagem' => $erro['mensagem'] ?? null,
+        ];
+        if ($activity->camping_id === null) {
+            return $this->apiResponse(['data' => ['participante' => $resultado(null)]]);
+        }
+
+        return $this->apiResponse(['data' => [
+            'campista' => $resultado($this->checkAcampamentoEligibility($identity, $activity, 'Campista')),
+            'servo'    => $resultado($this->checkAcampamentoEligibility($identity, $activity, 'Servo')),
+        ]]);
+    }
+
     // POST /api/v1/activities/{id}/inscricoes
     public function subscribe(int $activityId): Response
     {
@@ -108,7 +141,7 @@ class InscricoesController extends ApiController
         if ($activity->camping_id !== null) {
             $erro = $this->checkAcampamentoEligibility($identity, $activity, $tipo);
             if ($erro !== null) {
-                return $this->apiError($erro, 422);
+                return $this->apiError($erro['mensagem'], 422);
             }
         } else {
             // Evento: sem sorteio, por ordem de chegada até o fim das inscrições
@@ -607,8 +640,7 @@ class InscricoesController extends ApiController
             return 'A organização cancelou esta inscrição' . ($nota !== '' ? ": “{$nota}”" : '.');
         }
         if ($status === 'Recusada') {
-            return 'A inscrição foi recusada: a correção pedida pela organização não foi feita até o início '
-                . ($ehEvento ? 'do evento.' : 'do acampamento.');
+            return 'A inscrição foi recusada: ' . ($nota !== '' ? $nota : 'a correção pedida pela organização não foi feita no prazo.');
         }
 
         if ($ehEvento) {
@@ -1328,8 +1360,16 @@ class InscricoesController extends ApiController
      * naquela categoria (ou em uma "abaixo" dela na hierarquia); Juvenil exclui
      * casados/união estável; Discipulados exige ter sido campista no Sênior antes.
      */
-    private function checkAcampamentoEligibility(object $identity, object $activity, string $tipo): ?string
+    /**
+     * Pode se inscrever como campista/servo neste acampamento? Null = pode;
+     * senão, um código (a página da atividade escolhe o texto por ele) e a
+     * mensagem que a inscrição devolve.
+     *
+     * @return array{codigo: string, mensagem: string}|null
+     */
+    private function checkAcampamentoEligibility(object $identity, object $activity, string $tipo): ?array
     {
+        $nao = fn(string $codigo, string $mensagem) => ['codigo' => $codigo, 'mensagem' => $mensagem];
         $categoryName = $activity->category->name ?? null;
         if ($categoryName === null) {
             return null;
@@ -1356,22 +1396,22 @@ class InscricoesController extends ApiController
             $unlocked = $this->unlockedServoCategories($priorCategoryNames);
             if (!in_array($categoryName, $unlocked, true)) {
                 return empty($priorCategoryNames)
-                    ? 'Você ainda não pode se inscrever como servo(a): é preciso ter participado como campista em ao menos uma categoria de acampamento antes.'
-                    : "Você ainda não pode servir em {$categoryName}. Só é possível servir nas categorias em que você já foi campista ou nas categorias abaixo delas na hierarquia.";
+                    ? $nao('nunca_campista', 'Você ainda não pode se inscrever como servo(a): é preciso ter participado como campista em ao menos uma categoria de acampamento antes.')
+                    : $nao('nao_pode_servir', "Você ainda não pode servir em {$categoryName}. Só é possível servir nas categorias em que você já foi campista ou nas categorias abaixo delas na hierarquia.");
             }
             return null;
         }
 
         // tipo === 'Campista'
         if (in_array($categoryName, $priorCategoryNames, true)) {
-            return "Você já participou como campista em {$categoryName} anteriormente. Não é possível se inscrever novamente como campista nessa categoria.";
+            return $nao('ja_campista', "Você já participou como campista em {$categoryName} anteriormente. Não é possível se inscrever novamente como campista nessa categoria.");
         }
 
         if (isset(self::CATEGORY_AGE_RANGES[$categoryName])) {
             [$min, $max] = self::CATEGORY_AGE_RANGES[$categoryName];
             $age = $this->calcularIdade($identity->birthday);
             if ($age !== null && ($age < $min || $age > $max)) {
-                return "A categoria {$categoryName} é para campistas de {$min} a {$max} anos.";
+                return $nao('idade', "A categoria {$categoryName} é para campistas de {$min} a {$max} anos.");
             }
         }
 
@@ -1380,12 +1420,12 @@ class InscricoesController extends ApiController
                 ->where(['id' => $identity->marital_status_id])
                 ->first()?->title;
             if (in_array($maritalTitle, ['Casado', 'União estável'], true)) {
-                return 'Campistas casados(as) ou em união estável devem se inscrever na categoria Sênior, não no Juvenil.';
+                return $nao('casado_juvenil', 'Campistas casados(as) ou em união estável devem se inscrever na categoria Sênior, não no Juvenil.');
             }
         }
 
         if ($categoryName === 'Discipulados' && !in_array('Sênior', $priorCategoryNames, true)) {
-            return 'Para se inscrever no Discipulados é necessário ter participado de um acampamento Sênior antes.';
+            return $nao('discipulados', 'Para se inscrever no Discipulados é necessário ter participado de um acampamento Sênior antes.');
         }
 
         return null;
@@ -1473,6 +1513,44 @@ class InscricoesController extends ApiController
         }
     }
 
+    /** Quando a situação começou: pedido da correção, cancelamento ou recusa. */
+    private function dataDaSituacao(object $preReg, string $status): ?string
+    {
+        if (in_array($status, self::STATUS_CORRECAO, true)) {
+            return $this->correcaoDa($preReg)?->created?->format('Y-m-d\TH:i');
+        }
+        if (in_array($status, ['Cancelada pela organização', 'Recusada'], true)) {
+            return $preReg->disqualified_at?->format('Y-m-d\TH:i');
+        }
+
+        return null;
+    }
+
+    /** Data do pagamento aprovado (Mercado Pago); null quando a organização marcou como pago à mão. */
+    private function pagoEm(object $preReg): ?string
+    {
+        $pagamento = $this->fetchTable('Payments')->find()
+            ->where(['pre_registration_id' => $preReg->id, 'paid_at IS NOT' => null, 'deleted IS' => null])
+            ->orderBy(['paid_at' => 'DESC'])
+            ->first();
+
+        return $pagamento?->paid_at?->format('Y-m-d\TH:i');
+    }
+
+    /**
+     * Acampamento: a data do sorteio do tipo da inscrição já passou? Quem
+     * continua só "Inscrito" depois dela não foi sorteado nem ficou de suplente.
+     */
+    private function sorteioJaPassou(object $preReg): bool
+    {
+        $activity = $preReg->activity ?? null;
+        if (!$activity || $activity->camping_id === null) return false;
+        $camping = $this->fetchTable('Campings')->find()->where(['id' => $activity->camping_id])->first();
+        $data = $preReg->subscription_type === 'Servo' ? $camping?->raffle_servant_date : $camping?->raffle_camper_date;
+
+        return $data !== null && $data->getTimestamp() < time();
+    }
+
     /** O texto que explica a situação: motivo da correção, do cancelamento ou da recusa. */
     private function motivoDaSituacao(object $preReg, string $status): ?string
     {
@@ -1547,6 +1625,7 @@ class InscricoesController extends ApiController
 
         $status = $this->calcularStatus($preReg);
         $prazoFormulario = $this->prazoDoFormulario($preReg);
+        $correcao = $status === 'Correção pedida' ? $this->correcaoDa($preReg) : null;
 
         return [
             'id'           => $preReg->id,
@@ -1561,6 +1640,15 @@ class InscricoesController extends ApiController
                 && !$preReg->form_submitted) || in_array($status, self::STATUS_CORRECAO, true),
             // Correção pedida, cancelada ou recusada pela organização: o motivo que a pessoa lê.
             'motivoOrganizacao'  => $this->motivoDaSituacao($preReg, $status),
+            // Quando a organização pediu a correção / cancelou / recusou.
+            'motivoEm'           => $this->dataDaSituacao($preReg, $status),
+            'prazoCorrecao'      => $correcao?->deadline?->format('Y-m-d\TH:i'),
+            // Prazo perdido: por não enviar o formulário ou por não pagar.
+            'perdeuPor'          => $status === 'Prazo Perdido'
+                ? ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_PRAZO_PAGAMENTO ? 'pagamento' : 'formulario')
+                : null,
+            'pagoEm'             => $preReg->is_fee_paid ? $this->pagoEm($preReg) : null,
+            'naoSorteado'        => $status === 'Inscrito' && $this->sorteioJaPassou($preReg),
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.
             'temFormulario'      => $this->temFormularioMontado($preReg),

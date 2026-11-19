@@ -486,7 +486,7 @@
 		if (form?.correcao) {
 			return prazo.vencido
 				? `O prazo da correção terminou em ${diaMes(prazo.limite)}.`
-				: `Corrija até ${diaEHora(prazo.limite)}. Se não corrigir até lá, a inscrição é recusada e você perde a vaga.`;
+				: `Corrija até ${diaEHora(prazo.limite)}. Até lá, sua vaga continua garantida.`;
 		}
 		if (ehEvento) {
 			if (prazo.vencido) return `As inscrições terminaram em ${diaMes(prazo.limite)}.`;
@@ -889,7 +889,7 @@
 						<span class="aviso-correcao-motivo">“{correcao.motivo}”</span>
 						<span>
 							Você pode mudar qualquer resposta.{#if perguntasMarcadas.length}{' '}O que precisa de atenção: {perguntasMarcadas.map((q) => q.text).join(', ')}.{/if}{' '}
-							Depois, envie de novo{correcao.prazo ? ` até ${diaMes(correcao.prazo)}` : ''}.
+							Depois, envie de novo{correcao.prazo ? ` até ${diaMes(correcao.prazo)}. Se não corrigir até lá, a inscrição é recusada` : ''}.
 						</span>
 						{#if etapaDaPrimeiraMarcada !== null && etapa !== etapaDaPrimeiraMarcada}
 							<button type="button" class="btn btn--leve" onclick={irParaOQueCorrigir}>Ir para o que precisa corrigir</button>

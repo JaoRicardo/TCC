@@ -94,6 +94,7 @@ return function (RouteBuilder $routes): void {
             $builder->get('/activities', ['controller' => 'Activities', 'action' => 'index']);
             $builder->get('/activities/{id}', ['controller' => 'Activities', 'action' => 'view'])->setPass(['id']);
             $builder->get('/activities/{id}/edit', ['controller' => 'Activities', 'action' => 'editData'])->setPass(['id']);
+            $builder->get('/activities/{id}/elegibilidade', ['controller' => 'Inscricoes', 'action' => 'elegibilidade'])->setPass(['id']);
             $builder->post('/activities', ['controller' => 'Activities', 'action' => 'add']);
             $builder->patch('/activities/{id}', ['controller' => 'Activities', 'action' => 'edit'])->setPass(['id']);
             $builder->patch('/activities/{id}/feature', ['controller' => 'Activities', 'action' => 'feature'])->setPass(['id']);

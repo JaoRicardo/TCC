@@ -106,8 +106,11 @@
 		if (!dados) return [];
 		return dados.pessoas.filter((p) => p.enviou);
 	});
-	/** Correções pedidas e depois quem ainda não enviou. */
-	let pendentes: PessoaComRespostas[] = $derived([...ativas.filter((p) => p.correcao), ...ativas.filter((p) => !p.enviou)]);
+	/** Correções (prazo mais próximo em cima) e depois quem ainda não enviou. */
+	let pendentes: PessoaComRespostas[] = $derived([
+		...ativas.filter((p) => p.correcao).sort((a, b) => (a.correcao?.prazo ?? '').localeCompare(b.correcao?.prazo ?? '')),
+		...ativas.filter((p) => !p.enviou)
+	]);
 	let semEnviar = $derived(ativas.filter((p) => !p.enviou).length);
 	let comCorrecao = $derived(ativas.filter((p) => p.correcao).length);
 	let edicao = $derived.by(() => {
@@ -595,7 +598,7 @@
 					: `Precisamos que você corrija o seu formulário do ${atividade}:`,
 				`“${a.motivo}”`,
 				'',
-				`É só entrar no site, em Meus Formulários, e corrigir até ${a.ate ? diaEMes(a.ate) : ''}. Se não corrigir até esse dia, a inscrição é recusada e perde a vaga.`
+				`É só entrar no site, em Meus Formulários, e corrigir até ${a.ate ? diaEMes(a.ate) : ''}. Até lá, a vaga continua garantida.`
 			);
 		} else {
 			linhas.push(
@@ -1224,10 +1227,10 @@
 								Este acampamento ainda não tem prazo para o formulário.
 							{/if}
 							{#if comCorrecao}
-								Quem está com correção pedida e não corrigir até o prazo da correção fica com a inscrição
-								<strong>Recusada</strong>{cabecalho.evento
-									? ', e a vaga volta para as inscrições.'
-									: ', e a vaga vai para “Chamar próximo”.'}
+								Quem está com correção pedida tem até o prazo da correção: se não corrigir até lá, a inscrição é
+								<strong>recusada na hora</strong>{cabecalho.evento
+									? ' e a vaga volta para as inscrições.'
+									: ' e a vaga vai para “Chamar próximo”.'}
 							{/if}
 						</span>
 					</div>
@@ -1377,8 +1380,9 @@
 		</label>
 		<div class="fm-aviso fm-aviso--azul fm-aviso--pequeno">
 			<span>
-				Até {ateTexto}, {quem} continua com a vaga. Se não corrigir até esse dia, a inscrição fica
-				<strong>Recusada</strong>{cabecalho?.evento ? ' e a vaga volta para as inscrições.' : ' e a vaga vai para “Chamar próximo”.'}
+				Se {quem} não corrigir até {ateTexto}, a inscrição é <strong>recusada na hora</strong>{cabecalho?.evento
+					? ' e a vaga volta para as inscrições.'
+					: ' e a vaga vai para “Chamar próximo”.'}
 			</span>
 		</div>
 		{#if erroAcao}<p class="fm-erro-linha" role="alert">{erroAcao}</p>{/if}

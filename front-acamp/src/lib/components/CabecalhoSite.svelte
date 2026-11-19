@@ -2,9 +2,11 @@
 	/**
 	 * Cabeçalho das telas da área do participante (formulário, Meu cadastro):
 	 * banner, a pessoa logada, "Meu cadastro", atalho do Painel para quem tem
-	 * acesso e "Sair".
+	 * acesso e "Sair". Visitante (telas públicas, como a da atividade) vê "Entrar".
 	 */
 	import { goto } from '$app/navigation';
+	import { page } from '$app/stores';
+	import { loginUrl } from '$lib/redirect';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { acessaPainel, primeiraTela } from '$lib/permissoes';
 	import banner from '$lib/imgs/banner.png';
@@ -34,6 +36,8 @@
 			{/if}
 			<button type="button" class="botao" onclick={sair}>Sair</button>
 		</div>
+	{:else if !auth.isLoading}
+		<a href={loginUrl($page.url.pathname + $page.url.search)} class="botao botao--entrar">Entrar</a>
 	{/if}
 </header>
 
@@ -109,6 +113,21 @@
 
 	.botao:hover {
 		background: #fbf6e6;
+	}
+
+	.botao--entrar {
+		padding: 0 26px;
+		font-size: 16px;
+		color: #fffdf8;
+		background: #1b2f5e;
+		border-color: #1b2f5e;
+		box-shadow:
+			inset 0 0 0 2px #1b2f5e,
+			inset 0 0 0 3px rgba(182, 158, 85, 0.8);
+	}
+
+	.botao--entrar:hover {
+		background: #0f1d3d;
 	}
 
 	.cabecalho :is(a, button):focus-visible {
