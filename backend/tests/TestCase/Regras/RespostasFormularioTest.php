@@ -61,7 +61,7 @@ class RespostasFormularioTest extends RegrasTestCase
     public function testQuemSoVeRespostasLeOEditorMasNaoMuda(): void
     {
         $saude = $this->comPermissoes('Equipe de saúde', ['respostas_formularios']);
-        $this->pergunta('Tem alergia?', 'texto_curto');
+        $this->pergunta('Tem alergia?', 'texto');
 
         $this->autenticarComo($saude);
         $this->get('/api/v1/admin/perguntas?category_id=' . $this->categorias['FAC'] . '&subscription_type=Campista');
@@ -73,7 +73,7 @@ class RespostasFormularioTest extends RegrasTestCase
         $this->autenticarComo($saude);
         $this->post('/api/v1/admin/perguntas', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $this->secaoId,
-            'text' => 'Nova', 'type' => 'texto_curto',
+            'text' => 'Nova', 'type' => 'texto',
         ]);
         $this->assertResponseCode(403);
     }
@@ -83,7 +83,7 @@ class RespostasFormularioTest extends RegrasTestCase
         $alergia = $this->pergunta('Tem alergia?', 'sim_nao');
         $sim = $this->salvar('Options', ['question_id' => $alergia->id, 'text' => 'Sim', 'order' => 1]);
         $this->salvar('Options', ['question_id' => $alergia->id, 'text' => 'Não', 'order' => 2]);
-        $qual = $this->pergunta('Qual?', 'texto_curto', (int)$sim->id);
+        $qual = $this->pergunta('Qual?', 'texto', (int)$sim->id);
 
         $aberto = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()], ['start_date' => '2026-12-05 08:00:00']);
         $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->ontem()], ['start_date' => '2027-01-10 08:00:00']);

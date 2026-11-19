@@ -65,7 +65,7 @@ class FormularioPerguntasTest extends RegrasTestCase
 
     public function testPerguntaQueViraSimNaoGanhaAsOpcoesSimENao(): void
     {
-        $texto = $this->criarPerguntaPelaTela('Já fez acampamento?', 'texto_curto');
+        $texto = $this->criarPerguntaPelaTela('Já fez acampamento?', 'texto');
         $tamanho = $this->criarPerguntaPelaTela('Tamanho da camiseta', 'unica_escolha', ['P', 'M', 'G']);
 
         // A tela não manda opções quando o tipo escolhido é Sim/Não.
@@ -115,9 +115,9 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $sim = $this->opcoes($alergia['id'])['Sim'];
-        $this->criarPerguntaPelaTela('Qual alergia?', 'texto_curto', dependeDe: $sim);
+        $this->criarPerguntaPelaTela('Qual alergia?', 'texto', dependeDe: $sim);
 
-        $resposta = $this->editar($alergia['id'], ['text' => 'Tem alergia?', 'type' => 'texto_curto', 'is_required' => true]);
+        $resposta = $this->editar($alergia['id'], ['text' => 'Tem alergia?', 'type' => 'texto', 'is_required' => true]);
         $this->assertResponseCode(422);
         $this->assertStringContainsString('Qual alergia?', $resposta['error']);
 
@@ -171,7 +171,7 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $remedio = $this->criarPerguntaPelaTela('Toma remédio?', 'unica_escolha', ['Sim, todo dia', 'Não']);
         $antes = $this->opcoes($remedio['id']);
-        $qual = $this->criarPerguntaPelaTela('Qual remédio?', 'texto_curto', dependeDe: $antes['Sim, todo dia']);
+        $qual = $this->criarPerguntaPelaTela('Qual remédio?', 'texto', dependeDe: $antes['Sim, todo dia']);
 
         // A tela manda cada opção com o id dela; o texto mudou por completo.
         $this->editar($remedio['id'], [
@@ -235,7 +235,7 @@ class FormularioPerguntasTest extends RegrasTestCase
     public function testListaDizQuantasPessoasResponderamCadaPergunta(): void
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
-        $vazia = $this->criarPerguntaPelaTela('Apelido', 'texto_curto');
+        $vazia = $this->criarPerguntaPelaTela('Apelido', 'texto');
         $sim = $this->opcoes($alergia['id'])['Sim'];
 
         $acampamento = $this->criarAcampamento('FAC');
@@ -260,7 +260,7 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $remedio = $this->criarPerguntaPelaTela('Toma remédio?', 'sim_nao');
-        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto');
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto');
         $simAlergia = $this->opcoes($alergia['id'])['Sim'];
         $simRemedio = $this->opcoes($remedio['id'])['Sim'];
 
@@ -284,7 +284,7 @@ class FormularioPerguntasTest extends RegrasTestCase
         $sim = $this->opcoes($alergia['id'])['Sim'];
         $qual = $this->criarPerguntaPelaTela('Qual?', 'unica_escolha', ['Comida', 'Remédio'], dependeDe: $sim);
         $comida = $this->opcoes($qual['id'])['Comida'];
-        $solta = $this->criarPerguntaPelaTela('Observações', 'texto_longo');
+        $solta = $this->criarPerguntaPelaTela('Observações', 'texto');
 
         // Depender de uma condicional (dois níveis).
         $this->editar($solta['id'], ['depends_on_option_id' => $comida]);
@@ -309,7 +309,7 @@ class FormularioPerguntasTest extends RegrasTestCase
         $this->autenticarComo($this->admin);
         $this->post('/api/v1/admin/perguntas', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Servo', 'section_id' => $this->secaoId,
-            'text' => 'Pergunta de servo', 'type' => 'texto_curto', 'depends_on_option_id' => $sim,
+            'text' => 'Pergunta de servo', 'type' => 'texto', 'depends_on_option_id' => $sim,
         ]);
         $this->assertResponseCode(422);
 
@@ -323,8 +323,8 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $sim = $this->opcoes($alergia['id'])['Sim'];
-        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto', dependeDe: $sim);
-        $antiga = $this->criarPerguntaPelaTela('Desde quando?', 'texto_curto', dependeDe: $sim);
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto', dependeDe: $sim);
+        $antiga = $this->criarPerguntaPelaTela('Desde quando?', 'texto', dependeDe: $sim);
 
         // "Desde quando?" foi excluída sozinha, antes.
         $this->fetchTable('Questions')->updateAll(['deleted' => $this->ontem()], ['id' => $antiga['id']]);
@@ -349,7 +349,7 @@ class FormularioPerguntasTest extends RegrasTestCase
     public function testCondicionalNaoVoltaSemAPerguntaDeQueDepende(): void
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
-        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto', dependeDe: $this->opcoes($alergia['id'])['Sim']);
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto', dependeDe: $this->opcoes($alergia['id'])['Sim']);
 
         $this->autenticarComo($this->admin);
         $this->delete("/api/v1/admin/perguntas/{$alergia['id']}");
@@ -366,27 +366,27 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $sim = $this->opcoes($alergia['id'])['Sim'];
-        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto', dependeDe: $sim);
-        $antiga = $this->criarPerguntaPelaTela('Excluída antes', 'texto_curto');
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto', dependeDe: $sim);
+        $antiga = $this->criarPerguntaPelaTela('Excluída antes', 'texto');
         $this->fetchTable('Questions')->updateAll(['deleted' => $this->ontem()], ['id' => $antiga['id']]);
 
         // Condicional montada por script em outra seção: sai junto com a pai.
         $outraSecao = (int)$this->salvar('Sections', ['title' => 'Outra seção', 'order' => 2])->id;
         $longe = $this->salvar('Questions', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $outraSecao,
-            'text' => 'Desde quando?', 'type' => 'texto_curto', 'is_required' => true, 'order' => 1,
+            'text' => 'Desde quando?', 'type' => 'texto', 'is_required' => true, 'order' => 1,
             'accept_generic_answer' => false, 'depends_on_option_id' => $sim,
         ]);
         $outraDoForm = $this->salvar('Questions', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $outraSecao,
-            'text' => 'Fica', 'type' => 'texto_curto', 'is_required' => true, 'order' => 2, 'accept_generic_answer' => false,
+            'text' => 'Fica', 'type' => 'texto', 'is_required' => true, 'order' => 2, 'accept_generic_answer' => false,
         ]);
 
         // Mesma seção (compartilhada) no formulário de servo: não pode ser tocada.
         $this->autenticarComo($this->admin);
         $this->post('/api/v1/admin/perguntas', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Servo', 'section_id' => $this->secaoId,
-            'text' => 'Pergunta do servo', 'type' => 'texto_curto',
+            'text' => 'Pergunta do servo', 'type' => 'texto',
         ]);
         $doServo = $this->respostaJson()['data']['id'];
 
@@ -434,14 +434,14 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $simOrigem = $this->opcoes($alergia['id'])['Sim'];
-        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto_curto', dependeDe: $simOrigem);
+        $qual = $this->criarPerguntaPelaTela('Qual?', 'texto', dependeDe: $simOrigem);
         $this->criarPerguntaPelaTela('Camiseta', 'unica_escolha', ['P', 'M']);
 
         // O destino já tem uma pergunta na seção: as cópias entram depois dela.
         $this->autenticarComo($this->admin);
         $this->post('/api/v1/admin/perguntas', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Servo', 'section_id' => $this->secaoId,
-            'text' => 'Já existia', 'type' => 'texto_curto',
+            'text' => 'Já existia', 'type' => 'texto',
         ]);
 
         // Marcou só a condicional: a pergunta de que ela depende vem junto.
@@ -482,13 +482,13 @@ class FormularioPerguntasTest extends RegrasTestCase
     {
         $alergia = $this->criarPerguntaPelaTela('Tem alergia?', 'sim_nao');
         $sim = $this->opcoes($alergia['id'])['Sim'];
-        $qual = $this->criarPerguntaPelaTela('Qual alergia?', 'texto_curto', dependeDe: $sim);
+        $qual = $this->criarPerguntaPelaTela('Qual alergia?', 'texto', dependeDe: $sim);
 
         $this->autenticarComo($this->admin);
         $this->delete("/api/v1/admin/perguntas/{$qual['id']}");
         $this->assertResponseOk();
 
-        $this->editar($alergia['id'], ['text' => 'Tem alergia?', 'type' => 'texto_curto', 'is_required' => true]);
+        $this->editar($alergia['id'], ['text' => 'Tem alergia?', 'type' => 'texto', 'is_required' => true]);
         $this->assertResponseOk();
         $this->assertSame([], $this->opcoes($alergia['id']));
     }

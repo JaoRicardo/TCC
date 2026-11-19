@@ -1,6 +1,5 @@
 import { apiFetch } from '$lib/api';
 import type { User } from '$lib/types/models';
-import type { DocumentoResumo } from '$lib/services/formularioService';
 
 // Configuração simples para habilitar Mocks
 const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true';
@@ -183,34 +182,6 @@ export interface FichaPessoa {
     senha_provisoria_em: string | null;
     /** Só para quem tem "Cargos e permissões". */
     telas_liberadas?: string[];
-    /** Só vem para quem tem "Documentos" (null = a pessoa ainda não enviou). */
-    documento?: DocumentoDaFicha | null;
-}
-
-/** O documento como a ficha mostra: com quem enviou e quem conferiu. */
-export interface DocumentoDaFicha extends DocumentoResumo {
-    /** "PDF", "JPG"... para o ícone do arquivo. */
-    extensao: string;
-    enviado_por: string | null;
-    /** Enviado pela própria pessoa (no formulário ou em Meu cadastro). */
-    pela_pessoa: boolean;
-    conferido_por: string | null;
-}
-
-/** A organização envia ou troca o documento no lugar da pessoa. */
-export async function enviarDocumentoDaPessoa(
-    userId: number,
-    arquivo: File,
-    conferido: boolean
-): Promise<{ data?: DocumentoDaFicha; error?: string }> {
-    const corpo = new FormData();
-    corpo.append('arquivo', arquivo);
-    corpo.append('conferido', conferido ? 'true' : 'false');
-    const res = await apiFetch(`/admin/users/${userId}/documento`, { method: 'POST', body: corpo });
-    const data = await res.json().catch(() => ({}));
-    if (res.ok) return { data: data.data };
-    if (res.status === 413) return { error: 'O arquivo é grande demais. Envie uma foto ou PDF de até 5 MB.' };
-    return { error: data.error || 'Não foi possível enviar o documento.' };
 }
 
 export interface DadosDaFicha {

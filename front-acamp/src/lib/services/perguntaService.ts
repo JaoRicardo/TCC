@@ -3,8 +3,7 @@ import { paramsDoAlvo, type AlvoFormulario } from '$lib/formularios';
 
 /** Tipos de resposta: nome na tela e o ícone do cartão da pergunta. */
 export const TIPOS_PERGUNTA = [
-	{ value: 'texto_curto', label: 'Texto curto', icone: 'Aa' },
-	{ value: 'texto_longo', label: 'Texto longo', icone: '¶' },
+	{ value: 'texto', label: 'Texto', icone: 'Aa' },
 	{ value: 'numero', label: 'Número', icone: '12' },
 	{ value: 'data', label: 'Data', icone: '31' },
 	{ value: 'sim_nao', label: 'Sim / Não', icone: 'S/N' },

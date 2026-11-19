@@ -45,7 +45,7 @@ class FormularioEventoTest extends RegrasTestCase
         return $this->respostaJson()['data']['id'];
     }
 
-    private function perguntaNoEvento(int $formId, string $texto, string $tipo = 'texto_curto'): array
+    private function perguntaNoEvento(int $formId, string $texto, string $tipo = 'texto'): array
     {
         $this->autenticarComo($this->admin);
         $this->post('/api/v1/admin/perguntas', [
@@ -56,13 +56,9 @@ class FormularioEventoTest extends RegrasTestCase
         return $this->respostaJson()['data'];
     }
 
-    /** Pessoa com documento já enviado (sem ele o formulário não é enviado). */
     private function participante(string $nome): EntityInterface
     {
-        $pessoa = $this->criarUsuario($nome, idade: 20);
-        $this->salvar('UserDocuments', ['user_id' => $pessoa->id, 'file' => 'x.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1]);
-
-        return $pessoa;
+        return $this->criarUsuario($nome, idade: 20);
     }
 
     private function inscreverNoEvento(EntityInterface $pessoa, EntityInterface $evento): array
@@ -75,6 +71,13 @@ class FormularioEventoTest extends RegrasTestCase
 
     private function enviar(EntityInterface $pessoa, int $inscricaoId, int $perguntaId): void
     {
+        // Documento desta inscrição (sem ele o formulário não é enviado; ver DocumentoIdentidadeTest).
+        if (!$this->fetchTable('UserDocuments')->daInscricao($inscricaoId)) {
+            $this->salvar('UserDocuments', [
+                'user_id' => $pessoa->id, 'pre_registration_id' => $inscricaoId,
+                'file' => 'x.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1,
+            ]);
+        }
         $this->autenticarComo($pessoa);
         $this->post("/api/v1/inscricoes/{$inscricaoId}/formulario", ['answers' => [['question_id' => $perguntaId, 'answer' => 'Jardim Riva']]]);
     }
@@ -83,7 +86,7 @@ class FormularioEventoTest extends RegrasTestCase
     {
         $this->salvar('Questions', [
             'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $this->secaoId,
-            'text' => 'Tem alergia?', 'type' => 'texto_curto', 'is_required' => true, 'order' => 1, 'accept_generic_answer' => false,
+            'text' => 'Tem alergia?', 'type' => 'texto', 'is_required' => true, 'order' => 1, 'accept_generic_answer' => false,
         ]);
         $semFormulario = $this->criarEvento(['name' => 'Missa de Envio']);
         $acampamento = $this->criarAcampamento('FAC');
@@ -120,7 +123,7 @@ class FormularioEventoTest extends RegrasTestCase
 
         $this->autenticarComo($this->admin);
         $this->post('/api/v1/admin/perguntas', [
-            'event_form_id' => $id, 'section_id' => $this->secaoId, 'text' => 'De onde?', 'type' => 'texto_curto',
+            'event_form_id' => $id, 'section_id' => $this->secaoId, 'text' => 'De onde?', 'type' => 'texto',
             'depends_on_option_id' => $sim->id,
         ]);
         $this->assertResponseCode(422);

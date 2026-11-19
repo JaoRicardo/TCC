@@ -9,8 +9,9 @@ use Cake\Datasource\EntityInterface;
 use Laminas\Diactoros\UploadedFile;
 
 /**
- * Documento de identidade: a pessoa envia no formulário, fica no cadastro, e
- * só quem tem a permissão "documentos" abre o arquivo no painel.
+ * Documento de identidade: a pessoa envia junto com o formulário de cada
+ * inscrição, todas as vezes (não fica no cadastro), e só quem tem a permissão
+ * "documentos" abre o arquivo, na aba Respostas.
  */
 class DocumentoIdentidadeTest extends RegrasTestCase
 {
@@ -18,6 +19,8 @@ class DocumentoIdentidadeTest extends RegrasTestCase
     private const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
     private EntityInterface $pessoa;
+    private EntityInterface $pergunta;
+    private EntityInterface $inscricao;
 
     /** @var list<string> Arquivos criados pelo teste, apagados no fim. */
     private array $criados = [];
@@ -26,6 +29,12 @@ class DocumentoIdentidadeTest extends RegrasTestCase
     {
         parent::setUp();
         $this->pessoa = $this->criarUsuario('Ana');
+        $secao = (int)$this->salvar('Sections', ['title' => 'Geral', 'order' => 1])->id;
+        $this->pergunta = $this->salvar('Questions', [
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $secao,
+            'text' => 'Apelido', 'type' => 'texto', 'is_required' => true, 'order' => 1, 'accept_generic_answer' => false,
+        ]);
+        $this->inscricao = $this->inscreverNoAcampamento($this->pessoa);
     }
 
     protected function tearDown(): void
@@ -39,7 +48,14 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         }
     }
 
-    private function enviarArquivo(string $conteudo, string $nome, ?EntityInterface $quem = null, ?string $rota = null, array $dados = []): void
+    private function inscreverNoAcampamento(EntityInterface $pessoa, ?string $prazo = null): EntityInterface
+    {
+        $acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $prazo ?? $this->amanha()]);
+
+        return $this->inscrever($pessoa, $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
+    }
+
+    private function enviarArquivo(string $conteudo, string $nome, ?EntityInterface $inscricao = null, ?EntityInterface $quem = null): void
     {
         $temporario = tempnam(sys_get_temp_dir(), 'doc');
         file_put_contents($temporario, $conteudo);
@@ -52,17 +68,35 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         $this->configRequest([
             'files' => ['arquivo' => new UploadedFile($temporario, strlen($conteudo), UPLOAD_ERR_OK, $nome, 'image/png')],
         ]);
-        $this->post($rota ?? '/api/v1/me/documento', $dados);
+        $this->post('/api/v1/inscricoes/' . ($inscricao ?? $this->inscricao)->id . '/documento');
     }
 
-    public function testEnviaTrocaEGuardaForaDaPastaPublica(): void
+    private function enviarFormulario(EntityInterface $inscricao): void
+    {
+        $this->autenticarComo($this->pessoa);
+        $this->post("/api/v1/inscricoes/{$inscricao->id}/formulario", [
+            'answers' => [['question_id' => $this->pergunta->id, 'answer' => 'Aninha']],
+        ]);
+    }
+
+    private function documentoNoFormulario(EntityInterface $inscricao): ?array
+    {
+        $this->autenticarComo($this->pessoa);
+        $this->get("/api/v1/inscricoes/{$inscricao->id}/formulario");
+
+        return $this->respostaJson()['data']['documento'];
+    }
+
+    public function testEnviaComOFormularioETrocaGuardandoForaDaPastaPublica(): void
     {
         $this->enviarArquivo(base64_decode(self::PNG), 'rg-frente.png');
         $this->assertResponseCode(201);
         $primeiro = $this->respostaJson()['data'];
         $this->assertSame('imagem', $primeiro['tipo']);
+        $this->assertArrayNotHasKey('conferido_em', $primeiro, 'Não há mais conferência separada.');
 
         $doc = $this->fetchTable('UserDocuments')->get($primeiro['id']);
+        $this->assertSame($this->inscricao->id, $doc->pre_registration_id);
         $this->assertFileExists(UserDocumentsTable::PASTA . DS . $doc->file);
         $this->assertStringNotContainsString('webroot', UserDocumentsTable::PASTA, 'Documento não pode ter URL pública.');
 
@@ -70,49 +104,38 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         $this->enviarArquivo(base64_decode(self::PNG), 'rg-nova-foto.png');
         $this->assertResponseCode(201);
         $this->assertNotNull($this->fetchTable('UserDocuments')->get($primeiro['id'])->deleted);
-
-        $this->autenticarComo($this->pessoa);
-        $this->get('/api/v1/me/documento');
-        $this->assertSame('rg-nova-foto.png', $this->respostaJson()['data']['nome']);
+        $this->assertSame('rg-nova-foto.png', $this->documentoNoFormulario($this->inscricao)['nome']);
     }
 
-    public function testOrganizacaoEnviaNoLugarDaPessoaPelaFicha(): void
+    public function testCadaInscricaoPedeODocumentoDeNovo(): void
     {
-        $secretaria = $this->criarUsuario('Secretaria', idade: 40);
-        (new PermissoesService())->definir((int)$secretaria->id, ['documentos']);
-        $soPessoas = $this->criarUsuario('Voluntário', idade: 40);
-        (new PermissoesService())->definir((int)$soPessoas->id, ['usuarios']);
-        $rota = "/api/v1/admin/users/{$this->pessoa->id}/documento";
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg.png');
+        $this->enviarFormulario($this->inscricao);
+        $this->assertResponseOk();
 
-        // A pessoa já tinha enviado um; a secretaria troca pelo que recebeu em papel.
-        $this->enviarArquivo(base64_decode(self::PNG), 'foto-borrada.png');
-        $antigo = $this->respostaJson()['data']['id'];
+        // Outra inscrição: o documento do formulário anterior não vale.
+        $outra = $this->inscreverNoAcampamento($this->pessoa);
+        $this->assertNull($this->documentoNoFormulario($outra));
+        $this->enviarFormulario($outra);
+        $this->assertResponseCode(422);
+        $this->assertStringContainsString('documento', $this->respostaJson()['error']);
 
-        $this->enviarArquivo(base64_decode(self::PNG), 'rg-escaneado.png', $secretaria, $rota, ['conferido' => 'true']);
-        $this->assertResponseCode(201);
-        $novo = $this->respostaJson()['data'];
-        $this->assertSame('rg-escaneado.png', $novo['nome']);
-        $this->assertSame('Secretaria', $novo['enviado_por']);
-        $this->assertFalse($novo['pela_pessoa']);
-        $this->assertSame('Secretaria', $novo['conferido_por']);
-        $this->assertNotNull($novo['conferido_em']);
-        $this->assertNotNull($this->fetchTable('UserDocuments')->get($antigo)->deleted, 'O antigo vai para o histórico.');
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg-de-novo.png', $outra);
+        $this->enviarFormulario($outra);
+        $this->assertResponseOk();
+        $this->assertSame('rg.png', $this->documentoNoFormulario($this->inscricao)['nome'], 'O da primeira continua com ela.');
+    }
 
-        // Sem marcar "Já conferi", fica para conferir.
-        $this->enviarArquivo(base64_decode(self::PNG), 'rg-2.png', $secretaria, $rota, ['conferido' => 'false']);
-        $this->assertNull($this->respostaJson()['data']['conferido_em']);
+    public function testSoADonaEnviaEComOFormularioAberto(): void
+    {
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg.png', quem: $this->criarUsuario('Bia'));
+        $this->assertResponseCode(404);
 
-        // Na ficha, o documento só vem para quem tem "Documentos".
-        $this->autenticarComo($secretaria);
-        $this->get("/api/v1/admin/users/{$this->pessoa->id}");
-        $this->assertSame('rg-2.png', $this->respostaJson()['data']['documento']['nome']);
-        $this->autenticarComo($soPessoas);
-        $this->get("/api/v1/admin/users/{$this->pessoa->id}");
-        $this->assertArrayNotHasKey('documento', $this->respostaJson()['data']);
+        $prazoFechado = $this->inscreverNoAcampamento($this->pessoa, $this->ontem());
+        $this->enviarArquivo(base64_decode(self::PNG), 'rg.png', $prazoFechado);
+        $this->assertResponseCode(422);
 
-        // E só quem tem "Documentos" envia.
-        $this->enviarArquivo(base64_decode(self::PNG), 'rg-3.png', $soPessoas, $rota);
-        $this->assertResponseCode(403);
+        $this->assertSame(0, $this->fetchTable('UserDocuments')->find()->count());
     }
 
     public function testRecusaArquivoQueNaoEFotoNemPdf(): void
@@ -123,57 +146,50 @@ class DocumentoIdentidadeTest extends RegrasTestCase
         $this->assertSame(0, $this->fetchTable('UserDocuments')->find()->count());
     }
 
-    public function testSoQuemTemAPermissaoAbreEConfereODocumento(): void
+    public function testSoQuemTemAPermissaoVeODocumentoNasRespostas(): void
     {
         $this->enviarArquivo(base64_decode(self::PNG), 'rg.png');
         $id = $this->respostaJson()['data']['id'];
+        $this->enviarFormulario($this->inscricao);
+        $respostas = '/api/v1/admin/formularios/respostas?' . http_build_query([
+            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'atividade_id' => $this->inscricao->activity_id,
+        ]);
 
-        $semPermissao = $this->criarUsuario('Equipe de saúde', idade: 40);
-        (new PermissoesService())->definir((int)$semPermissao->id, ['respostas_formularios']);
-        $this->autenticarComo($semPermissao);
+        $saude = $this->criarUsuario('Equipe de saúde', idade: 40);
+        (new PermissoesService())->definir((int)$saude->id, ['respostas_formularios']);
+        $this->autenticarComo($saude);
         $this->get("/api/v1/admin/documentos/{$id}/arquivo");
         $this->assertResponseCode(403);
+        $this->autenticarComo($saude);
+        $this->get($respostas);
+        $this->assertArrayNotHasKey('documento', $this->respostaJson()['data']['pessoas'][0]);
 
-        $conferente = $this->criarUsuario('Secretaria', idade: 40);
-        (new PermissoesService())->definir((int)$conferente->id, ['documentos']);
+        $secretaria = $this->criarUsuario('Secretaria', idade: 40);
+        (new PermissoesService())->definir((int)$secretaria->id, ['documentos']);
         $this->assertSame(
-            ['usuarios', 'documentos'],
-            (new PermissoesService())->daPessoa($conferente),
-            'Documentos depende de Pessoas e acessos: é na ficha da pessoa que ele é visto e trocado.'
+            ['respostas_formularios', 'documentos'],
+            (new PermissoesService())->daPessoa($secretaria),
+            'Documentos depende de Respostas dos formulários: é lá que o documento aparece.'
         );
-        $this->autenticarComo($conferente);
+        $this->autenticarComo($secretaria);
+        $this->get($respostas);
+        $this->assertSame($id, $this->respostaJson()['data']['pessoas'][0]['documento']['id']);
+        $this->autenticarComo($secretaria);
         $this->get("/api/v1/admin/documentos/{$id}/arquivo");
         $this->assertResponseOk();
         $this->assertContentType('image/png');
-
-        $this->autenticarComo($conferente);
-        $this->post("/api/v1/admin/documentos/{$id}/conferir", ['conferido' => true]);
-        $this->assertResponseOk();
-        $this->assertNotNull($this->respostaJson()['data']['conferido_em']);
     }
 
     public function testFormularioNaoEEnviadoSemDocumento(): void
     {
-        $secao = (int)$this->salvar('Sections', ['title' => 'Geral', 'order' => 1])->id;
-        $pergunta = $this->salvar('Questions', [
-            'category_id' => $this->categorias['FAC'], 'subscription_type' => 'Campista', 'section_id' => $secao,
-            'text' => 'Apelido', 'type' => 'texto_curto', 'is_required' => true, 'order' => 1, 'accept_generic_answer' => false,
-        ]);
-        $acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()]);
-        $inscricao = $this->inscrever($this->pessoa, $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
-        $enviar = function () use ($inscricao, $pergunta) {
-            $this->autenticarComo($this->pessoa);
-            $this->post("/api/v1/inscricoes/{$inscricao->id}/formulario", ['answers' => [['question_id' => $pergunta->id, 'answer' => 'Aninha']]]);
-        };
-
-        $enviar();
+        $this->enviarFormulario($this->inscricao);
         $this->assertResponseCode(422);
         $this->assertStringContainsString('documento', $this->respostaJson()['error']);
-        $this->assertFalse($this->fetchTable('PreRegistrations')->get($inscricao->id)->form_submitted);
+        $this->assertFalse($this->fetchTable('PreRegistrations')->get($this->inscricao->id)->form_submitted);
 
         $this->enviarArquivo(base64_decode(self::PNG), 'rg.png');
-        $enviar();
+        $this->enviarFormulario($this->inscricao);
         $this->assertResponseOk();
-        $this->assertTrue($this->fetchTable('PreRegistrations')->get($inscricao->id)->form_submitted);
+        $this->assertTrue($this->fetchTable('PreRegistrations')->get($this->inscricao->id)->form_submitted);
     }
 }

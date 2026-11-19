@@ -1,8 +1,7 @@
 <script lang="ts">
 	/**
 	 * Meu cadastro — a pessoa confere os próprios dados e corrige o que estava
-	 * errado ou mudou (telefone, endereço, estado civil...), troca o documento
-	 * de identidade e a senha. O CPF é o login e não muda por aqui.
+	 * errado ou mudou (telefone, endereço, estado civil...) e troca a senha. O CPF é o login e não muda por aqui.
 	 */
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
@@ -19,7 +18,6 @@
 		type MeuCadastro,
 		type PreviaDaFicha
 	} from '$lib/services/userService';
-	import { meuDocumento, enviarDocumento, type DocumentoResumo } from '$lib/services/formularioService';
 
 	type Estado = 'inicio' | 'carregando' | 'pronto' | 'erro';
 
@@ -68,14 +66,13 @@
 	async function carregar() {
 		estado = 'carregando';
 		try {
-			const [cadastro, estados, doc] = await Promise.all([getMeuCadastro(), getEstadosCivis(), meuDocumento()]);
+			const [cadastro, estados] = await Promise.all([getMeuCadastro(), getEstadosCivis()]);
 			if (!cadastro.user) {
 				erroCarregar = cadastro.error || 'Não foi possível carregar o seu cadastro.';
 				estado = 'erro';
 				return;
 			}
 			estadosCivis = estados;
-			documento = doc.data ?? null;
 			aplicar(cadastro.user);
 			estado = 'pronto';
 		} catch {
@@ -178,32 +175,6 @@
 		dados = antes;
 		erros = {};
 		erroSalvar = '';
-	}
-
-	// ─── Documento de identidade ─────────────────────────────────────────
-	let documento: DocumentoResumo | null = $state(null);
-	let enviandoDocumento = $state(false);
-	let erroDocumento = $state('');
-
-	async function escolherDocumento(e: Event & { currentTarget: HTMLInputElement }) {
-		const arquivo = e.currentTarget.files?.[0];
-		e.currentTarget.value = '';
-		if (!arquivo) return;
-		if (arquivo.size > 5 * 1024 * 1024) {
-			erroDocumento = 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
-			return;
-		}
-		enviandoDocumento = true;
-		erroDocumento = '';
-		try {
-			const res = await enviarDocumento(arquivo);
-			if (res.data) documento = res.data;
-			else erroDocumento = res.error || 'Não foi possível enviar o documento.';
-		} catch {
-			erroDocumento = 'Não foi possível enviar o documento. Verifique sua conexão e tente de novo.';
-		} finally {
-			enviandoDocumento = false;
-		}
 	}
 
 	const dataBr = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`;
@@ -440,46 +411,6 @@
 				</div>
 			</form>
 
-			<!-- Documento -->
-			<section class="cartao">
-				<div class="cartao-cabeca">
-					<h2>Documento de identidade</h2>
-					<p class="nota">É pedido para enviar os formulários de inscrição. Só a organização vê.</p>
-				</div>
-				<div class="documento" class:documento--ok={!!documento}>
-					<div class="documento-textos">
-						{#if documento}
-							<span class="documento-titulo">✓ Documento enviado</span>
-							<span class="nota">
-								{documento.nome}{documento.enviado_em ? ` · enviado em ${dataBr(documento.enviado_em)}` : ''}{documento.conferido_em
-									? ' · conferido pela organização'
-									: ''}.
-							</span>
-						{:else}
-							<span class="documento-titulo">Nenhum documento enviado</span>
-							<span class="nota">Foto ou PDF do RG, da CNH ou de outro documento com foto e data de nascimento.</span>
-						{/if}
-						{#if erroDocumento}
-							<span class="erro-campo" role="alert"><span class="erro-icone" aria-hidden="true">!</span>{erroDocumento}</span>
-						{/if}
-					</div>
-					<label class="btn" class:btn--ouro={!documento} class:btn--leve={!!documento} class:ocupado={enviandoDocumento}>
-						<input
-							type="file"
-							class="escondido"
-							accept="image/jpeg,image/png,image/webp,application/pdf"
-							disabled={enviandoDocumento}
-							onchange={escolherDocumento}
-						/>
-						{#if enviandoDocumento}
-							<span class="spinner spinner--pequeno"></span>Enviando...
-						{:else}
-							{documento ? 'Trocar documento' : 'Enviar foto ou PDF'}
-						{/if}
-					</label>
-				</div>
-			</section>
-
 			<!-- Senha -->
 			<section class="cartao cartao--linha">
 				<div class="cartao-cabeca">
@@ -566,8 +497,7 @@
 	}
 
 	.pagina :is(button, a, input, select):focus-visible,
-	.pilula:has(input:focus-visible),
-	label.btn:has(input:focus-visible) {
+	.pilula:has(input:focus-visible) {
 		outline: none;
 		box-shadow: 0 0 0 4px var(--anel-foco);
 	}
@@ -869,49 +799,6 @@
 
 	.barra-texto {
 		flex: 1 1 240px;
-	}
-
-
-	/* ─── Documento ─── */
-	.documento {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 14px;
-		padding: 16px 18px;
-		background: #ffffff;
-		border: 1.5px dashed var(--ouro);
-		border-radius: 12px;
-	}
-
-	.documento--ok {
-		border-style: solid;
-		border-color: #b9d9c4;
-		background: #f4faf6;
-	}
-
-	.documento-textos {
-		flex: 1 1 260px;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
-	}
-
-	.documento-titulo {
-		font-size: 18px;
-		font-weight: 600;
-		color: var(--tinta);
-	}
-
-	.documento .btn {
-		flex: 0 0 auto;
-		position: relative;
-	}
-
-	.ocupado {
-		cursor: progress;
-		opacity: 0.7;
 	}
 
 	/* ─── Botões ─── */

@@ -490,7 +490,7 @@
 			rascunho: true,
 			secaoId,
 			text: '',
-			type: 'texto_curto',
+			type: 'texto',
 			is_required: true,
 			order: 0,
 			dependsOn,

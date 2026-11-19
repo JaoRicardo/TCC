@@ -315,12 +315,6 @@ class UsersController extends ApiController
             'ultimo_gestor'     => $this->permissoes()->ehUltimoGestor((int)$user->id),
         ];
 
-        // Documento de identidade: a chave só vem para quem tem "Documentos".
-        if ($this->temPermissao($identity, 'documentos')) {
-            $documentos = $this->fetchTable('UserDocuments');
-            $dados['documento'] = $documentos->resumoComNomes($documentos->daPessoa((int)$user->id));
-        }
-
         if (!$this->temPermissao($identity, 'permissoes')) {
             return ['data' => $dados];
         }

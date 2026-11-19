@@ -15,7 +15,6 @@
 	import { getResumoFormularios, TIPOS_PERGUNTA } from '$lib/services/perguntaService';
 	import {
 		abrirDocumento,
-		conferirDocumento,
 		getRespostas,
 		type PessoaComRespostas,
 		type RespostasDoFormulario
@@ -352,29 +351,9 @@
 	let pessoa = $derived(enviaram[Math.min(pessoaIdx, Math.max(0, enviaram.length - 1))]);
 
 	// ─── Documento (só com a permissão "documentos") ──────────────────────
-	let conferindo = $state(false);
-
 	async function verDocumento(id: number) {
 		const res = await abrirDocumento(id);
 		if (res.error) avisar(res.error);
-	}
-
-	async function marcarConferido(p: PessoaComRespostas, conferido: boolean) {
-		if (!p.documento) return;
-		conferindo = true;
-		try {
-			const res = await conferirDocumento(p.documento.id, conferido);
-			if (res.data) {
-				p.documento = res.data;
-				avisar(conferido ? 'Documento marcado como conferido.' : 'Documento desmarcado.');
-			} else {
-				avisar(res.error || 'Não foi possível marcar o documento.');
-			}
-		} catch {
-			avisar('Não foi possível marcar o documento. Verifique sua conexão.');
-		} finally {
-			conferindo = false;
-		}
 	}
 
 	// ─── Tabela ──────────────────────────────────────────────────────────
@@ -760,32 +739,21 @@
 					{#if pessoa.documento !== undefined}
 						<!-- Só vem para quem tem a permissão "Documentos de identidade". -->
 						{@const doc = pessoa.documento}
-						<div class="ficha-documento nao-imprimir" class:ficha-documento--ok={doc?.conferido_em}>
+						<div class="ficha-documento nao-imprimir" class:ficha-documento--ok={!!doc}>
 							<div class="ficha-documento-textos">
 								<span class="fm-rotulo">Documento de identidade</span>
 								{#if doc}
 									<span>
-										{doc.tipo === 'pdf' ? 'PDF' : 'Foto'} enviado{doc.enviado_em ? ` em ${diaEHora(doc.enviado_em)}` : ''}{doc.conferido_em
-											? ` · conferido em ${diaEHora(doc.conferido_em)}`
-											: ' · ainda não conferido'}
+										{doc.tipo === 'pdf' ? 'PDF enviado' : 'Foto enviada'} com este formulário{doc.enviado_em
+											? ` em ${diaEHora(doc.enviado_em)}`
+											: ''}
 									</span>
 								{:else}
-									<span>Ainda não enviou. Quem enviou o formulário antes de o documento ser pedido fica sem ele.</span>
+									<span>Sem documento: este formulário foi enviado antes de o documento ser pedido.</span>
 								{/if}
 							</div>
 							{#if doc}
-								<div class="acoes-linha">
-									<button type="button" class="fm-btn" onclick={() => verDocumento(doc.id)}>Ver documento</button>
-									<button
-										type="button"
-										class="fm-btn"
-										class:fm-btn--ouro={!doc.conferido_em}
-										disabled={conferindo}
-										onclick={() => marcarConferido(pessoa, !doc.conferido_em)}
-									>
-										{doc.conferido_em ? 'Desmarcar conferido' : 'Marcar como conferido'}
-									</button>
-								</div>
+								<button type="button" class="fm-btn" onclick={() => verDocumento(doc.id)}>Ver documento</button>
 							{/if}
 						</div>
 					{/if}

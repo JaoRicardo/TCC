@@ -127,12 +127,8 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'add']);
             $builder->patch('/admin/formularios-evento/{id}', ['controller' => 'EventForms', 'action' => 'edit'])->setPass(['id']);
 
-            // --- Documento de identidade ---
-            $builder->get('/me/documento', ['controller' => 'Documentos', 'action' => 'meu']);
-            $builder->post('/me/documento', ['controller' => 'Documentos', 'action' => 'enviar']);
+            // --- Documento de identidade (enviado em /inscricoes/{id}/documento) ---
             $builder->get('/admin/documentos/{id}/arquivo', ['controller' => 'Documentos', 'action' => 'arquivo'])->setPass(['id']);
-            $builder->post('/admin/documentos/{id}/conferir', ['controller' => 'Documentos', 'action' => 'conferir'])->setPass(['id']);
-            $builder->post('/admin/users/{id}/documento', ['controller' => 'Documentos', 'action' => 'enviarPorPessoa'])->setPass(['id']); // ficha da pessoa
             $builder->get('/admin/secoes', ['controller' => 'Questions', 'action' => 'secoes']);
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
             $builder->patch('/admin/secoes/{id}', ['controller' => 'Questions', 'action' => 'editarSecao'])->setPass(['id']);
@@ -175,6 +171,7 @@ return function (RouteBuilder $routes): void {
             $builder->get('/me/inscricoes', ['controller' => 'Inscricoes', 'action' => 'minhas']);
             $builder->get('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'formulario'])->setPass(['id']);
             $builder->post('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'salvarFormulario'])->setPass(['id']);
+            $builder->post('/inscricoes/{id}/documento', ['controller' => 'Inscricoes', 'action' => 'enviarDocumento'])->setPass(['id']);
 
             // --- Pagamento da inscrição (Mercado Pago / Checkout Pro) ---
             $builder->post('/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'criar'])->setPass(['id']);

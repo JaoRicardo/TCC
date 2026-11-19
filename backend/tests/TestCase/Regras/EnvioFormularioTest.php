@@ -39,15 +39,16 @@ class EnvioFormularioTest extends RegrasTestCase
         $this->alergia = $pergunta('Tem alergia?', 'sim_nao');
         $this->sim = (int)$this->salvar('Options', ['question_id' => $this->alergia, 'text' => 'Sim', 'order' => 1])->id;
         $this->nao = (int)$this->salvar('Options', ['question_id' => $this->alergia, 'text' => 'Não', 'order' => 2])->id;
-        $this->qual = $pergunta('Qual?', 'texto_curto', $this->sim, 2);
+        $this->qual = $pergunta('Qual?', 'texto', $this->sim, 2);
 
         $acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()]);
         $this->campista = $this->criarUsuario('Ana');
-        // Documento já no cadastro (sem ele o formulário não é enviado; ver DocumentoIdentidadeTest).
-        $this->salvar('UserDocuments', [
-            'user_id' => $this->campista->id, 'file' => 'teste.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1,
-        ]);
         $this->inscricao = $this->inscrever($this->campista, $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
+        // Documento já enviado nesta inscrição (sem ele o formulário não é enviado; ver DocumentoIdentidadeTest).
+        $this->salvar('UserDocuments', [
+            'user_id' => $this->campista->id, 'pre_registration_id' => $this->inscricao->id,
+            'file' => 'teste.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1,
+        ]);
     }
 
     private function enviar(array $respostas): void

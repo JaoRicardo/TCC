@@ -226,9 +226,7 @@ class RespostasController extends ApiController
 
         // Documento só vai para quem tem a permissão "documentos" (dado pessoal sensível).
         $comDocumento = $this->temPermissao($this->request->getAttribute('identity'), 'documentos');
-        $documentos = $comDocumento
-            ? $this->fetchTable('UserDocuments')->dasPessoas(array_map(fn($i) => (int)$i->user_id, $inscricoes))
-            : [];
+        $documentos = $comDocumento ? $this->fetchTable('UserDocuments')->dasInscricoes($ids) : [];
 
         $hoje = new \DateTimeImmutable('today');
         $pessoas = [];
@@ -254,7 +252,7 @@ class RespostasController extends ApiController
                 'respostas'     => (object)($respostas[(int)$i->id] ?? []),
             ];
             if ($comDocumento) {
-                $pessoa['documento'] = UserDocumentsTable::resumo($documentos[(int)$i->user_id] ?? null);
+                $pessoa['documento'] = UserDocumentsTable::resumo($documentos[(int)$i->id] ?? null);
             }
             $pessoas[] = $pessoa;
         }

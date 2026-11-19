@@ -18,7 +18,6 @@
 	import Janela from '$lib/components/painel/Janela.svelte';
 	import JanelasDaConta from '$lib/components/painel/JanelasDaConta.svelte';
 	import logoAsas from '$lib/imgs/logo-asas.png';
-	import { abrirDocumento, conferirDocumento } from '$lib/services/respostaService';
 	import {
 		mascaraCep,
 		mascaraCpf,
@@ -30,13 +29,11 @@
 	import {
 		getFicha,
 		gerarSenhaProvisoria,
-		enviarDocumentoDaPessoa,
 		salvarFicha,
 		previaFicha,
 		getInscricoesDaPessoa,
 		getEstadosCivis,
 		type DadosDaFicha,
-		type DocumentoDaFicha,
 		type ErrosDaFicha,
 		type FichaPessoa,
 		type InscricaoDaPessoa,
@@ -406,8 +403,7 @@
 	}
 
 	// ─── Acesso à conta (vale na hora, sem "Salvar alterações") ──────────
-	let modal: 'conferir' | 'sair' | 'senha' | 'senhaGerada' | 'permissoes' | 'desativar' | 'documento' | null =
-		$state(null);
+	let modal: 'conferir' | 'sair' | 'senha' | 'senhaGerada' | 'permissoes' | 'desativar' | null = $state(null);
 
 	/** "2026-11-16 22:41:00" → "16/11 às 22:41" */
 	const diaEHora = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)} às ${iso.slice(11, 16)}`;
@@ -475,97 +471,6 @@
 		modal = null;
 		saindo = true;
 		estado = 'desativada';
-	}
-
-	// ─── Documento de identidade (só com "Documentos") ────────────────────
-	const TIPOS_DE_DOCUMENTO = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
-	const MAXIMO_DOCUMENTO = 5 * 1024 * 1024;
-
-	let arquivoDoc = $state<File | null>(null);
-	/** Quem envia no lugar da pessoa normalmente está com o papel na mão. */
-	let jaConferi = $state(true);
-	let enviandoDoc = $state(false);
-	let marcandoDoc = $state(false);
-	let erroDoc = $state('');
-	let arrastando = $state(false);
-	let seletorDoc = $state<HTMLInputElement | null>(null);
-
-	/** "1,8 MB", "350 KB" */
-	const tamanho = (bytes: number) =>
-		bytes >= 1024 * 1024
-			? `${(bytes / 1024 / 1024).toFixed(1).replace('.', ',')} MB`
-			: `${Math.max(1, Math.round(bytes / 1024))} KB`;
-	const extensao = (nome: string) => (nome.split('.').pop() ?? '').toUpperCase().slice(0, 4);
-
-	function abrirEnvioDoc() {
-		arquivoDoc = null;
-		jaConferi = true;
-		erroDoc = '';
-		modal = 'documento';
-	}
-
-	function escolherArquivo(arquivo: File | undefined) {
-		erroDoc = '';
-		if (!arquivo) return;
-		if (!TIPOS_DE_DOCUMENTO.includes(arquivo.type)) {
-			erroDoc = 'Envie uma foto (JPG, PNG ou WebP) ou um PDF do documento.';
-			return;
-		}
-		if (arquivo.size > MAXIMO_DOCUMENTO) {
-			erroDoc = 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
-			return;
-		}
-		arquivoDoc = arquivo;
-	}
-
-	function soltarArquivo(e: DragEvent) {
-		e.preventDefault();
-		arrastando = false;
-		escolherArquivo(e.dataTransfer?.files?.[0]);
-	}
-
-	async function enviarDoc() {
-		if (!ficha || !arquivoDoc) return;
-		enviandoDoc = true;
-		erroDoc = '';
-		try {
-			const res = await enviarDocumentoDaPessoa(ficha.id, arquivoDoc, jaConferi);
-			if (!res.data) {
-				erroDoc = res.error ?? 'Não foi possível enviar o documento.';
-				return;
-			}
-			ficha.documento = res.data;
-			modal = null;
-			avisar(res.data.conferido_em ? 'Documento enviado e marcado como conferido.' : 'Documento enviado.');
-		} catch {
-			erroDoc = 'Não foi possível enviar o documento. Verifique sua conexão e tente de novo.';
-		} finally {
-			enviandoDoc = false;
-		}
-	}
-
-	async function verDoc() {
-		if (!ficha?.documento) return;
-		const res = await abrirDocumento(ficha.documento.id);
-		if (res.error) avisar(res.error);
-	}
-
-	async function marcarConferido(conferido: boolean) {
-		if (!ficha?.documento || marcandoDoc) return;
-		marcandoDoc = true;
-		try {
-			const res = await conferirDocumento(ficha.documento.id, conferido);
-			if (res.data) {
-				ficha.documento = res.data as DocumentoDaFicha;
-				avisar(conferido ? 'Documento marcado como conferido.' : 'Conferência desmarcada.');
-			} else {
-				avisar(res.error ?? 'Não foi possível marcar o documento.');
-			}
-		} catch {
-			avisar('Não foi possível marcar o documento. Verifique sua conexão.');
-		} finally {
-			marcandoDoc = false;
-		}
 	}
 
 	// ─── Sair sem salvar ──────────────────────────────────────────────────
@@ -1034,55 +939,6 @@
 					</div>
 				</section>
 
-				{#if ficha.documento !== undefined}
-					<section class="fm-cartao cartao cartao--doc" aria-labelledby="t-doc">
-						<div>
-							<h2 id="t-doc" class="h2">Documento de identidade</h2>
-							<p class="sub">RG ou certidão. Pedido para enviar os formulários de inscrição.</p>
-						</div>
-						{#if !ficha.documento}
-							<span class="pill neu sozinho"><i></i>Não enviado</span>
-							<p class="ajuda ajuda--16">
-								{primeiro} ainda não enviou. Se entregou em papel, você pode enviar uma foto no lugar
-								{orig.sexo === 'F' ? 'dela' : 'dele'}.
-							</p>
-							<button type="button" class="fm-btn fm-btn--contorno sozinho" onclick={abrirEnvioDoc}>Enviar documento</button>
-						{:else}
-							{@const doc = ficha.documento}
-							{#if doc.conferido_em}
-								<span class="pill ok sozinho">
-									<i></i>Conferido em {dataBr(doc.conferido_em)}{doc.conferido_por ? ` por ${doc.conferido_por}` : ''}
-								</span>
-							{:else}
-								<span class="pill esp sozinho"><i></i>Enviado · falta conferir</span>
-							{/if}
-							<div class="arquivo">
-								<span class="arquivo-ext" aria-hidden="true">{doc.extensao}</span>
-								<span class="arquivo-textos">
-									<span class="arquivo-nome">{doc.nome}</span>
-									<span class="arquivo-meta">
-										Enviado em {dataBr(doc.enviado_em)}{doc.enviado_por ? ` por ${doc.enviado_por}` : ''}
-									</span>
-								</span>
-							</div>
-							<div class="botoes-doc">
-								<button type="button" class="fm-btn fm-btn--contorno" onclick={verDoc}>Ver documento</button>
-								{#if !doc.conferido_em}
-									<button type="button" class="fm-btn btn-claro" onclick={() => marcarConferido(true)} disabled={marcandoDoc}>
-										Marcar como conferido
-									</button>
-								{/if}
-								<button type="button" class="fm-btn btn-claro" onclick={abrirEnvioDoc}>Trocar documento</button>
-							</div>
-							{#if doc.conferido_em}
-								<button type="button" class="fm-link sozinho" onclick={() => marcarConferido(false)} disabled={marcandoDoc}>
-									Desmarcar conferência
-								</button>
-							{/if}
-						{/if}
-					</section>
-				{/if}
-
 				<section class="fm-cartao cartao cartao--lista" aria-labelledby="t-insc">
 					<div>
 						<h2 id="t-insc" class="h2">Inscrições</h2>
@@ -1306,68 +1162,6 @@
 		</ul>
 		<div class="fm-janela-acoes">
 			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={fecharSenhaGerada}>Já passei a senha, fechar</button>
-		</div>
-	</Janela>
-{/if}
-
-{#if modal === 'documento' && ficha}
-	<Janela idTitulo="t-doc2" travada={enviandoDoc} onfechar={() => (modal = null)}>
-		<h2 id="t-doc2" class="fm-janela-titulo">{ficha.documento ? 'Trocar' : 'Enviar'} o documento de {curto}</h2>
-		<input
-			bind:this={seletorDoc}
-			type="file"
-			class="escondido"
-			accept={TIPOS_DE_DOCUMENTO.join(',')}
-			onchange={(e) => {
-				escolherArquivo(e.currentTarget.files?.[0]);
-				e.currentTarget.value = '';
-			}}
-		/>
-		{#if !arquivoDoc}
-			<!-- svelte-ignore a11y_no_static_element_interactions -->
-			<div
-				class="soltar"
-				class:soltar--sobre={arrastando}
-				ondragover={(e) => {
-					e.preventDefault();
-					arrastando = true;
-				}}
-				ondragleave={() => (arrastando = false)}
-				ondrop={soltarArquivo}
-			>
-				<span class="soltar-texto">Arraste o arquivo para cá ou</span>
-				<button type="button" class="fm-btn fm-btn--contorno" data-foco-inicial onclick={() => seletorDoc?.click()}>
-					Escolher arquivo
-				</button>
-				<span class="ajuda">Foto (JPG, PNG ou WebP) ou PDF, até 5 MB.</span>
-			</div>
-		{:else}
-			<div class="arquivo arquivo--novo">
-				<span class="arquivo-ext" aria-hidden="true">{extensao(arquivoDoc.name)}</span>
-				<span class="arquivo-textos arquivo-textos--cresce">
-					<span class="arquivo-nome">{arquivoDoc.name}</span>
-					<span class="arquivo-meta">{tamanho(arquivoDoc.size)}</span>
-				</span>
-				<button type="button" class="fm-link" onclick={() => seletorDoc?.click()} disabled={enviandoDoc}>Trocar arquivo</button>
-			</div>
-		{/if}
-		{#if ficha.documento}
-			<p class="ajuda ajuda--16">O documento atual ({ficha.documento.nome}) será substituído.</p>
-		{/if}
-		<label class="caixa">
-			<input type="checkbox" bind:checked={jaConferi} disabled={enviandoDoc} />
-			<span>Já conferi este documento</span>
-		</label>
-		{#if erroDoc}
-			<p class="err" role="alert"><i>!</i>{erroDoc}</p>
-		{/if}
-		<div class="fm-janela-acoes">
-			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" onclick={() => (modal = null)} disabled={enviandoDoc}>
-				Cancelar
-			</button>
-			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={enviarDoc} disabled={!arquivoDoc || enviandoDoc}>
-				{#if enviandoDoc}<span class="spinner spinner--botao"></span>Enviando...{:else}Enviar documento{/if}
-			</button>
 		</div>
 	</Janela>
 {/if}
@@ -2036,120 +1830,6 @@
 
 	.lista-16 {
 		font-size: 16px;
-	}
-
-	/* ─── Documento ─── */
-	.cartao--doc {
-		gap: 16px;
-	}
-
-	.arquivo {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 12px 14px;
-		background: #ffffff;
-		border: 1px solid var(--borda-suave);
-		border-radius: 10px;
-	}
-
-	.arquivo--novo {
-		border: 1.5px solid var(--azul);
-	}
-
-	.arquivo-ext {
-		flex: 0 0 40px;
-		height: 48px;
-		border-radius: 6px;
-		background: #f1e8cf;
-		color: #6b5822;
-		font-size: 12px;
-		font-weight: 700;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.arquivo-textos {
-		display: flex;
-		flex-direction: column;
-		gap: 2px;
-		min-width: 0;
-	}
-
-	.arquivo-textos--cresce {
-		flex: 1;
-	}
-
-	.arquivo-nome {
-		font-size: 16px;
-		font-weight: 600;
-		overflow-wrap: anywhere;
-	}
-
-	.arquivo-meta {
-		font-size: 15px;
-		color: var(--tinta-3);
-	}
-
-	.botoes-doc {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 8px;
-	}
-
-	.btn-claro {
-		color: var(--azul);
-		background: var(--pergaminho);
-		border: 1px solid var(--borda);
-	}
-
-	.soltar {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 10px;
-		padding: 28px 20px;
-		text-align: center;
-		background: #ffffff;
-		border: 2px dashed #cdb878;
-		border-radius: 12px;
-	}
-
-	.soltar--sobre {
-		border-color: var(--azul);
-		background: #f3f5fb;
-	}
-
-	.soltar-texto {
-		font-size: 17px;
-		color: #2b3045;
-	}
-
-	.escondido {
-		position: absolute;
-		width: 1px;
-		height: 1px;
-		overflow: hidden;
-		clip: rect(0 0 0 0);
-		white-space: nowrap;
-	}
-
-	.caixa {
-		display: flex;
-		align-items: center;
-		gap: 12px;
-		padding: 8px 0;
-		font-size: 17px;
-		color: var(--tinta);
-		cursor: pointer;
-	}
-
-	.caixa input {
-		width: 22px;
-		height: 22px;
-		accent-color: var(--azul);
-		cursor: pointer;
 	}
 
 	/* ─── Conferir antes de salvar ─── */

@@ -243,7 +243,7 @@
 		enviandoDocumento = true;
 		erroDocumento = '';
 		try {
-			const res = await enviarDocumento(arquivo);
+			const res = await enviarDocumento(preRegId, arquivo);
 			if (res.data) {
 				form.documento = res.data;
 				faltaDocumento = false;
@@ -475,7 +475,7 @@
 			<label class="rotulo" for="in-{q.id}">
 				{q.text}{#if !q.isRequired}<span class="opcional">{' (opcional)'}</span>{/if}
 			</label>
-			{#if q.type === 'texto_longo'}
+			{#if q.type === 'texto'}
 				<textarea
 					id="in-{q.id}"
 					class="campo campo--longo"
@@ -511,7 +511,6 @@
 					class:com-erro={erro}
 					type={tipo.type}
 					inputmode={tipo.inputmode}
-					maxlength={q.type === 'texto_curto' ? 255 : undefined}
 					value={respostas[q.id] ?? ''}
 					oninput={(e) => responder(q.id, e.currentTarget.value)}
 					aria-invalid={erro || undefined}
@@ -771,14 +770,14 @@
 									{#if form.documento}
 										<span class="nota">
 											✓ Enviado{form.documento.enviado_em ? ` em ${diaMes(form.documento.enviado_em)}` : ''} · {form.documento.nome}.
-											Fica no cadastro e vale para os próximos acampamentos.
+											Vale só para esta inscrição.
 										</span>
 									{:else}
 										<span class="nota">
 											{ehMirim
 												? 'Foto ou PDF do RG ou da certidão de nascimento da criança, para a organização conferir a idade.'
 												: 'Foto ou PDF do RG, da CNH ou de outro documento com foto e data de nascimento, para a organização conferir seus dados.'}
-											Só a organização vê.
+											Só a organização vê. A cada inscrição o documento é pedido de novo.
 										</span>
 									{/if}
 									{#if faltaDocumento && !form.documento}

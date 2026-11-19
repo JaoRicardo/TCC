@@ -5,15 +5,26 @@ namespace App\Model\Table;
 
 use Cake\Datasource\EntityInterface;
 use Cake\ORM\Table;
+use Psr\Http\Message\UploadedFileInterface;
 
 /**
- * Documento de identidade de cada pessoa (ver a migração CreateUserDocuments).
- * Vale o documento ativo mais recente; os trocados ficam com exclusão lógica.
+ * Documento de identidade enviado com o formulário de cada inscrição (ver as
+ * migrações CreateUserDocuments e LinkUserDocumentsToPreRegistrations). Cada
+ * inscrição pede o seu: o documento não fica no cadastro nem passa de um
+ * formulário para outro. Vale o mais recente; os trocados ficam com exclusão lógica.
  */
 class UserDocumentsTable extends Table
 {
     /** Pasta privada dos arquivos (fora de webroot: não há URL pública). */
     public const PASTA = ROOT . DS . 'storage' . DS . 'documentos';
+
+    private const TAMANHO_MAXIMO = 5 * 1024 * 1024;
+    public const TIPOS = [
+        'image/jpeg'      => 'jpg',
+        'image/png'       => 'png',
+        'image/webp'      => 'webp',
+        'application/pdf' => 'pdf',
+    ];
 
     public function initialize(array $config): void
     {
@@ -27,36 +38,85 @@ class UserDocumentsTable extends Table
             'foreignKey' => 'user_id',
             'joinType'   => 'INNER',
         ]);
+        $this->belongsTo('PreRegistrations', [
+            'foreignKey' => 'pre_registration_id',
+        ]);
     }
 
-    /** O documento que vale para a pessoa agora, ou null. */
-    public function daPessoa(int $userId): ?EntityInterface
+    /** O documento enviado com o formulário desta inscrição, ou null. */
+    public function daInscricao(int $preRegId): ?EntityInterface
     {
         return $this->find()
-            ->where(['user_id' => $userId, 'deleted IS' => null])
+            ->where(['pre_registration_id' => $preRegId, 'deleted IS' => null])
             ->orderBy(['id' => 'DESC'])
             ->first();
     }
 
     /**
-     * Documentos que valem para várias pessoas de uma vez.
+     * Documentos de várias inscrições de uma vez.
      *
-     * @param list<int> $userIds
-     * @return array<int, EntityInterface> id da pessoa => documento
+     * @param list<int> $preRegIds
+     * @return array<int, EntityInterface> id da inscrição => documento
      */
-    public function dasPessoas(array $userIds): array
+    public function dasInscricoes(array $preRegIds): array
     {
-        if (!$userIds) return [];
-        $porPessoa = [];
+        if (!$preRegIds) return [];
+        $porInscricao = [];
         $docs = $this->find()
-            ->where(['user_id IN' => $userIds, 'deleted IS' => null])
+            ->where(['pre_registration_id IN' => $preRegIds, 'deleted IS' => null])
             ->orderBy(['id' => 'ASC'])
             ->all();
         foreach ($docs as $d) {
-            $porPessoa[(int)$d->user_id] = $d;
+            $porInscricao[(int)$d->pre_registration_id] = $d;
         }
 
-        return $porPessoa;
+        return $porInscricao;
+    }
+
+    /**
+     * Confere e guarda o arquivo como o documento da inscrição. Foto (JPG, PNG,
+     * WebP) ou PDF de até 5 MB; o tipo é conferido pelo conteúdo, não pelo nome.
+     * O anterior desta inscrição, se houver, sai com exclusão lógica.
+     *
+     * @return \Cake\Datasource\EntityInterface|string o documento, ou a mensagem de erro
+     */
+    public function guardar(?UploadedFileInterface $arquivo, int $userId, int $preRegId): EntityInterface|string
+    {
+        if (!$arquivo || $arquivo->getError() === UPLOAD_ERR_NO_FILE) {
+            return 'Escolha a foto ou o PDF do documento.';
+        }
+        if ($arquivo->getError() === UPLOAD_ERR_INI_SIZE || $arquivo->getError() === UPLOAD_ERR_FORM_SIZE
+            || $arquivo->getSize() > self::TAMANHO_MAXIMO) {
+            return 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
+        }
+        if ($arquivo->getError() !== UPLOAD_ERR_OK) {
+            return 'Não foi possível receber o arquivo. Tente de novo.';
+        }
+
+        $temporario = $arquivo->getStream()->getMetadata('uri');
+        $mime = $temporario ? (new \finfo(FILEINFO_MIME_TYPE))->file($temporario) : null;
+        if (!isset(self::TIPOS[$mime])) {
+            return 'Envie uma foto (JPG, PNG ou WebP) ou um PDF do documento.';
+        }
+
+        if (!is_dir(self::PASTA)) {
+            mkdir(self::PASTA, 0750, true);
+        }
+        $nomeGuardado = bin2hex(random_bytes(16)) . '.' . self::TIPOS[$mime];
+        $arquivo->moveTo(self::PASTA . DS . $nomeGuardado);
+
+        return $this->getConnection()->transactional(function () use ($userId, $preRegId, $arquivo, $mime, $nomeGuardado) {
+            $this->updateAll(['deleted' => date('Y-m-d H:i:s')], ['pre_registration_id' => $preRegId, 'deleted IS' => null]);
+
+            return $this->saveOrFail($this->newEntity([
+                'user_id'             => $userId,
+                'pre_registration_id' => $preRegId,
+                'file'                => $nomeGuardado,
+                'original_name'       => mb_substr((string)$arquivo->getClientFilename(), 0, 255) ?: 'documento',
+                'mime'                => $mime,
+                'size'                => (int)$arquivo->getSize(),
+            ], ['accessibleFields' => ['*' => true]]));
+        });
     }
 
     /** Dados do documento para a tela (nunca o caminho do arquivo). */
@@ -65,31 +125,10 @@ class UserDocumentsTable extends Table
         if (!$doc) return null;
 
         return [
-            'id'           => (int)$doc->id,
-            'nome'         => $doc->original_name,
-            'tipo'         => $doc->mime === 'application/pdf' ? 'pdf' : 'imagem',
-            'enviado_em'   => $doc->created?->format('Y-m-d\TH:i'),
-            'conferido_em' => $doc->checked_at?->format('Y-m-d\TH:i'),
-        ];
-    }
-
-    /** resumo() e mais quem enviou e quem conferiu (para a ficha da pessoa). */
-    public function resumoComNomes(?EntityInterface $doc): ?array
-    {
-        $resumo = self::resumo($doc);
-        if ($resumo === null) return null;
-
-        // Sem uploaded_by: documento antigo, enviado pela própria pessoa.
-        $enviou = (int)($doc->uploaded_by ?? $doc->user_id);
-        $ids = array_filter([$enviou, $doc->checked_by ? (int)$doc->checked_by : null]);
-        $nomes = $this->Users->find()->select(['id', 'name'])->where(['id IN' => $ids])->all()
-            ->combine('id', 'name')->toArray();
-
-        return $resumo + [
-            'extensao'      => strtoupper(pathinfo((string)$doc->file, PATHINFO_EXTENSION)),
-            'enviado_por'   => $nomes[$enviou] ?? null,
-            'pela_pessoa'   => $enviou === (int)$doc->user_id,
-            'conferido_por' => $doc->checked_by ? ($nomes[(int)$doc->checked_by] ?? null) : null,
+            'id'         => (int)$doc->id,
+            'nome'       => $doc->original_name,
+            'tipo'       => $doc->mime === 'application/pdf' ? 'pdf' : 'imagem',
+            'enviado_em' => $doc->created?->format('Y-m-d\TH:i'),
         ];
     }
 }

@@ -10,6 +10,7 @@ use App\Service\FormulariosService;
 use App\Service\MercadoPagoService;
 use App\Service\PrazoFormularioService;
 use App\Service\RetiradaDoSorteioService;
+use Cake\Datasource\EntityInterface;
 use Cake\Http\Response;
 
 #[AllowDynamicProperties]
@@ -552,8 +553,8 @@ class InscricoesController extends ApiController
                         ->format('Y-m-d'),
                 ] : null,
                 'perfil'    => $this->serializePerfilConfirmacao($identity),
-                // Documento de identidade do cadastro; sem ele o formulário não é enviado.
-                'documento' => UserDocumentsTable::resumo($this->fetchTable('UserDocuments')->daPessoa((int)$identity->id)),
+                // Documento de identidade desta inscrição; sem ele o formulário não é enviado.
+                'documento' => UserDocumentsTable::resumo($this->fetchTable('UserDocuments')->daInscricao((int)$preReg->id)),
                 'sections'  => $temFormulario ? $this->montarSections($questions, $respostas) : [],
                 'pagamento' => $activity ? $this->serializePagamento($preReg, $activity) : null,
             ],
@@ -765,6 +766,30 @@ class InscricoesController extends ApiController
         return $prazoPagamento->getTimestamp() < time();
     }
 
+    /**
+     * POST /api/v1/inscricoes/{id}/documento (multipart, campo "arquivo")
+     *
+     * Documento de identidade desta inscrição, na etapa "Seus dados" do
+     * formulário. Cada inscrição pede o seu (não reaproveita o de outra), e
+     * só enquanto o formulário pode ser enviado ou corrigido.
+     */
+    public function enviarDocumento(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $preReg = $this->inscricaoComFormularioAberto($id, $identity);
+        if ($preReg instanceof Response) return $preReg;
+
+        $novo = $this->fetchTable('UserDocuments')
+            ->guardar($this->request->getUploadedFile('arquivo'), (int)$identity->id, (int)$preReg->id);
+        if (is_string($novo)) return $this->apiError($novo, 422);
+
+        return $this->apiResponse(['data' => UserDocumentsTable::resumo($novo)], 201);
+    }
+
     // POST /api/v1/inscricoes/{id}/formulario
     public function salvarFormulario(int $id): Response
     {
@@ -773,6 +798,42 @@ class InscricoesController extends ApiController
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
 
+        $preReg = $this->inscricaoComFormularioAberto($id, $identity);
+        if ($preReg instanceof Response) return $preReg;
+
+        $activity = $preReg->activity;
+        $ehEvento = $this->ehEvento($preReg);
+        $questions = $this->perguntasDoFormulario($preReg);
+
+        // Sem perguntas cadastradas não existe "formulário enviado": antes dessa
+        // checagem era possível enviar um formulário vazio e a inscrição ficava
+        // marcada como respondida sem nenhum dado.
+        if (empty($questions)) {
+            return $this->apiError(
+                'A organização ainda não montou o formulário ' . ($ehEvento ? 'deste evento' : 'deste acampamento')
+                    . ', então não há nada para enviar.',
+                422
+            );
+        }
+
+        // O documento confirma idade e dados; cada inscrição pede o seu, então
+        // sem o desta o formulário não conta como enviado.
+        if (!$this->fetchTable('UserDocuments')->daInscricao((int)$preReg->id)) {
+            return $this->apiError(
+                'Envie a foto ou o PDF do documento de identidade na etapa "Seus dados" antes de enviar o formulário.',
+                422
+            );
+        }
+
+        return $this->gravarRespostas($preReg, $questions);
+    }
+
+    /**
+     * A inscrição da pessoa, se o formulário dela ainda pode ser enviado ou
+     * corrigido (situação permite e o prazo não fechou); senão, a resposta de erro.
+     */
+    private function inscricaoComFormularioAberto(int $id, object $identity): EntityInterface|Response
+    {
         $this->prazoFormularioService->executarPrazosVencidos();
 
         $preReg = $this->PreRegistrations->find()
@@ -819,26 +880,14 @@ class InscricoesController extends ApiController
             );
         }
 
-        $questions = $this->perguntasDoFormulario($preReg);
+        return $preReg;
+    }
 
-        // Sem perguntas cadastradas não existe "formulário enviado": antes dessa
-        // checagem era possível enviar um formulário vazio e a inscrição ficava
-        // marcada como respondida sem nenhum dado.
-        if (empty($questions)) {
-            return $this->apiError(
-                'A organização ainda não montou o formulário ' . ($ehEvento ? 'deste evento' : 'deste acampamento')
-                    . ', então não há nada para enviar.',
-                422
-            );
-        }
-
-        // O documento confirma idade e dados; sem ele o formulário não conta como enviado.
-        if (!$this->fetchTable('UserDocuments')->daPessoa((int)$identity->id)) {
-            return $this->apiError(
-                'Envie a foto ou o PDF do documento de identidade na etapa "Seus dados" antes de enviar o formulário.',
-                422
-            );
-        }
+    /** Valida e grava as respostas enviadas (parte final de salvarFormulario). */
+    private function gravarRespostas(EntityInterface $preReg, array $questions): Response
+    {
+        $activity = $preReg->activity;
+        $ehEvento = $this->ehEvento($preReg);
 
         $enviadas = [];
         foreach ((array)($this->request->getData('answers') ?? []) as $item) {
@@ -1038,13 +1087,7 @@ class InscricoesController extends ApiController
                 }
                 break;
 
-            case 'texto_curto':
-                if (mb_strlen($valor) > 255) {
-                    return "A resposta da pergunta \"{$q->text}\" passou de 255 caracteres.";
-                }
-                break;
-
-            case 'texto_longo':
+            case 'texto':
                 if (mb_strlen($valor) > 2000) {
                     return "A resposta da pergunta \"{$q->text}\" passou de 2000 caracteres.";
                 }

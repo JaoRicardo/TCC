@@ -70,7 +70,7 @@ class SenhaProvisoriaTest extends RegrasTestCase
         $senha = $this->gerarSenha($this->admin, $this->pessoa)['data']['senha'];
         $token = $this->entrar($this->pessoa->cpf, $senha)['access_token'];
 
-        foreach ([['get', '/api/v1/activities'], ['get', '/api/v1/me/inscricoes'], ['patch', '/api/v1/users/me'], ['get', '/api/v1/me/documento']] as [$metodo, $rota]) {
+        foreach ([['get', '/api/v1/activities'], ['get', '/api/v1/me/inscricoes'], ['patch', '/api/v1/users/me'], ['get', '/api/v1/inscricoes/1/formulario']] as [$metodo, $rota]) {
             $this->comToken($token);
             $this->{$metodo}($rota);
             $this->assertResponseCode(403, "{$metodo} {$rota} deveria ser recusado.");

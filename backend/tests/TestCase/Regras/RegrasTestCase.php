@@ -192,7 +192,7 @@ abstract class RegrasTestCase extends TestCase
         $this->salvar('Questions', [
             'text' => 'Pergunta teste',
             'order' => 1,
-            'type' => 'texto_curto',
+            'type' => 'texto',
             'is_required' => true,
             'accept_generic_answer' => false,
             'subscription_type' => $tipo,

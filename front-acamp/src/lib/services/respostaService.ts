@@ -82,10 +82,3 @@ export async function abrirDocumento(id: number): Promise<{ error?: string }> {
 	setTimeout(() => URL.revokeObjectURL(url), 60_000);
 	return {};
 }
-
-export async function conferirDocumento(id: number, conferido: boolean): Promise<{ data?: DocumentoResumo; error?: string }> {
-	const res = await apiFetch(`/admin/documentos/${id}/conferir`, { method: 'POST', body: JSON.stringify({ conferido }) });
-	const data = await res.json();
-	if (res.ok) return { data: data.data };
-	return { error: data.error || 'Não foi possível marcar o documento.' };
-}

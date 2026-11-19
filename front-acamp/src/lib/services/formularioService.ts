@@ -34,13 +34,12 @@ export interface PerfilConfirmacao {
 	endereco: { rua: string; numero: string; bairro: string; cidade: string; cep: string } | null;
 }
 
-/** Documento de identidade do cadastro (sem o arquivo: ele só abre no painel). */
+/** Documento de identidade enviado com o formulário (sem o arquivo: ele só abre no painel). */
 export interface DocumentoResumo {
 	id: number;
 	nome: string;
 	tipo: 'imagem' | 'pdf';
 	enviado_em: string | null;
-	conferido_em: string | null;
 }
 
 export interface PrazoFormulario {
@@ -99,7 +98,7 @@ export interface FormularioData {
 	total_perguntas: number;
 	prazo: PrazoFormulario | null;
 	perfil: PerfilConfirmacao;
-	/** Sem documento o formulário não é enviado. */
+	/** Documento desta inscrição; sem ele o formulário não é enviado. */
 	documento: DocumentoResumo | null;
 	sections: SecaoFormulario[];
 	pagamento: PagamentoInscricao | null;
@@ -127,19 +126,17 @@ export async function salvarFormulario(
 	return { success: false, error: data.error || 'Erro ao salvar formulário' };
 }
 
-/** Documento de identidade guardado no cadastro (null = ainda não enviou). */
-export async function meuDocumento(): Promise<{ data?: DocumentoResumo | null; error?: string }> {
-	const res = await apiFetch('/me/documento');
-	const data = await res.json().catch(() => ({}));
-	if (res.ok) return { data: data.data ?? null };
-	return { error: data.error || 'Não foi possível carregar o documento.' };
-}
-
-/** Envia (ou troca) a foto/PDF do documento de identidade do cadastro. */
-export async function enviarDocumento(arquivo: File): Promise<{ data?: DocumentoResumo; error?: string }> {
+/**
+ * Envia (ou troca) a foto/PDF do documento de identidade desta inscrição.
+ * Vale só para este formulário: cada inscrição pede o documento de novo.
+ */
+export async function enviarDocumento(
+	preRegId: number | string,
+	arquivo: File
+): Promise<{ data?: DocumentoResumo; error?: string }> {
 	const corpo = new FormData();
 	corpo.append('arquivo', arquivo);
-	const res = await apiFetch('/me/documento', { method: 'POST', body: corpo });
+	const res = await apiFetch(`/inscricoes/${preRegId}/documento`, { method: 'POST', body: corpo });
 	const data = await res.json().catch(() => ({}));
 	if (res.ok) return { data: data.data };
 	if (res.status === 413) return { error: 'O arquivo é grande demais. Envie uma foto ou PDF de até 5 MB.' };

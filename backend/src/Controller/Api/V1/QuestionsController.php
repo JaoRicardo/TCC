@@ -11,10 +11,10 @@ use Cake\Http\Response;
 #[AllowDynamicProperties]
 class QuestionsController extends ApiController
 {
-    // Tipos de resposta suportados pelo form builder. Os 4 primeiros usam texto
-    // livre; os 4 últimos usam opções (sim_nao gera Sim/Não sozinho, os outros 3
-    // pedem uma lista de opções do próprio admin).
-    private const TIPOS_TEXTO   = ['texto_curto', 'texto_longo', 'numero', 'data'];
+    // Tipos de resposta suportados pelo form builder. Os 3 primeiros usam texto
+    // livre ("texto" é um só, de caixa grande); os 4 últimos usam opções (sim_nao
+    // gera Sim/Não sozinho, os outros 3 pedem uma lista de opções do próprio admin).
+    private const TIPOS_TEXTO   = ['texto', 'numero', 'data'];
     private const TIPOS_OPCOES  = ['sim_nao', 'unica_escolha', 'multipla_escolha', 'lista_suspensa'];
     private const TIPOS_VALIDOS = [...self::TIPOS_TEXTO, ...self::TIPOS_OPCOES];
     /** Tipos em que a própria organização escreve as opções (mínimo 2). */
