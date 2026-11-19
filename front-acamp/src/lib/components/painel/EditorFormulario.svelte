@@ -73,7 +73,8 @@
 		| { tipo: 'primeira' }
 		| { tipo: 'secao' }
 		| { tipo: 'importar' }
-		| { tipo: 'renomear'; secaoId: number; nome: string };
+		| { tipo: 'renomear'; secaoId: number; nome: string }
+		| { tipo: 'mudarTipo'; novo: string };
 
 	let { alvo }: { alvo: AlvoFormulario | null } = $props();
 
@@ -387,7 +388,12 @@
 				return false;
 			}
 			const salva = daApi(res.data);
+			const opcoesAntigas = perguntas.find((x) => x.id === q.id)?.opcoes.map((o) => o.id) ?? [];
 			substituir(q.id, salva);
+			// Arquivo não tem opções: as condicionais dela passam a aparecer sempre (o servidor já soltou).
+			if (salva.type === 'arquivo' && opcoesAntigas.length) {
+				perguntas = perguntas.map((x) => (x.dependsOn !== null && opcoesAntigas.includes(x.dependsOn) ? { ...x, dependsOn: null } : x));
+			}
 			if (aberta === q.id) {
 				aberta = salva.id;
 				ed = copia(salva);
@@ -529,6 +535,23 @@
 	}
 
 	// ─── Cartão aberto: tipo e opções ────────────────────────────────────
+	/**
+	 * Virar "Arquivo" (ou deixar de ser) numa pergunta que já tem respostas
+	 * esconde as respostas antigas: o tipo só muda depois de confirmar na janela.
+	 */
+	function escolherTipo(select: HTMLSelectElement) {
+		if (!ed) return;
+		const novo = select.value;
+		const original = perguntas.find((x) => x.id === ed!.id);
+		const cruzaArquivo = !!original && (novo === 'arquivo') !== (original.type === 'arquivo');
+		if (!ed.rascunho && original && original.respostas > 0 && cruzaArquivo) {
+			select.value = ed.type;
+			modal = { tipo: 'mudarTipo', novo };
+			return;
+		}
+		mudarTipo(novo);
+	}
+
 	function mudarTipo(novo: string) {
 		if (!ed) return;
 		let opcoes: OpcaoLocal[];
@@ -992,6 +1015,7 @@
 	let statusSalvo = $derived(operacoes > 0 ? 'salvando' : jaSalvou ? 'Salvo agora' : 'Todas as alterações salvas');
 
 	function linhaDois(q: PerguntaLocal): string {
+		if (q.type === 'arquivo') return 'Arquivo · foto ou PDF';
 		const opcoes = q.type === 'sim_nao' ? [] : textosDasOpcoes(q);
 		return opcoes.length ? `${nomeDoTipo(q.type)} · ${opcoes.join(' · ')}` : nomeDoTipo(q.type);
 	}
@@ -1325,7 +1349,7 @@
 											</label>
 											<label class="campo-rotulado">
 												<span class="fm-rotulo">Tipo de resposta</span>
-												<select class="fm-campo" value={ed.type} onchange={(e) => mudarTipo(e.currentTarget.value)}>
+												<select class="fm-campo" value={ed.type} onchange={(e) => escolherTipo(e.currentTarget)}>
 													{#each TIPOS_PERGUNTA as t}
 														<option value={t.value}>{t.label}</option>
 													{/each}
@@ -1362,6 +1386,16 @@
 												<span class="pilula">○ Sim</span>
 												<span class="pilula">○ Não</span>
 												<span class="sim-nao-nota">Criadas pelo sistema, não dá para editar.</span>
+											</div>
+										{:else if ed.type === 'arquivo'}
+											<div class="arquivo-previa">
+												<span class="fm-rotulo">Como a pessoa vê</span>
+												<div class="arquivo-caixa" aria-hidden="true">
+													<span class="arquivo-pilula">Enviar foto ou PDF</span>
+													<span class="arquivo-arraste">ou arraste o arquivo para cá</span>
+												</div>
+												<strong class="arquivo-regra">Foto ou PDF, até 5 MB.</strong>
+												<span class="arquivo-nota">Um arquivo por pergunta. Cada inscrição envia de novo.</span>
 											</div>
 										{/if}
 
@@ -1599,6 +1633,56 @@
 </div>
 
 <!-- ─── Janelas ─── -->
+{#if modal?.tipo === 'mudarTipo' && ed}
+	{@const novo = modal.novo}
+	{@const original = perguntas.find((x) => x.id === ed?.id)}
+	{@const paraArquivo = novo === 'arquivo'}
+	{@const n = original?.respostas ?? 0}
+	<Janela idTitulo="t-tipo" faixa="linear-gradient(90deg,#9b2c2c,#b69e55)" onfechar={() => (modal = null)}>
+		<h2 id="t-tipo" class="fm-janela-titulo">Mudar o tipo para {nomeDoTipo(novo)}?</h2>
+		<div class="fm-janela-alvo">
+			<strong>{ed.text}</strong>
+			<span>Hoje: {nomeDoTipo(original?.type ?? ed.type)} · {n} {n === 1 ? 'pessoa já respondeu' : 'pessoas já responderam'}</span>
+		</div>
+		<ul class="fm-janela-lista">
+			{#if paraArquivo}
+				<li>
+					{n === 1 ? 'A resposta antiga não serve' : `As ${n} respostas antigas não servem`} como arquivo.
+					{n === 1 ? 'Ela' : 'Elas'} <strong>{n === 1 ? 'deixa' : 'deixam'} de aparecer</strong> na aba Respostas e na planilha.
+				</li>
+				{#each original ? filhosDe(original) : [] as filha (filha.id)}
+					<li>
+						A pergunta condicional <strong>“{filha.text}”</strong> passa a aparecer sempre, porque uma pergunta de Arquivo não
+						pode ter perguntas que dependem dela.
+					</li>
+				{/each}
+			{:else}
+				<li>
+					{n === 1 ? 'O arquivo já enviado' : `Os ${n} arquivos já enviados`}
+					<strong>{n === 1 ? 'deixa' : 'deixam'} de aparecer</strong> na aba Respostas e na planilha.
+				</li>
+			{/if}
+			<li>Quem já enviou não precisa reenviar: a pergunta aparece em branco para essa pessoa.</li>
+			<li>Se precisar da resposta nova de alguém, use “Pedir correção” na aba Respostas.</li>
+		</ul>
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" data-foco-inicial onclick={() => (modal = null)}>
+				Manter o tipo atual
+			</button>
+			<button
+				type="button"
+				class="fm-btn fm-btn--perigo-cheio fm-btn--grande"
+				onclick={() => {
+					mudarTipo(novo);
+					modal = null;
+				}}
+			>
+				Mudar o tipo
+			</button>
+		</div>
+	</Janela>
+{/if}
+
 {#if modal?.tipo === 'excluir' && alvoExclusao}
 	{@const filhas = filhosDe(alvoExclusao)}
 	<Janela idTitulo="t-excluir" faixa="linear-gradient(90deg,#9b2c2c,#b69e55)" travada={ocupadoModal} onfechar={() => (modal = null)}>
@@ -2167,6 +2251,53 @@
 		border: none;
 		border-radius: 0 12px 12px 0;
 		cursor: pointer;
+	}
+
+	/* ─── Prévia do campo de arquivo ─── */
+	.arquivo-previa {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.arquivo-previa .fm-rotulo {
+		color: var(--ouro-texto);
+	}
+
+	.arquivo-caixa {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 16px 18px;
+		background: #f7f2e7;
+		border: 2px dashed #cdb878;
+		border-radius: 12px;
+	}
+
+	.arquivo-pilula {
+		display: inline-flex;
+		align-items: center;
+		height: 44px;
+		padding: 0 18px;
+		font-size: 16px;
+		font-weight: 600;
+		color: var(--azul);
+		background: #ffffff;
+		border: 1.5px solid var(--azul);
+		border-radius: 999px;
+	}
+
+	.arquivo-arraste,
+	.arquivo-nota {
+		font-size: 15px;
+		color: var(--tinta-3);
+	}
+
+	.arquivo-regra {
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--tinta);
 	}
 
 	.icone-tipo {

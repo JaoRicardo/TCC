@@ -35,10 +35,9 @@ class PermissoesService
         'formularios'        => ['Formulários', 'Montar as perguntas dos formulários.', 'servos'],
         // Independente de "formularios": quem cuida da saúde ou da cozinha vê as
         // respostas (alergias, remédios) sem poder mudar as perguntas.
-        'respostas_formularios' => ['Respostas dos formulários', 'Ver as respostas dos formulários, que têm dados de saúde, e baixar as planilhas.', 'servos'],
-        // Documento é dado pessoal sensível: fica numa permissão à parte, e só
-        // aparece na aba Respostas (é enviado com cada formulário).
-        'documentos'         => ['Documentos de identidade', 'Ver os documentos (RG, certidão) que as pessoas enviam com o formulário.', 'servos'],
+        // Inclui os arquivos enviados (documento, receita…), pedir correção e
+        // cancelar inscrição pela aba Respostas.
+        'respostas_formularios' => ['Respostas dos formulários', 'Ver as respostas e os arquivos dos formulários, que têm dados de saúde, baixar as planilhas, pedir correção e cancelar inscrições.', 'servos'],
         'usuarios'           => ['Pessoas e acessos', 'Ver e desativar contas de usuários.', 'pessoas'],
         'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.', 'pessoas'],
     ];
@@ -56,7 +55,6 @@ class PermissoesService
         'inscricoes'         => 'atividades',
         'equipes'            => 'atividades',
         'permissoes'         => 'usuarios',
-        'documentos'         => 'respostas_formularios',
     ];
 
     private $Users;

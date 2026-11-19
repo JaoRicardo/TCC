@@ -8,12 +8,12 @@ use App\Model\Table\UserDocumentsTable;
 use Cake\Http\Response;
 
 /**
- * Documento de identidade (RG, CNH, certidão de nascimento).
+ * Arquivos das perguntas do tipo "arquivo" (documento de identidade, receita…).
  *
- * A pessoa envia o documento junto com o formulário de cada inscrição
- * (POST /inscricoes/{id}/documento, em InscricoesController). No painel, só
- * quem tem a permissão "documentos" abre o arquivo, na aba Respostas. O arquivo
- * fica fora da pasta pública e sai só por esta rota.
+ * A pessoa envia o arquivo ao responder o formulário (POST
+ * /inscricoes/{id}/arquivo, em InscricoesController). No painel, quem vê as
+ * respostas ("respostas_formularios") abre o arquivo, numa aba nova. O arquivo
+ * fica fora da pasta pública e sai só por esta rota, com o token.
  */
 class DocumentosController extends ApiController
 {
@@ -21,19 +21,19 @@ class DocumentosController extends ApiController
     public function arquivo(int $id): Response
     {
         $this->request->allowMethod(['get']);
-        $identity = $this->requirePermissao('documentos');
+        $identity = $this->requirePermissao('respostas_formularios');
         if ($identity instanceof Response) return $identity;
 
         $doc = $this->fetchTable('UserDocuments')->find()->where(['id' => $id])->first();
         $caminho = $doc ? UserDocumentsTable::PASTA . DS . basename((string)$doc->file) : null;
         if (!$doc || !is_file($caminho)) {
-            return $this->apiError('Documento não encontrado', 404);
+            return $this->apiError('Arquivo não encontrado', 404);
         }
 
         return $this->response
             ->withType($doc->mime)
             ->withHeader('Cache-Control', 'private, no-store')
-            ->withHeader('Content-Disposition', 'inline; filename="documento.' . UserDocumentsTable::TIPOS[$doc->mime] . '"')
+            ->withHeader('Content-Disposition', 'inline; filename="arquivo.' . UserDocumentsTable::TIPOS[$doc->mime] . '"')
             ->withFile($caminho);
     }
 }

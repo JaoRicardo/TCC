@@ -182,6 +182,31 @@ export interface FichaPessoa {
     senha_provisoria_em: string | null;
     /** Só para quem tem "Cargos e permissões". */
     telas_liberadas?: string[];
+    /** Registro de alterações: as mais recentes (termina em "Conta criada."). */
+    alteracoes: RegistroDeAlteracoes;
+}
+
+/** Uma linha do registro de alterações da ficha. */
+export interface Alteracao {
+    /** AAAA-MM-DDTHH:mm */
+    quando: string | null;
+    /** Quem fez, ou "Sistema" para o que acontece sozinho. */
+    quem: string;
+    texto: string;
+}
+
+export interface RegistroDeAlteracoes {
+    lista: Alteracao[];
+    /** Quantas existem ao todo (para o "Ver tudo"). */
+    total: number;
+}
+
+/** O registro inteiro ("Ver tudo"). */
+export async function getAlteracoes(userId: number): Promise<{ registro?: RegistroDeAlteracoes; error?: string }> {
+    const res = await apiFetch(`/admin/users/${userId}/alteracoes`);
+    const data = await res.json().catch(() => ({}));
+    if (res.ok) return { registro: data.data };
+    return { error: data.error || 'Não foi possível carregar o registro.' };
 }
 
 export interface DadosDaFicha {
@@ -203,6 +228,8 @@ export interface InscricaoDaPessoa {
     /** Campista, Servo ou Participante de evento. */
     como: string;
     status: string;
+    /** Motivo da correção pedida, do cancelamento pela organização ou da recusa. */
+    motivo: string | null;
     /** A atividade ainda não terminou. */
     andamento: boolean;
 }

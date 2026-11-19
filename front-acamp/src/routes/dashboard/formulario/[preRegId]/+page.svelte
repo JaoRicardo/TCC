@@ -11,6 +11,12 @@
 	 *
 	 * Depois do envio vem o pagamento da taxa, que só é cobrado de quem tem vaga
 	 * (suplente não paga).
+	 *
+	 * Pergunta de arquivo (documento, receita…): o arquivo sobe na hora em que é
+	 * escolhido, e o rascunho guarda só o id que o servidor devolveu.
+	 *
+	 * Correção pedida pela organização: o formulário inteiro fica editável, abre
+	 * na primeira seção e as perguntas marcadas aparecem em destaque.
 	 */
 	import { tick } from 'svelte';
 	import { page } from '$app/stores';
@@ -23,7 +29,11 @@
 		getFormulario,
 		salvarFormulario,
 		iniciarPagamento,
-		enviarDocumento,
+		enviarArquivo,
+		TAMANHO_MAXIMO_ARQUIVO,
+		TIPOS_DE_ARQUIVO,
+		type ArquivoEnviado,
+		type EnvioDeArquivo,
 		type FormularioData,
 		type PerguntaFormulario,
 		type SecaoFormulario
@@ -49,6 +59,10 @@
 	let pagando = $state(false);
 	let erroPagamento = $state('');
 	let topo: HTMLElement | undefined = $state();
+	/** Respostas como estavam no servidor: com correção pedida, mostra o que a pessoa já atualizou. */
+	let originais: Record<number, string> = $state({});
+	/** Acabou de reenviar depois da correção (tela "Correção enviada!"). */
+	let correcaoEnviada = $state(false);
 
 	// ─── Entrar e carregar ───────────────────────────────────────────────
 	$effect(() => {
@@ -80,8 +94,18 @@
 	function aplicar(dados: FormularioData) {
 		form = dados;
 		const doServidor: Record<number, string> = {};
-		for (const s of dados.sections) for (const q of s.questions) doServidor[q.id] = q.answer ?? '';
+		const guardados: Record<number, ArquivoEnviado | null> = {};
+		for (const s of dados.sections) {
+			for (const q of s.questions) {
+				// Arquivo: vale o que está guardado no sistema (mesmo antes do envio do formulário).
+				doServidor[q.id] = q.type === 'arquivo' ? (q.arquivo ? String(q.arquivo.id) : '') : (q.answer ?? '');
+				if (q.type === 'arquivo') guardados[q.id] = q.arquivo;
+			}
+		}
 		respostas = doServidor;
+		originais = { ...doServidor };
+		arquivos = guardados;
+		envios = {};
 		mostrarErros = false;
 
 		if (!dados.formulario_disponivel) return;
@@ -93,10 +117,20 @@
 		const rascunho = lerRascunho();
 		// Rascunho mais novo que o último envio (ou sem envio): continua de onde parou.
 		if (rascunho && (!dados.enviado_em || rascunho.salvoEm > dados.enviado_em)) {
-			for (const [id, valor] of Object.entries(rascunho.respostas)) respostas[Number(id)] = valor;
+			for (const [id, valor] of Object.entries(rascunho.respostas)) {
+				// O arquivo não fica no aparelho: vale o que o sistema guardou.
+				if (Number(id) in guardados) continue;
+				respostas[Number(id)] = valor;
+			}
 			etapa = Math.min(Math.max(0, rascunho.etapa), dados.sections.length + 1);
 			rascunhoAs = horaDe(rascunho.salvoEm);
 			modo = 'preenchendo';
+			return;
+		}
+		// Correção pedida: abre já na primeira seção, com as respostas preenchidas.
+		if (dados.correcao) {
+			modo = 'preenchendo';
+			etapa = dados.sections.length ? 1 : 0;
 			return;
 		}
 		modo = dados.respondido ? 'enviado' : 'preenchendo';
@@ -187,6 +221,7 @@
 	function textoDaResposta(q: PerguntaFormulario): string {
 		const v = String(respostas[q.id] ?? '').trim();
 		if (!v) return '';
+		if (q.type === 'arquivo') return arquivos[q.id] ? `Arquivo enviado: ${arquivos[q.id]!.nome}` : '';
 		if (ehEscolha(q)) {
 			const ids = marcadas(v);
 			return q.options
@@ -226,44 +261,118 @@
 		topo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 	}
 
-	// ─── Documento de identidade ─────────────────────────────────────────
-	let enviandoDocumento = $state(false);
-	let erroDocumento = $state('');
-	/** Tentou continuar sem documento: o bloco fica marcado em vermelho. */
-	let faltaDocumento = $state(false);
+	// ─── Perguntas de arquivo ────────────────────────────────────────────
+	type Envio = {
+		estado: 'enviando' | 'erro';
+		nome: string;
+		pct: number;
+		/** grande/formato: escolher outro; conexao: tentar de novo com o mesmo arquivo. */
+		erro?: 'grande' | 'formato' | 'conexao' | 'servidor';
+		mensagem?: string;
+		arquivo?: File;
+		envio?: EnvioDeArquivo;
+	};
+	/** O arquivo guardado no sistema para cada pergunta de arquivo. */
+	let arquivos: Record<number, ArquivoEnviado | null> = $state({});
+	/** Envio em andamento ou com erro, por pergunta. */
+	let envios: Record<number, Envio> = $state({});
+	/** Perguntas cujo arquivo foi enviado nesta visita (as outras mostram "já está guardado"). */
+	let enviadosAgora: number[] = $state([]);
+	let arrastandoEm: number | null = $state(null);
+	let algumEnviando = $derived(Object.values(envios).some((e) => e.estado === 'enviando'));
 
-	async function escolherDocumento(e: Event & { currentTarget: HTMLInputElement }) {
-		const arquivo = e.currentTarget.files?.[0];
-		e.currentTarget.value = '';
-		if (!arquivo || !form) return;
-		if (arquivo.size > 5 * 1024 * 1024) {
-			erroDocumento = 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
+	const mb = (bytes: number) => `${(bytes / 1024 / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} MB`;
+	const tamanhoLegivel = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : mb(bytes));
+	const extensao = (a: ArquivoEnviado) => (a.tipo === 'pdf' ? 'PDF' : (a.nome.split('.').pop() ?? 'JPG').toUpperCase().slice(0, 4));
+
+	function escolherArquivo(q: PerguntaFormulario, arquivo: File | undefined) {
+		if (!arquivo) return;
+		if (!TIPOS_DE_ARQUIVO.includes(arquivo.type)) {
+			envios[q.id] = {
+				estado: 'erro',
+				nome: arquivo.name,
+				pct: 0,
+				erro: 'formato',
+				mensagem: `Este tipo de arquivo não é aceito (${arquivo.name}). Envie uma foto (JPG, PNG ou WebP) ou um PDF.`
+			};
 			return;
 		}
-		enviandoDocumento = true;
-		erroDocumento = '';
-		try {
-			const res = await enviarDocumento(preRegId, arquivo);
-			if (res.data) {
-				form.documento = res.data;
-				faltaDocumento = false;
-			} else {
-				erroDocumento = res.error || 'Não foi possível enviar o documento.';
-			}
-		} catch {
-			erroDocumento = 'Não foi possível enviar o documento. Verifique sua conexão e tente de novo.';
-		} finally {
-			enviandoDocumento = false;
+		// Confere o tamanho aqui, antes de gastar a internet da pessoa.
+		if (arquivo.size > TAMANHO_MAXIMO_ARQUIVO) {
+			envios[q.id] = {
+				estado: 'erro',
+				nome: arquivo.name,
+				pct: 0,
+				erro: 'grande',
+				mensagem: `O arquivo tem ${mb(arquivo.size)} e o limite é 5 MB. Tire outra foto ou envie um PDF menor.`
+			};
+			return;
+		}
+		subir(q, arquivo);
+	}
+
+	async function subir(q: PerguntaFormulario, arquivo: File) {
+		const envio = enviarArquivo(preRegId, q.id, arquivo, (pct) => {
+			if (envios[q.id]?.estado === 'enviando') envios[q.id].pct = pct;
+		});
+		envios[q.id] = { estado: 'enviando', nome: arquivo.name, pct: 0, arquivo, envio };
+		const r = await envio.resultado;
+		if (r.data) {
+			arquivos[q.id] = r.data;
+			delete envios[q.id];
+			if (!enviadosAgora.includes(q.id)) enviadosAgora = [...enviadosAgora, q.id];
+			responder(q.id, String(r.data.id));
+		} else if (r.cancelado) {
+			delete envios[q.id];
+		} else if (r.conexao) {
+			envios[q.id] = {
+				estado: 'erro',
+				nome: arquivo.name,
+				pct: 0,
+				erro: 'conexao',
+				mensagem: 'Não foi possível enviar o arquivo. Verifique a internet e tente de novo.',
+				arquivo
+			};
+		} else {
+			envios[q.id] = { estado: 'erro', nome: arquivo.name, pct: 0, erro: 'servidor', mensagem: r.error };
 		}
 	}
 
+	function removerArquivo(q: PerguntaFormulario) {
+		arquivos[q.id] = null;
+		responder(q.id, '');
+	}
+
+	function soltarArquivo(q: PerguntaFormulario, e: DragEvent) {
+		e.preventDefault();
+		arrastandoEm = null;
+		escolherArquivo(q, e.dataTransfer?.files?.[0]);
+	}
+
+	// ─── Correção pedida pela organização ────────────────────────────────
+	let correcao = $derived.by(() => {
+		if (!form) return null;
+		return form.correcao;
+	});
+	let idsMarcados = $derived(new Set(correcao?.perguntas ?? []));
+	const marcadaParaCorrigir = (q: PerguntaFormulario) => idsMarcados.has(q.id);
+	const atualizada = (q: PerguntaFormulario) => String(respostas[q.id] ?? '').trim() !== String(originais[q.id] ?? '').trim();
+	/** As perguntas marcadas, na ordem do formulário. */
+	let perguntasMarcadas = $derived(todas.filter((q) => idsMarcados.has(q.id)));
+	/** Etapa (seção) da primeira pergunta marcada. */
+	let etapaDaPrimeiraMarcada = $derived.by(() => {
+		const i = secoes.findIndex((s) => s.questions.some((q) => idsMarcados.has(q.id)));
+		return i >= 0 ? i + 1 : null;
+	});
+
+	async function irParaOQueCorrigir() {
+		if (etapaDaPrimeiraMarcada === null) return;
+		await irPara(etapaDaPrimeiraMarcada);
+		const primeira = perguntasMarcadas.find((q) => secoes[etapaDaPrimeiraMarcada! - 1]?.questions.includes(q));
+		if (primeira) document.getElementById(`q-${primeira.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+	}
+
 	async function proxima() {
-		if (etapa === 0 && !form?.documento) {
-			faltaDocumento = true;
-			await tick();
-			document.getElementById('bloco-documento')?.focus();
-			return;
-		}
 		if (secaoAtual && faltando.length) {
 			mostrarErros = true;
 			await tick();
@@ -279,12 +388,7 @@
 
 	// ─── Envio ───────────────────────────────────────────────────────────
 	async function enviar() {
-		if (!form) return;
-		if (!form.documento) {
-			await irPara(0);
-			faltaDocumento = true;
-			return;
-		}
+		if (!form || algumEnviando) return;
 		// Garante que nenhuma etapa ficou com obrigatória em branco (ex.: rascunho antigo).
 		const comFalta = secoes.findIndex((s) => faltandoNa(s).length > 0);
 		if (comFalta >= 0) {
@@ -302,6 +406,7 @@
 				erroEnvio = res.error ?? '';
 				return;
 			}
+			correcaoEnviada = !!res.correcaoEnviada;
 			apagarRascunho();
 			const novo = await getFormulario(preRegId);
 			if (novo.data) aplicar(novo.data);
@@ -378,6 +483,11 @@
 	let textoDoPrazo = $derived.by(() => {
 		const prazo = form?.prazo;
 		if (!prazo) return '';
+		if (form?.correcao) {
+			return prazo.vencido
+				? `O prazo da correção era ${diaMes(prazo.limite)}. Corrija o quanto antes: sem a correção, a inscrição é recusada no início ${ehEvento ? 'do evento' : 'do acampamento'}.`
+				: `Corrija até ${diaEHora(prazo.limite)}. Sua vaga continua garantida.`;
+		}
 		if (ehEvento) {
 			if (prazo.vencido) return `As inscrições terminaram em ${diaMes(prazo.limite)}.`;
 			if (form?.respondido) return `Inscrição concluída. Dá para alterar as respostas até ${diaEHora(prazo.limite)}.`;
@@ -391,6 +501,7 @@
 
 	let rotuloDoEnvio = $derived.by(() => {
 		if (ehRevisao && erroEnvio !== null) return 'Tentar de novo';
+		if (ehRevisao && form?.correcao) return 'Reenviar formulário';
 		if (ehRevisao) return ehEvento && form && !form.respondido ? 'Enviar e concluir inscrição' : 'Enviar formulário';
 		return etapa === 0 ? 'Está tudo certo, continuar' : 'Próxima etapa →';
 	});
@@ -402,7 +513,8 @@
 		return { type: 'text', inputmode: 'text' };
 	}
 
-	const mensagemDeErro = (q: PerguntaFormulario) => (ehEscolha(q) ? 'Escolha uma opção.' : 'Responda esta pergunta.');
+	const mensagemDeErro = (q: PerguntaFormulario) =>
+		q.type === 'arquivo' ? 'Envie o arquivo.' : ehEscolha(q) ? 'Escolha uma opção.' : 'Responda esta pergunta.';
 
 	function alternarMultipla(q: PerguntaFormulario, opcaoId: number) {
 		const atual = marcadas(respostas[q.id]);
@@ -438,8 +550,120 @@
 {#snippet campo(q: PerguntaFormulario)}
 	{@const erro = comErro.has(q.id)}
 	{@const idErro = `erro-${q.id}`}
-	<div class="pergunta" class:pergunta--filha={ehFilha(q)} id="q-{q.id}">
-		{#if q.type === 'sim_nao' || q.type === 'unica_escolha' || q.type === 'multipla_escolha'}
+	{@const corrigir = marcadaParaCorrigir(q)}
+	<div
+		class="pergunta"
+		class:pergunta--filha={ehFilha(q)}
+		class:pergunta--corrigir={corrigir && !atualizada(q)}
+		class:pergunta--corrigida={corrigir && atualizada(q)}
+		id="q-{q.id}"
+	>
+		{#if corrigir}
+			<span class="selo-corrigir" class:selo-corrigir--ok={atualizada(q)}>
+				{atualizada(q) ? '✓ Resposta atualizada' : 'Corrigir esta resposta'}
+			</span>
+		{/if}
+		{#if q.type === 'arquivo'}
+			{@const guardado = arquivos[q.id]}
+			{@const envio = envios[q.id]}
+			<span class="rotulo" id="rotulo-{q.id}">
+				{q.text}{#if !q.isRequired}<span class="opcional">{' (opcional)'}</span>{/if}
+			</span>
+			{#if envio?.estado === 'enviando'}
+				<div class="arquivo arquivo--enviando" role="status">
+					<span class="arquivo-nome">{envio.nome}</span>
+					<span class="arquivo-progresso-texto">Enviando… <span class="numeros">{envio.pct}%</span></span>
+					<span class="arquivo-barra"><span style="width:{envio.pct}%"></span></span>
+					<button type="button" class="link-acao" onclick={() => envio.envio?.cancelar()}>Cancelar envio</button>
+				</div>
+			{:else if envio?.estado === 'erro'}
+				<div class="arquivo arquivo--erro" role="alert">
+					<span>{envio.mensagem}</span>
+					{#if envio.erro === 'conexao' && envio.arquivo}
+						<button type="button" class="btn btn--contorno" onclick={() => subir(q, envio.arquivo!)}>Tentar de novo</button>
+					{:else}
+						<label class="btn btn--contorno">
+							<input
+								type="file"
+								class="escondido"
+								accept="image/jpeg,image/png,image/webp,application/pdf"
+								onchange={(e) => {
+									escolherArquivo(q, e.currentTarget.files?.[0]);
+									e.currentTarget.value = '';
+								}}
+							/>
+							Escolher outro arquivo
+						</label>
+					{/if}
+				</div>
+			{:else if guardado}
+				<div class="arquivo arquivo--ok">
+					<div class="arquivo-linha">
+						<span class="arquivo-icone" aria-hidden="true">{extensao(guardado)}</span>
+						<span class="arquivo-dados">
+							<span class="arquivo-nome">{guardado.nome}</span>
+							<span class="arquivo-meta">
+								{tamanhoLegivel(guardado.tamanho)}{guardado.enviado_em
+									? ` · enviado em ${diaMes(guardado.enviado_em)} às ${horaDe(guardado.enviado_em)}`
+									: ''}
+							</span>
+						</span>
+					</div>
+					{#if !enviadosAgora.includes(q.id)}
+						<span class="arquivo-guardado">✓ Este arquivo já está guardado no sistema. Não precisa enviar de novo.</span>
+					{/if}
+					<div class="arquivo-acoes">
+						<label class="btn" class:btn--ouro={corrigir} class:btn--contorno={!corrigir}>
+							<input
+								type="file"
+								class="escondido"
+								accept="image/jpeg,image/png,image/webp,application/pdf"
+								aria-labelledby="rotulo-{q.id}"
+								onchange={(e) => {
+									escolherArquivo(q, e.currentTarget.files?.[0]);
+									e.currentTarget.value = '';
+								}}
+							/>
+							Trocar arquivo
+						</label>
+						{#if !q.isRequired}
+							<button type="button" class="btn btn--perigo" onclick={() => removerArquivo(q)}>Remover</button>
+						{/if}
+					</div>
+				</div>
+			{:else}
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					class="arquivo arquivo--vazio"
+					class:com-erro={erro}
+					class:arquivo--arrastando={arrastandoEm === q.id}
+					ondragover={(e) => {
+						e.preventDefault();
+						arrastandoEm = q.id;
+					}}
+					ondragleave={() => (arrastandoEm = null)}
+					ondrop={(e) => soltarArquivo(q, e)}
+				>
+					<label class="btn btn--contorno btn--arquivo">
+						<input
+							type="file"
+							class="escondido"
+							accept="image/jpeg,image/png,image/webp,application/pdf"
+							aria-labelledby="rotulo-{q.id}"
+							aria-invalid={erro || undefined}
+							aria-describedby={erro ? idErro : undefined}
+							onchange={(e) => {
+								escolherArquivo(q, e.currentTarget.files?.[0]);
+								e.currentTarget.value = '';
+							}}
+						/>
+						Enviar foto ou PDF
+					</label>
+					<span class="arquivo-arraste">ou arraste o arquivo para cá</span>
+				</div>
+			{/if}
+			<span class="nota nota--pequena">Foto (JPG, PNG ou WebP) ou PDF, até 5 MB.</span>
+		{:else if q.type === 'sim_nao' || q.type === 'unica_escolha' || q.type === 'multipla_escolha'}
 			{@const multipla = q.type === 'multipla_escolha'}
 			<span class="rotulo" id="rotulo-{q.id}">
 				{q.text}{#if !q.isRequired}<span class="opcional">{' (opcional)'}</span>{/if}
@@ -540,7 +764,7 @@
 						{@const v = textoDaResposta(q)}
 						<div class:revisao-filha={ehFilha(q)}>
 							<dt>{ehFilha(q) ? '↳ ' : ''}{q.text}</dt>
-							<dd class:sem-resposta={!v}>{v || 'Não respondeu'}</dd>
+							<dd class:sem-resposta={!v}>{v || (q.type === 'arquivo' ? 'Não enviado' : 'Não respondeu')}</dd>
 						</div>
 					{/each}
 				</dl>
@@ -639,17 +863,38 @@
 					{:else}
 						<h2>{form.formulario_montado ? 'Formulário indisponível' : 'O formulário ainda não está pronto'}</h2>
 						<p class="nota nota--centro">{form.motivo_indisponivel}</p>
-						<span class="selo" class:selo--perigo={form.status === 'Retirado do sorteio'}><span class="selo-ponto"></span>{form.status}</span>
+						<span class="selo" class:selo--perigo={['Retirado do sorteio', 'Cancelada pela organização', 'Recusada'].includes(form.status)}
+							><span class="selo-ponto"></span>{form.status}</span
+						>
+						{#if form.status === 'Cancelada pela organização' || form.status === 'Recusada'}
+							<p class="nota nota--centro">Se tiver alguma dúvida, fale com a organização.</p>
+						{/if}
 					{/if}
 					<a href="/dashboard/formularios" class="btn btn--leve">Voltar para Meus Formulários</a>
 				</section>
 			{:else}
 				{#if form.prazo}
 					<div class="faixa-prazo">
-						<span class="selo" class:selo--aviso={form.status === 'Suplente' || form.status === 'Inscrição em andamento'}
-							><span class="selo-ponto"></span>{form.status}</span
+						<span
+							class="selo"
+							class:selo--aviso={['Suplente', 'Inscrição em andamento', 'Correção pedida'].includes(form.status)}
+							class:selo--perigo={form.status === 'Correção atrasada'}><span class="selo-ponto"></span>{form.status}</span
 						>
 						<span>{textoDoPrazo}</span>
+					</div>
+				{/if}
+
+				{#if correcao && modo === 'preenchendo'}
+					<div class="aviso-correcao" role="note">
+						<strong>A organização pediu uma correção{correcao.pedida_em ? ` em ${diaMes(correcao.pedida_em)}` : ''}</strong>
+						<span class="aviso-correcao-motivo">“{correcao.motivo}”</span>
+						<span>
+							Você pode mudar qualquer resposta.{#if perguntasMarcadas.length}{' '}O que precisa de atenção: {perguntasMarcadas.map((q) => q.text).join(', ')}.{/if}{' '}
+							Depois, envie de novo{correcao.prazo && !correcao.atrasada ? ` até ${diaMes(correcao.prazo)}` : ''}.
+						</span>
+						{#if etapaDaPrimeiraMarcada !== null && etapa !== etapaDaPrimeiraMarcada}
+							<button type="button" class="btn btn--leve" onclick={irParaOQueCorrigir}>Ir para o que precisa corrigir</button>
+						{/if}
 					</div>
 				{/if}
 
@@ -664,13 +909,22 @@
 					<!-- ─── Enviado ─── -->
 					<section class="cartao centro">
 						<span class="check" aria-hidden="true">✓</span>
-						<h2>{ehEvento ? 'Inscrição concluída!' : 'Formulário enviado!'}</h2>
-						<p class="nota nota--centro">
-							{form.enviado_em ? `Recebemos as respostas em ${diaEHora(form.enviado_em)}.` : 'Recebemos as respostas.'}
-							{#if form.editavel && form.prazo}
-								Dá para alterar até {diaEHora(form.prazo.limite)}{ehEvento ? ', quando as inscrições fecham' : ''}.
-							{/if}
-						</p>
+						{#if correcaoEnviada}
+							<h2>Correção enviada!</h2>
+							<p class="nota nota--centro">
+								Recebemos o formulário corrigido. Sua situação voltou a Formulário Enviado{form.editavel && form.prazo
+									? `, e você ainda pode alterar até ${diaEHora(form.prazo.limite)}`
+									: ''}.
+							</p>
+						{:else}
+							<h2>{ehEvento ? 'Inscrição concluída!' : 'Formulário enviado!'}</h2>
+							<p class="nota nota--centro">
+								{form.enviado_em ? `Recebemos as respostas em ${diaEHora(form.enviado_em)}.` : 'Recebemos as respostas.'}
+								{#if form.editavel && form.prazo}
+									Dá para alterar até {diaEHora(form.prazo.limite)}{ehEvento ? ', quando as inscrições fecham' : ''}.
+								{/if}
+							</p>
+						{/if}
 						<span class="selo"><span class="selo-ponto"></span>{ehEvento ? 'Inscrito(a)' : 'Formulário Enviado'}</span>
 						<div class="acoes-centro">
 							{#if form.editavel}
@@ -755,53 +1009,6 @@
 							</dl>
 							<p class="nota">Algo errado ou mudou? Corrija em <a href="/dashboard/perfil">Meu cadastro</a> — as respostas ficam guardadas.</p>
 
-							<div
-								class="documento"
-								class:documento--ok={!!form.documento}
-								class:documento--falta={faltaDocumento && !form.documento}
-								id="bloco-documento"
-								tabindex="-1"
-								role={faltaDocumento && !form.documento ? 'alert' : undefined}
-							>
-								<div class="documento-textos">
-									<span class="documento-titulo">
-										{ehMirim ? 'Documento de quem irá participar do acampamento' : 'Documento de identidade'}
-									</span>
-									{#if form.documento}
-										<span class="nota">
-											✓ Enviado{form.documento.enviado_em ? ` em ${diaMes(form.documento.enviado_em)}` : ''} · {form.documento.nome}.
-											Vale só para esta inscrição.
-										</span>
-									{:else}
-										<span class="nota">
-											{ehMirim
-												? 'Foto ou PDF do RG ou da certidão de nascimento da criança, para a organização conferir a idade.'
-												: 'Foto ou PDF do RG, da CNH ou de outro documento com foto e data de nascimento, para a organização conferir seus dados.'}
-											Só a organização vê. A cada inscrição o documento é pedido de novo.
-										</span>
-									{/if}
-									{#if faltaDocumento && !form.documento}
-										<span class="erro-campo"><span class="erro-icone" aria-hidden="true">!</span>Envie o documento para continuar.</span>
-									{/if}
-									{#if erroDocumento}
-										<span class="erro-campo" role="alert"><span class="erro-icone" aria-hidden="true">!</span>{erroDocumento}</span>
-									{/if}
-								</div>
-								<label class="btn" class:btn--ouro={!form.documento} class:btn--leve={!!form.documento} class:ocupado={enviandoDocumento}>
-									<input
-										type="file"
-										class="escondido"
-										accept="image/jpeg,image/png,image/webp,application/pdf"
-										disabled={enviandoDocumento}
-										onchange={escolherDocumento}
-									/>
-									{#if enviandoDocumento}
-										<span class="spinner spinner--pequeno"></span>Enviando...
-									{:else}
-										{form.documento ? 'Trocar documento' : 'Enviar foto ou PDF'}
-									{/if}
-								</label>
-							</div>
 						{:else if secaoAtual}
 							<div class="cartao-cabeca">
 								<h2>{secaoAtual.title}</h2>
@@ -853,7 +1060,7 @@
 									type="button"
 									class="btn btn--ouro"
 									class:btn--largo={etapa === 0 || ehRevisao}
-									disabled={enviando}
+									disabled={enviando || (ehRevisao && algumEnviando)}
 									onclick={proxima}
 								>
 									{#if enviando}<span class="spinner spinner--pequeno"></span>Enviando...{:else}{rotuloDoEnvio}{/if}
@@ -1243,52 +1450,211 @@
 		overflow-wrap: anywhere;
 	}
 
-	/* ─── Documento ─── */
-	.documento {
+	/* ─── Campo de arquivo ─── */
+	.arquivo {
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+		padding: 16px;
+		background: #ffffff;
+		border-radius: 12px;
+		font-size: 16px;
+	}
+
+	.arquivo--vazio {
+		align-items: center;
+		padding: 20px 16px;
+		text-align: center;
+		border: 2px dashed #cdb878;
+	}
+
+	.arquivo--arrastando {
+		background: #fbf6e6;
+		border-color: var(--azul);
+	}
+
+	.arquivo--vazio.com-erro {
+		border-style: dashed;
+	}
+
+	.btn--arquivo {
+		position: relative;
+		border-color: var(--azul);
+	}
+
+	.arquivo-arraste {
+		font-size: 15px;
+		color: var(--tinta-3);
+	}
+
+	.arquivo--enviando {
+		border: 1.5px solid #c4cfe6;
+	}
+
+	.arquivo-progresso-texto {
+		color: var(--tinta-2);
+	}
+
+	.numeros {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.arquivo-barra {
+		display: block;
+		height: 8px;
+		background: var(--borda-suave);
+		border-radius: 999px;
+		overflow: hidden;
+	}
+
+	.arquivo-barra span {
+		display: block;
+		height: 100%;
+		background: var(--azul);
+		transition: width 0.2s;
+	}
+
+	.link-acao {
+		align-self: flex-start;
+		padding: 0;
+		font-size: 15px;
+		font-weight: 600;
+		color: var(--azul);
+		background: none;
+		border: none;
+		text-decoration: underline;
+		cursor: pointer;
+	}
+
+	.arquivo--ok {
+		border: 1.5px solid #b9d9c4;
+	}
+
+	.arquivo-linha {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.arquivo-icone {
+		flex: 0 0 40px;
+		height: 48px;
+		display: flex;
+		align-items: flex-end;
+		justify-content: center;
+		padding-bottom: 6px;
+		box-sizing: border-box;
+		font-size: 11px;
+		font-weight: 700;
+		color: var(--azul);
+		background: #eef1f7;
+		border: 1.5px solid #c4cfe6;
+		border-radius: 4px 12px 4px 4px;
+	}
+
+	.arquivo-dados {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		min-width: 0;
+	}
+
+	.arquivo-nome {
+		font-weight: 600;
+		color: var(--tinta);
+		overflow-wrap: anywhere;
+	}
+
+	.arquivo-meta {
+		font-size: 15px;
+		color: var(--tinta-3);
+	}
+
+	.arquivo-guardado {
+		font-size: 15px;
+		font-weight: 600;
+		color: #1b5236;
+	}
+
+	.arquivo-acoes {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: center;
-		justify-content: space-between;
-		gap: 14px;
-		padding: 16px 18px;
-		background: #ffffff;
-		border: 1.5px dashed var(--ouro);
+		gap: 10px;
+	}
+
+	.arquivo-acoes .btn,
+	.arquivo--erro .btn {
+		position: relative;
+		height: 44px;
+		align-self: flex-start;
+	}
+
+	.btn--perigo {
+		color: #842424;
+		border-color: #b33a3a;
+	}
+
+	.arquivo--erro {
+		color: #842424;
+		background: #f6e2df;
+		border: 1px solid #e6bdb6;
+	}
+
+	.nota--pequena {
+		font-size: 15px;
+	}
+
+	/* ─── Correção pedida ─── */
+	.aviso-correcao {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		padding: 14px 16px;
+		font-size: 16px;
+		line-height: 1.45;
+		color: #6a480c;
+		background: #fbf0d6;
+		border: 1px solid #ebd39c;
 		border-radius: 12px;
 	}
 
-	.documento--ok {
-		border-style: solid;
-		border-color: #b9d9c4;
-		background: #f4faf6;
+	.aviso-correcao-motivo {
+		font-style: italic;
+		color: var(--tinta-2);
 	}
 
-	.documento--falta {
-		border-style: solid;
-		border-color: var(--vermelho);
-		background: #fdf4f2;
+	.pergunta--corrigir,
+	.pergunta--corrigida {
+		padding: 14px 16px;
+		border-radius: 12px;
 	}
 
-	.documento-textos {
-		flex: 1 1 260px;
-		display: flex;
-		flex-direction: column;
-		gap: 6px;
+	.pergunta--corrigir {
+		background: #fff8e6;
+		box-shadow: inset 0 0 0 1.5px #ebd39c;
 	}
 
-	.documento-titulo {
-		font-size: 18px;
-		font-weight: 600;
-		color: var(--tinta);
+	.pergunta--corrigida {
+		background: #f1f8f3;
+		box-shadow: inset 0 0 0 1.5px #b9d9c4;
 	}
 
-	.documento .btn {
-		flex: 0 0 auto;
-		position: relative;
+	.selo-corrigir {
+		align-self: flex-start;
+		padding: 2px 8px;
+		font-size: 12px;
+		font-weight: 700;
+		letter-spacing: 0.06em;
+		text-transform: uppercase;
+		color: #6a480c;
+		background: #f6e3b5;
+		border-radius: 999px;
 	}
 
-	.ocupado {
-		cursor: progress;
-		opacity: 0.7;
+	.selo-corrigir--ok {
+		color: #1b5236;
+		background: #d6ecdd;
 	}
 
 	/* ─── Perguntas ─── */

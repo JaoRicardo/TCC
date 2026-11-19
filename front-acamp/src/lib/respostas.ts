@@ -58,6 +58,8 @@ export function marcou(p: PessoaComRespostas, perguntaId: number, opcaoId: numbe
 export function textoDaResposta(pergunta: PerguntaDoFormulario, pessoa: PessoaComRespostas): string {
 	const bruta = pessoa.respostas[String(pergunta.id)];
 	if (bruta === undefined || bruta === null || bruta === '') return '';
+	// Arquivo: a planilha e a tabela dizem só se foi enviado (o arquivo abre pelo painel).
+	if (pergunta.type === 'arquivo') return pessoa.arquivos[String(pergunta.id)] ? 'Enviado' : '';
 	if (TIPOS_DE_ESCOLHA.includes(pergunta.type)) {
 		const ids = opcoesMarcadas(bruta);
 		// Opção removida do formulário: a escolha deixa de aparecer.
@@ -71,6 +73,12 @@ export function textoDaResposta(pergunta: PerguntaDoFormulario, pessoa: PessoaCo
 		return `${d}/${m}/${a}`;
 	}
 	return bruta;
+}
+
+/** O arquivo enviado na pergunta de arquivo, se houver. */
+export function arquivoDa(pergunta: PerguntaDoFormulario, pessoa: PessoaComRespostas) {
+	if (pergunta.type !== 'arquivo' || !pessoa.respostas[String(pergunta.id)]) return null;
+	return pessoa.arquivos[String(pergunta.id)] ?? null;
 }
 
 /** A pergunta vale para a pessoa? Condicional só vale se ela marcou a opção da pai. */

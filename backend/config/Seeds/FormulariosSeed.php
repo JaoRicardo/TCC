@@ -27,6 +27,8 @@ class FormulariosSeed extends BaseSeed
 
     private const PERGUNTAS = [
         'Informações Pessoais' => [
+            // Foto ou PDF do RG/CNH/certidão: pergunta comum, que a organização pode editar ou excluir.
+            ['texto' => 'Documento de identidade', 'tipo' => 'arquivo', 'obrigatoria' => true],
             ['texto' => 'Ponto de referência', 'tipo' => 'texto', 'obrigatoria' => true],
             ['texto' => 'Quem ficará na sua casa durante o acampamento? Nome e telefone.', 'tipo' => 'texto', 'obrigatoria' => true],
         ],

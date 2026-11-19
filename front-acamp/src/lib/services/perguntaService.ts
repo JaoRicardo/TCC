@@ -9,7 +9,8 @@ export const TIPOS_PERGUNTA = [
 	{ value: 'sim_nao', label: 'Sim / Não', icone: 'S/N' },
 	{ value: 'unica_escolha', label: 'Escolha única', icone: '◉' },
 	{ value: 'multipla_escolha', label: 'Múltipla escolha', icone: '✓' },
-	{ value: 'lista_suspensa', label: 'Lista suspensa', icone: '▾' }
+	{ value: 'lista_suspensa', label: 'Lista suspensa', icone: '▾' },
+	{ value: 'arquivo', label: 'Arquivo', icone: '↑' }
 ];
 
 export const TIPOS_COM_OPCOES = ['unica_escolha', 'multipla_escolha', 'lista_suspensa'];

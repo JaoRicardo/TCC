@@ -8,17 +8,19 @@ use Cake\ORM\Table;
 use Psr\Http\Message\UploadedFileInterface;
 
 /**
- * Documento de identidade enviado com o formulário de cada inscrição (ver as
- * migrações CreateUserDocuments e LinkUserDocumentsToPreRegistrations). Cada
- * inscrição pede o seu: o documento não fica no cadastro nem passa de um
- * formulário para outro. Vale o mais recente; os trocados ficam com exclusão lógica.
+ * Arquivos enviados nas perguntas do tipo "arquivo" (documento de identidade,
+ * receita…), ligados à inscrição e à pergunta (ver as migrações
+ * CreateUserDocuments, LinkUserDocumentsToPreRegistrations e AddArquivoQuestions).
+ * O arquivo sobe na hora em que a pessoa escolhe; a resposta da pergunta
+ * (answers.answer) guarda o id dele quando o formulário é enviado. Cada
+ * inscrição envia de novo. Trocar o arquivo deixa o anterior com exclusão lógica.
  */
 class UserDocumentsTable extends Table
 {
     /** Pasta privada dos arquivos (fora de webroot: não há URL pública). */
     public const PASTA = ROOT . DS . 'storage' . DS . 'documentos';
 
-    private const TAMANHO_MAXIMO = 5 * 1024 * 1024;
+    public const TAMANHO_MAXIMO = 5 * 1024 * 1024;
     public const TIPOS = [
         'image/jpeg'      => 'jpg',
         'image/png'       => 'png',
@@ -41,53 +43,56 @@ class UserDocumentsTable extends Table
         $this->belongsTo('PreRegistrations', [
             'foreignKey' => 'pre_registration_id',
         ]);
+        $this->belongsTo('Questions', [
+            'foreignKey' => 'question_id',
+        ]);
     }
 
-    /** O documento enviado com o formulário desta inscrição, ou null. */
-    public function daInscricao(int $preRegId): ?EntityInterface
+    /** O arquivo atual de uma pergunta nesta inscrição (o último enviado), ou null. */
+    public function daResposta(int $preRegId, int $questionId): ?EntityInterface
     {
         return $this->find()
-            ->where(['pre_registration_id' => $preRegId, 'deleted IS' => null])
+            ->where(['pre_registration_id' => $preRegId, 'question_id' => $questionId, 'deleted IS' => null])
             ->orderBy(['id' => 'DESC'])
             ->first();
     }
 
     /**
-     * Documentos de várias inscrições de uma vez.
+     * Os arquivos atuais de várias inscrições de uma vez.
      *
      * @param list<int> $preRegIds
-     * @return array<int, EntityInterface> id da inscrição => documento
+     * @return array<int, array<int, EntityInterface>> id da inscrição => id da pergunta => arquivo
      */
     public function dasInscricoes(array $preRegIds): array
     {
         if (!$preRegIds) return [];
-        $porInscricao = [];
+        $mapa = [];
         $docs = $this->find()
-            ->where(['pre_registration_id IN' => $preRegIds, 'deleted IS' => null])
+            ->where(['pre_registration_id IN' => $preRegIds, 'question_id IS NOT' => null, 'deleted IS' => null])
             ->orderBy(['id' => 'ASC'])
             ->all();
         foreach ($docs as $d) {
-            $porInscricao[(int)$d->pre_registration_id] = $d;
+            $mapa[(int)$d->pre_registration_id][(int)$d->question_id] = $d;
         }
 
-        return $porInscricao;
+        return $mapa;
     }
 
     /**
-     * Confere e guarda o arquivo como o documento da inscrição. Foto (JPG, PNG,
-     * WebP) ou PDF de até 5 MB; o tipo é conferido pelo conteúdo, não pelo nome.
-     * O anterior desta inscrição, se houver, sai com exclusão lógica.
+     * Confere e guarda o arquivo como a resposta da pergunta nesta inscrição.
+     * Foto (JPG, PNG, WebP) ou PDF de até 5 MB; o tipo é conferido pelo
+     * conteúdo, não pelo nome. O anterior desta pergunta sai com exclusão lógica.
      *
-     * @return \Cake\Datasource\EntityInterface|string o documento, ou a mensagem de erro
+     * @return \Cake\Datasource\EntityInterface|string o arquivo, ou a mensagem de erro
      */
-    public function guardar(?UploadedFileInterface $arquivo, int $userId, int $preRegId): EntityInterface|string
+    public function guardar(?UploadedFileInterface $arquivo, int $userId, int $preRegId, int $questionId): EntityInterface|string
     {
         if (!$arquivo || $arquivo->getError() === UPLOAD_ERR_NO_FILE) {
-            return 'Escolha a foto ou o PDF do documento.';
+            return 'Escolha a foto ou o PDF.';
         }
         if ($arquivo->getError() === UPLOAD_ERR_INI_SIZE || $arquivo->getError() === UPLOAD_ERR_FORM_SIZE
             || $arquivo->getSize() > self::TAMANHO_MAXIMO) {
-            return 'O arquivo passou de 5 MB. Tire uma foto com menos resolução ou envie um PDF menor.';
+            return 'O arquivo passou de 5 MB. Tire outra foto ou envie um PDF menor.';
         }
         if ($arquivo->getError() !== UPLOAD_ERR_OK) {
             return 'Não foi possível receber o arquivo. Tente de novo.';
@@ -96,7 +101,10 @@ class UserDocumentsTable extends Table
         $temporario = $arquivo->getStream()->getMetadata('uri');
         $mime = $temporario ? (new \finfo(FILEINFO_MIME_TYPE))->file($temporario) : null;
         if (!isset(self::TIPOS[$mime])) {
-            return 'Envie uma foto (JPG, PNG ou WebP) ou um PDF do documento.';
+            $nome = (string)$arquivo->getClientFilename();
+
+            return 'Este tipo de arquivo não é aceito' . ($nome !== '' ? " ({$nome})" : '')
+                . '. Envie uma foto (JPG, PNG ou WebP) ou um PDF.';
         }
 
         if (!is_dir(self::PASTA)) {
@@ -105,21 +113,56 @@ class UserDocumentsTable extends Table
         $nomeGuardado = bin2hex(random_bytes(16)) . '.' . self::TIPOS[$mime];
         $arquivo->moveTo(self::PASTA . DS . $nomeGuardado);
 
-        return $this->getConnection()->transactional(function () use ($userId, $preRegId, $arquivo, $mime, $nomeGuardado) {
-            $this->updateAll(['deleted' => date('Y-m-d H:i:s')], ['pre_registration_id' => $preRegId, 'deleted IS' => null]);
+        return $this->getConnection()->transactional(function () use ($userId, $preRegId, $questionId, $arquivo, $mime, $nomeGuardado) {
+            $this->updateAll(
+                ['deleted' => date('Y-m-d H:i:s')],
+                ['pre_registration_id' => $preRegId, 'question_id' => $questionId, 'deleted IS' => null]
+            );
 
             return $this->saveOrFail($this->newEntity([
                 'user_id'             => $userId,
                 'pre_registration_id' => $preRegId,
+                'question_id'         => $questionId,
                 'file'                => $nomeGuardado,
-                'original_name'       => mb_substr((string)$arquivo->getClientFilename(), 0, 255) ?: 'documento',
+                'original_name'       => mb_substr((string)$arquivo->getClientFilename(), 0, 255) ?: 'arquivo',
                 'mime'                => $mime,
                 'size'                => (int)$arquivo->getSize(),
             ], ['accessibleFields' => ['*' => true]]));
         });
     }
 
-    /** Dados do documento para a tela (nunca o caminho do arquivo). */
+    /**
+     * Apaga do disco os arquivos de formulários que nunca foram enviados, 30 dias
+     * depois do início da atividade (o prazo do formulário nunca passa do início).
+     * A linha fica, com exclusão lógica.
+     *
+     * @return int quantos arquivos foram apagados
+     */
+    public function limparNaoEnviados(): int
+    {
+        $antigos = $this->find()
+            ->innerJoinWith('PreRegistrations.Activities')
+            ->where([
+                'UserDocuments.file !='           => '',
+                'PreRegistrations.form_submitted' => false,
+                'Activities.start_date <'         => date('Y-m-d H:i:s', strtotime('-30 days')),
+            ])
+            ->all();
+
+        $apagados = 0;
+        foreach ($antigos as $doc) {
+            $caminho = self::PASTA . DS . basename((string)$doc->file);
+            if (is_file($caminho)) {
+                unlink($caminho);
+                $apagados++;
+            }
+            $this->updateAll(['file' => '', 'deleted' => $doc->deleted ?? date('Y-m-d H:i:s')], ['id' => $doc->id]);
+        }
+
+        return $apagados;
+    }
+
+    /** Dados do arquivo para a tela (nunca o caminho do arquivo). */
     public static function resumo(?EntityInterface $doc): ?array
     {
         if (!$doc) return null;
@@ -128,6 +171,7 @@ class UserDocumentsTable extends Table
             'id'         => (int)$doc->id,
             'nome'       => $doc->original_name,
             'tipo'       => $doc->mime === 'application/pdf' ? 'pdf' : 'imagem',
+            'tamanho'    => (int)$doc->size,
             'enviado_em' => $doc->created?->format('Y-m-d\TH:i'),
         ];
     }

@@ -1,4 +1,4 @@
-import { apiFetch } from '$lib/api';
+import { apiFetch, API_BASE_URL } from '$lib/api';
 
 export interface OpcaoPergunta {
 	id: number;
@@ -13,7 +13,10 @@ export interface PerguntaFormulario {
 	order: number;
 	dependsOnOptionId: number | null;
 	options: OpcaoPergunta[];
+	/** Escolha: id da opção (múltipla: JSON de ids). Arquivo: id do arquivo. */
 	answer: string | null;
+	/** Pergunta de arquivo: o arquivo atual (já sobe ao ser escolhido, antes do envio). */
+	arquivo: ArquivoEnviado | null;
 }
 
 export interface SecaoFormulario {
@@ -34,12 +37,26 @@ export interface PerfilConfirmacao {
 	endereco: { rua: string; numero: string; bairro: string; cidade: string; cep: string } | null;
 }
 
-/** Documento de identidade enviado com o formulário (sem o arquivo: ele só abre no painel). */
-export interface DocumentoResumo {
+/** Arquivo enviado numa pergunta do tipo "arquivo" (sem o arquivo em si: ele só abre no painel). */
+export interface ArquivoEnviado {
 	id: number;
 	nome: string;
 	tipo: 'imagem' | 'pdf';
+	/** Em bytes. */
+	tamanho: number;
 	enviado_em: string | null;
+}
+
+/** Pedido de correção aberto (a pessoa não vê o nome de quem pediu). */
+export interface CorrecaoPedida {
+	id: number;
+	pedida_em: string | null;
+	motivo: string;
+	/** Perguntas que a organização marcou para corrigir. */
+	perguntas: number[];
+	/** Corrigir até (AAAA-MM-DDTHH:mm). */
+	prazo: string | null;
+	atrasada: boolean;
 }
 
 export interface PrazoFormulario {
@@ -98,8 +115,8 @@ export interface FormularioData {
 	total_perguntas: number;
 	prazo: PrazoFormulario | null;
 	perfil: PerfilConfirmacao;
-	/** Documento desta inscrição; sem ele o formulário não é enviado. */
-	documento: DocumentoResumo | null;
+	/** A organização pediu correção: o formulário reabre até o início da atividade. */
+	correcao: CorrecaoPedida | null;
 	sections: SecaoFormulario[];
 	pagamento: PagamentoInscricao | null;
 }
@@ -116,31 +133,69 @@ export async function getFormulario(
 export async function salvarFormulario(
 	preRegId: number | string,
 	answers: { question_id: number; answer: string }[]
-): Promise<{ success: boolean; error?: string; pagamento?: PagamentoInscricao }> {
+): Promise<{ success: boolean; error?: string; pagamento?: PagamentoInscricao; correcaoEnviada?: boolean }> {
 	const res = await apiFetch(`/inscricoes/${preRegId}/formulario`, {
 		method: 'POST',
 		body: JSON.stringify({ answers })
 	});
 	const data = await res.json();
-	if (res.ok) return { success: true, pagamento: data.pagamento };
+	if (res.ok) return { success: true, pagamento: data.pagamento, correcaoEnviada: !!data.correcao_enviada };
 	return { success: false, error: data.error || 'Erro ao salvar formulário' };
 }
 
+/** Foto ou PDF, até 5 MB (o servidor confere de novo pelo conteúdo). */
+export const TAMANHO_MAXIMO_ARQUIVO = 5 * 1024 * 1024;
+export const TIPOS_DE_ARQUIVO = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+
+/** Envio em andamento: `cancelar()` interrompe; `resultado` diz como terminou. */
+export interface EnvioDeArquivo {
+	cancelar: () => void;
+	resultado: Promise<{ data?: ArquivoEnviado; error?: string; conexao?: boolean; cancelado?: boolean }>;
+}
+
 /**
- * Envia (ou troca) a foto/PDF do documento de identidade desta inscrição.
- * Vale só para este formulário: cada inscrição pede o documento de novo.
+ * Envia o arquivo de uma pergunta na hora em que a pessoa escolhe. Usa
+ * XMLHttpRequest (e não fetch) para mostrar o progresso do envio.
  */
-export async function enviarDocumento(
+export function enviarArquivo(
 	preRegId: number | string,
-	arquivo: File
-): Promise<{ data?: DocumentoResumo; error?: string }> {
-	const corpo = new FormData();
-	corpo.append('arquivo', arquivo);
-	const res = await apiFetch(`/inscricoes/${preRegId}/documento`, { method: 'POST', body: corpo });
-	const data = await res.json().catch(() => ({}));
-	if (res.ok) return { data: data.data };
-	if (res.status === 413) return { error: 'O arquivo é grande demais. Envie uma foto ou PDF de até 5 MB.' };
-	return { error: data.error || 'Não foi possível enviar o documento.' };
+	questionId: number,
+	arquivo: File,
+	progresso: (pct: number) => void
+): EnvioDeArquivo {
+	const xhr = new XMLHttpRequest();
+	const resultado = new Promise<Awaited<EnvioDeArquivo['resultado']>>((resolve) => {
+		const corpo = new FormData();
+		corpo.append('question_id', String(questionId));
+		corpo.append('arquivo', arquivo);
+		xhr.open('POST', `${API_BASE_URL}/inscricoes/${preRegId}/arquivo`);
+		xhr.setRequestHeader('Accept', 'application/json');
+		const token = localStorage.getItem('token');
+		if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`);
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable) progresso(Math.min(99, Math.round((e.loaded * 100) / e.total)));
+		};
+		xhr.onload = () => {
+			let data: { data?: ArquivoEnviado; error?: string } = {};
+			try {
+				data = JSON.parse(xhr.responseText);
+			} catch {
+				/* resposta sem JSON (ex.: limite do servidor) */
+			}
+			if (xhr.status >= 200 && xhr.status < 300 && data.data) {
+				progresso(100);
+				resolve({ data: data.data });
+			} else if (xhr.status === 413) {
+				resolve({ error: 'O arquivo é grande demais. Envie uma foto ou PDF de até 5 MB.' });
+			} else {
+				resolve({ error: data.error || 'Não foi possível enviar o arquivo. Tente de novo.' });
+			}
+		};
+		xhr.onerror = () => resolve({ conexao: true });
+		xhr.onabort = () => resolve({ cancelado: true });
+		xhr.send(corpo);
+	});
+	return { cancelar: () => xhr.abort(), resultado };
 }
 
 /**

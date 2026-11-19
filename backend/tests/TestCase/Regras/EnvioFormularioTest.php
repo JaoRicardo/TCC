@@ -44,11 +44,6 @@ class EnvioFormularioTest extends RegrasTestCase
         $acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()]);
         $this->campista = $this->criarUsuario('Ana');
         $this->inscricao = $this->inscrever($this->campista, $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
-        // Documento já enviado nesta inscrição (sem ele o formulário não é enviado; ver DocumentoIdentidadeTest).
-        $this->salvar('UserDocuments', [
-            'user_id' => $this->campista->id, 'pre_registration_id' => $this->inscricao->id,
-            'file' => 'teste.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1,
-        ]);
     }
 
     private function enviar(array $respostas): void

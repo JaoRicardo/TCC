@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Model\Table\UserChangeLogsTable;
 use App\Service\JwtService;
 use App\Service\RetiradaDoSorteioService;
 use Cake\Http\Response;
@@ -18,7 +19,24 @@ class UsersController extends ApiController
 
         /** @var \App\Model\Table\UsersTable $Users */
         $this->Users = $this->fetchTable('Users');
+        /** @var \App\Model\Table\UserChangeLogsTable $Alteracoes */
+        $this->Alteracoes = $this->fetchTable('UserChangeLogs');
     }
+
+    /** Quantas alterações a ficha mostra antes de "Ver tudo". */
+    private const ALTERACOES_NA_FICHA = 10;
+
+    /** Nome de cada dado da ficha no registro de alterações. */
+    private const NOMES_DOS_DADOS = [
+        'name'              => 'o nome',
+        'cpf'               => 'o CPF',
+        'birthday'          => 'a data de nascimento',
+        'sex'               => 'o sexo',
+        'marital_status_id' => 'o estado civil',
+        'phone'             => 'o telefone',
+        'email'             => 'o e-mail',
+        'address'           => 'o endereço',
+    ];
 
     // -------------------------------------------------------------------------
     // POST /api/v1/users
@@ -201,9 +219,15 @@ class UsersController extends ApiController
         $endereco ??= $enderecos->newEntity(['user_id' => $id]);
         $enderecos->patchEntity($endereco, $novoEndereco);
 
-        $retiradas = $this->Users->getConnection()->transactional(function () use ($user, $endereco, $enderecos, $retirada, $sorteio) {
+        $mudancas = $this->textoDasMudancas($user, $endereco);
+
+        $retiradas = $this->Users->getConnection()->transactional(function () use ($user, $endereco, $enderecos, $retirada, $sorteio, $mudancas, $identity, $id) {
             $this->Users->saveOrFail($user);
             $enderecos->saveOrFail($endereco);
+            if ($mudancas !== null) {
+                $this->Alteracoes->registrar($id, (int)$identity->id, $mudancas);
+            }
+            $this->registrarRetiradas($id, (int)$identity->id, $sorteio['afetadas']);
 
             return $retirada->aplicar($sorteio['afetadas']);
         });
@@ -242,6 +266,7 @@ class UsersController extends ApiController
         $user->access_token = null;
         $user->refresh_token = null;
         $this->Users->saveOrFail($user);
+        $this->Alteracoes->registrar($id, (int)$identity->id, 'Gerou uma senha provisória.');
 
         return $this->apiResponse(['data' => [
             'senha'               => $senha,
@@ -281,6 +306,84 @@ class UsersController extends ApiController
         return $palavras[random_int(0, count($palavras) - 1)] . '-' . $numeros;
     }
 
+    /**
+     * "Alterou a data de nascimento e o telefone." a partir do que mudou na
+     * pessoa e no endereço (entidades já com os dados novos, ainda não salvas).
+     * O CPF vai com o antigo e o novo: é o que permite desfazer uma troca de
+     * login indevida. Sem mudança, null.
+     */
+    private function textoDasMudancas(object $user, ?object $endereco, string $sufixo = ''): ?string
+    {
+        $mudou = [];
+        foreach (array_keys(self::NOMES_DOS_DADOS) as $campo) {
+            if ($campo === 'address') {
+                $enderecoMudou = $endereco !== null && ($endereco->isNew() || array_filter(
+                    ['cep', 'city', 'street', 'number', 'neighborhood'],
+                    fn($c) => (string)$endereco->getOriginal($c) !== (string)$endereco->get($c)
+                ));
+                if ($enderecoMudou) $mudou[] = self::NOMES_DOS_DADOS['address'];
+                continue;
+            }
+            $antes = $user->getOriginal($campo);
+            $depois = $user->get($campo);
+            if ($antes instanceof \DateTimeInterface) $antes = $antes->format('Y-m-d');
+            if ($depois instanceof \DateTimeInterface) $depois = $depois->format('Y-m-d');
+            if ((string)$antes === (string)$depois) continue;
+
+            $mudou[] = $campo === 'cpf'
+                ? 'o CPF (de ' . $this->maskCpf((string)$antes) . ' para ' . $this->maskCpf((string)$depois) . ')'
+                : self::NOMES_DOS_DADOS[$campo];
+        }
+
+        return $mudou ? 'Alterou ' . UserChangeLogsTable::juntar($mudou) . $sufixo . '.' : null;
+    }
+
+    /** "Saiu do sorteio: Acampamento Sênior 2026." para cada inscrição que saiu ao salvar. */
+    private function registrarRetiradas(int $userId, int $autorId, array $afetadas): void
+    {
+        foreach ($afetadas as $a) {
+            $this->Alteracoes->registrar($userId, $autorId, "Saiu do sorteio: {$a['inscricao']->activity->name}.");
+        }
+    }
+
+    /**
+     * GET /api/v1/admin/users/{id}/alteracoes — o registro inteiro ("Ver tudo").
+     * A ficha já traz as mais recentes.
+     */
+    public function adminAlteracoes(int $id): Response
+    {
+        $this->request->allowMethod(['get']);
+
+        $identity = $this->requirePermissao('usuarios');
+        if ($identity instanceof Response) return $identity;
+
+        $user = $this->Users->find()->where(['Users.id' => $id, 'Users.deleted IS' => null])->first();
+        if (!$user) return $this->apiError('Usuário não encontrado', 404);
+
+        return $this->apiResponse(['data' => $this->alteracoes($user, null)]);
+    }
+
+    /**
+     * O registro da ficha, do mais recente para o mais antigo, terminando em
+     * "Conta criada." (vem da data de cadastro, não de uma linha gravada).
+     *
+     * @return array{lista: list<array>, total: int}
+     */
+    private function alteracoes(object $user, ?int $limite): array
+    {
+        $lista = $this->Alteracoes->daFicha((int)$user->id, $limite);
+        $total = $this->Alteracoes->find()->where(['user_id' => $user->id])->count() + 1;
+        if ($limite === null || count($lista) < $limite) {
+            $lista[] = [
+                'quando' => $user->created?->format('Y-m-d\TH:i'),
+                'quem'   => $user->name,
+                'texto'  => 'Conta criada.',
+            ];
+        }
+
+        return ['lista' => $lista, 'total' => $total];
+    }
+
     /** Payload da ficha (GET e PATCH /admin/users/{id}). */
     private function ficha(object $user, object $identity): array
     {
@@ -313,6 +416,8 @@ class UsersController extends ApiController
             // Senha provisória gerada e ainda não trocada pela pessoa.
             'senha_provisoria_em' => $user->must_change_password ? $user->temporary_password_at?->format('Y-m-d H:i:s') : null,
             'ultimo_gestor'     => $this->permissoes()->ehUltimoGestor((int)$user->id),
+            // Registro de alterações: as mais recentes; "Ver tudo" busca o resto.
+            'alteracoes'        => $this->alteracoes($user, self::ALTERACOES_NA_FICHA),
         ];
 
         if (!$this->temPermissao($identity, 'permissoes')) {
@@ -439,6 +544,7 @@ class UsersController extends ApiController
 
         $user->deleted = new \DateTime();
         $this->Users->save($user);
+        $this->Alteracoes->registrar($id, (int)$identity->id, 'Desativou a conta.');
 
         return $this->apiResponse(['message' => 'Usuário removido com sucesso']);
     }
@@ -484,7 +590,11 @@ class UsersController extends ApiController
             return $this->apiError('Você não pode tirar de si mesmo a permissão de gerenciar permissões.', 422);
         }
 
+        $antes = $this->permissoes()->daPessoa($user);
         $ativas = $this->permissoes()->definir($id, $chaves);
+        if ($antes != $ativas) {
+            $this->Alteracoes->registrar($id, (int)$identity->id, 'Alterou as permissões do painel.');
+        }
 
         return $this->apiResponse(['data' => ['ativas' => $ativas]]);
     }
@@ -575,13 +685,20 @@ class UsersController extends ApiController
             ], 409);
         }
 
-        $ok = $this->Users->getConnection()->transactional(function () use ($user, $enderecoNovo, $enderecos, $enderecoAtual, $identity, $retirada, $sorteio) {
+        $endereco = null;
+        if ($enderecoNovo !== null) {
+            $endereco = $enderecoAtual ?? $enderecos->newEntity(['user_id' => $identity->id]);
+            $enderecos->patchEntity($endereco, $enderecoNovo);
+        }
+        $mudancas = $this->textoDasMudancas($user, $endereco, ' (Meu cadastro)');
+
+        $ok = $this->Users->getConnection()->transactional(function () use ($user, $endereco, $enderecos, $identity, $retirada, $sorteio, $mudancas) {
             if (!$this->Users->save($user)) return false;
-            if ($enderecoNovo !== null) {
-                $endereco = $enderecoAtual ?? $enderecos->newEntity(['user_id' => $identity->id]);
-                $enderecos->patchEntity($endereco, $enderecoNovo);
-                if (!$enderecos->save($endereco)) return false;
+            if ($endereco !== null && !$enderecos->save($endereco)) return false;
+            if ($mudancas !== null) {
+                $this->Alteracoes->registrar((int)$identity->id, (int)$identity->id, $mudancas);
             }
+            $this->registrarRetiradas((int)$identity->id, (int)$identity->id, $sorteio['afetadas']);
             $retirada->aplicar($sorteio['afetadas']);
 
             return true;
@@ -628,6 +745,12 @@ class UsersController extends ApiController
         $user->password = $nova;
         $user->must_change_password = false;
         $this->Users->saveOrFail($user);
+        // Nunca a senha: só que ela foi trocada.
+        $this->Alteracoes->registrar(
+            (int)$identity->id,
+            (int)$identity->id,
+            $provisoria ? 'Criou uma senha própria no lugar da provisória.' : 'Trocou a senha (Meu cadastro).'
+        );
 
         return $this->apiResponse(['ok' => true]);
     }

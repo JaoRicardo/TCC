@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Model\Table\FormCorrectionsTable;
 use App\Model\Table\UserDocumentsTable;
 use App\Service\FormulariosService;
 use App\Service\MercadoPagoService;
@@ -36,10 +37,16 @@ class InscricoesController extends ApiController
      * de propósito: ele também precisa entregar o formulário dentro do prazo, e é
      * isso que o habilita a assumir uma vaga liberada sem prazo extra.
      */
-    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado'];
+    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Correção pedida', 'Correção atrasada'];
+
+    /** Situações em que a organização pediu correção do formulário enviado. */
+    private const STATUS_CORRECAO = ['Correção pedida', 'Correção atrasada'];
 
     /** Cache de acampamentos por id, para não reconsultar o mesmo a cada inscrição. */
     private array $campingsCache = [];
+
+    /** Pedido de correção aberto por inscrição (null = sem pedido), para as listas não consultarem um a um. */
+    private array $correcoesCache = [];
 
     /** Cache de "categoria+tipo tem formulário montado?", usado na listagem. */
     private array $formulariosCache = [];
@@ -197,6 +204,7 @@ class InscricoesController extends ApiController
             ])
             ->all()
             ->toArray();
+        $this->carregarCorrecoes($subs);
 
         $spouseIds = array_filter(array_column($subs, 'spouse_id'));
         $spousesMap = [];
@@ -213,6 +221,7 @@ class InscricoesController extends ApiController
                 'id'                  => $sub->id,
                 'subscription_type'   => $sub->subscription_type,
                 'status'              => $this->calcularStatus($sub),
+                'motivo'              => $this->motivoDaSituacao($sub, $this->calcularStatus($sub)),
                 'spouse_cpf'          => $sub->spouse_id ? ($spousesMap[$sub->spouse_id] ?? null) : null,
                 'selection_method_id' => $sub->selection_method_id,
                 'substitute_position' => $sub->substitute_position,
@@ -413,6 +422,7 @@ class InscricoesController extends ApiController
             ])
             ->orderBy(['PreRegistrations.created' => 'DESC'])
             ->all();
+        $this->carregarCorrecoes($preRegs->toArray());
 
         return $this->apiResponse([
             'data' => array_values(
@@ -442,18 +452,22 @@ class InscricoesController extends ApiController
             ])
             ->orderBy(['Activities.start_date' => 'DESC'])
             ->all();
+        $this->carregarCorrecoes($preRegs->toArray());
 
         $hoje = new \DateTimeImmutable('today');
         $data = [];
         foreach ($preRegs as $preReg) {
             $activity = $preReg->activity;
             $fim = $activity->start_date?->modify('+' . max(0, (int)$activity->duration_days - 1) . ' days');
+            $status = $this->calcularStatus($preReg);
             $data[] = [
                 'id'        => $preReg->id,
                 'atividade' => $activity->name,
                 'ano'       => $activity->year ?? $activity->start_date?->format('Y'),
                 'como'      => $this->ehEvento($preReg) ? 'Participante de evento' : $preReg->subscription_type,
-                'status'    => $this->calcularStatus($preReg),
+                'status'    => $status,
+                // Correção pedida, cancelada ou recusada: o motivo aparece embaixo da atividade.
+                'motivo'    => $this->motivoDaSituacao($preReg, $status),
                 'andamento' => $fim === null || $fim->format('Y-m-d') >= $hoje->format('Y-m-d'),
             ];
         }
@@ -491,8 +505,12 @@ class InscricoesController extends ApiController
         $status   = $this->calcularStatus($preReg);
         $ehEvento = $this->ehEvento($preReg);
 
-        $prazo        = $this->prazoDoFormulario($preReg);
+        // Com correção pedida, o prazo que aparece é o da correção; passar dele
+        // não fecha o formulário (só o início da atividade fecha).
+        $correcao     = $this->correcaoDa($preReg);
+        $prazo        = $correcao ? $correcao->deadline : $this->prazoDoFormulario($preReg);
         $prazoVencido = $prazo !== null && $prazo->getTimestamp() < time();
+        $fechaEm      = $this->limiteParaEnviar($preReg);
 
         $questions = $this->perguntasDoFormulario($preReg);
 
@@ -506,7 +524,7 @@ class InscricoesController extends ApiController
         $statusPermite     = $this->statusPermiteFormulario($preReg, $status);
         $formularioMontado = !empty($questions);
         $temFormulario     = $statusPermite && $formularioMontado;
-        $editavel          = $temFormulario && !$prazoVencido;
+        $editavel          = $temFormulario && ($fechaEm === null || $fechaEm->getTimestamp() >= time());
 
         $respostas = [];
         foreach ($this->Answers->find()->where(['pre_registration_id' => $preReg->id, 'deleted IS' => null])->all() as $ans) {
@@ -528,7 +546,8 @@ class InscricoesController extends ApiController
                     (bool)$preReg->form_submitted,
                     $preReg->substitute_position !== null,
                     (string)$preReg->disqualification_reason,
-                    $ehEvento
+                    $ehEvento,
+                    (string)$preReg->disqualification_note
                 ),
                 // Evento: o formulário faz parte da inscrição, que só conclui no envio.
                 'eh_evento'             => $ehEvento,
@@ -553,9 +572,11 @@ class InscricoesController extends ApiController
                         ->format('Y-m-d'),
                 ] : null,
                 'perfil'    => $this->serializePerfilConfirmacao($identity),
-                // Documento de identidade desta inscrição; sem ele o formulário não é enviado.
-                'documento' => UserDocumentsTable::resumo($this->fetchTable('UserDocuments')->daInscricao((int)$preReg->id)),
-                'sections'  => $temFormulario ? $this->montarSections($questions, $respostas) : [],
+                // Pedido de correção aberto (sem o nome de quem pediu).
+                'correcao'  => $correcao ? array_diff_key(FormCorrectionsTable::resumo($correcao), ['por' => true]) : null,
+                'sections'  => $temFormulario
+                    ? $this->montarSections($questions, $respostas, $this->fetchTable('UserDocuments')->dasInscricoes([(int)$preReg->id])[(int)$preReg->id] ?? [])
+                    : [],
                 'pagamento' => $activity ? $this->serializePagamento($preReg, $activity) : null,
             ],
         ]);
@@ -576,9 +597,18 @@ class InscricoesController extends ApiController
         bool $jaEnviado,
         bool $eraSuplente,
         string $motivoDesclassificacao = '',
-        bool $ehEvento = false
+        bool $ehEvento = false,
+        string $nota = ''
     ): ?string {
         $prazoFmt = $prazo !== null ? $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i') : null;
+
+        if ($status === 'Cancelada pela organização') {
+            return 'A organização cancelou esta inscrição' . ($nota !== '' ? ": “{$nota}”" : '.');
+        }
+        if ($status === 'Recusada') {
+            return 'A inscrição foi recusada: a correção pedida pela organização não foi feita até o início '
+                . ($ehEvento ? 'do evento.' : 'do acampamento.');
+        }
 
         if ($ehEvento) {
             if (!$statusPermite) return 'Esta inscrição foi cancelada, então não há formulário para responder.';
@@ -624,7 +654,7 @@ class InscricoesController extends ApiController
                 . 'Nada a fazer por aqui agora — você será avisado quando as perguntas estiverem prontas.';
         }
 
-        if ($prazoVencido) {
+        if ($prazoVencido && !in_array($status, self::STATUS_CORRECAO, true)) {
             return $jaEnviado
                 ? "O prazo terminou em {$prazoFmt}. Seu formulário já foi enviado e não pode mais ser alterado."
                 : "O prazo para responder terminou em {$prazoFmt}.";
@@ -647,8 +677,14 @@ class InscricoesController extends ApiController
             ->toArray();
     }
 
-    // Agrupa as perguntas nas seções, do jeito que a tela exibe.
-    private function montarSections(array $questions, array $respostas): array
+    /**
+     * Agrupa as perguntas nas seções, do jeito que a tela exibe. Pergunta de
+     * arquivo leva o arquivo atual (mesmo antes do envio do formulário: ele
+     * sobe na hora em que a pessoa escolhe).
+     *
+     * @param array<int, \Cake\Datasource\EntityInterface> $arquivos id da pergunta => arquivo
+     */
+    private function montarSections(array $questions, array $respostas, array $arquivos = []): array
     {
         $sectionsMap = [];
 
@@ -675,6 +711,7 @@ class InscricoesController extends ApiController
                     $this->opcoesDaPergunta($q)
                 ),
                 'answer'            => $respostas[(int)$q->id] ?? null,
+                'arquivo'           => $q->type === 'arquivo' ? UserDocumentsTable::resumo($arquivos[(int)$q->id] ?? null) : null,
             ];
         }
 
@@ -767,13 +804,14 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * POST /api/v1/inscricoes/{id}/documento (multipart, campo "arquivo")
+     * POST /api/v1/inscricoes/{id}/arquivo (multipart: question_id e "arquivo")
      *
-     * Documento de identidade desta inscrição, na etapa "Seus dados" do
-     * formulário. Cada inscrição pede o seu (não reaproveita o de outra), e
-     * só enquanto o formulário pode ser enviado ou corrigido.
+     * Resposta de uma pergunta do tipo "arquivo". O arquivo sobe na hora em que
+     * a pessoa escolhe (não no "Enviar formulário"); a tela guarda o id que
+     * volta daqui como a resposta. Cada inscrição envia o seu, e só enquanto o
+     * formulário pode ser enviado ou corrigido.
      */
-    public function enviarDocumento(int $id): Response
+    public function enviarArquivo(int $id): Response
     {
         $this->request->allowMethod(['post']);
 
@@ -783,8 +821,17 @@ class InscricoesController extends ApiController
         $preReg = $this->inscricaoComFormularioAberto($id, $identity);
         if ($preReg instanceof Response) return $preReg;
 
+        $questionId = (int)$this->request->getData('question_id');
+        $pergunta = null;
+        foreach ($this->perguntasDoFormulario($preReg) as $q) {
+            if ((int)$q->id === $questionId && $q->type === 'arquivo') $pergunta = $q;
+        }
+        if (!$pergunta) {
+            return $this->apiError('Esta pergunta não pede arquivo. Recarregue a página e tente de novo.', 422);
+        }
+
         $novo = $this->fetchTable('UserDocuments')
-            ->guardar($this->request->getUploadedFile('arquivo'), (int)$identity->id, (int)$preReg->id);
+            ->guardar($this->request->getUploadedFile('arquivo'), (int)$identity->id, (int)$preReg->id, $questionId);
         if (is_string($novo)) return $this->apiError($novo, 422);
 
         return $this->apiResponse(['data' => UserDocumentsTable::resumo($novo)], 201);
@@ -816,16 +863,7 @@ class InscricoesController extends ApiController
             );
         }
 
-        // O documento confirma idade e dados; cada inscrição pede o seu, então
-        // sem o desta o formulário não conta como enviado.
-        if (!$this->fetchTable('UserDocuments')->daInscricao((int)$preReg->id)) {
-            return $this->apiError(
-                'Envie a foto ou o PDF do documento de identidade na etapa "Seus dados" antes de enviar o formulário.',
-                422
-            );
-        }
-
-        return $this->gravarRespostas($preReg, $questions);
+        return $this->gravarRespostas($preReg, $questions, (int)$identity->id);
     }
 
     /**
@@ -853,9 +891,12 @@ class InscricoesController extends ApiController
         $status = $this->calcularStatus($preReg);
         if (!$this->statusPermiteFormulario($preReg, $status)) {
             return $this->apiError(
-                $status === 'Prazo Perdido'
-                    ? 'O prazo para responder o formulário terminou.'
-                    : 'Formulário não disponível para esta inscrição',
+                match ($status) {
+                    'Prazo Perdido'              => 'O prazo para responder o formulário terminou.',
+                    'Cancelada pela organização' => 'A organização cancelou esta inscrição.',
+                    'Recusada'                   => 'Esta inscrição foi recusada.',
+                    default                      => 'Formulário não disponível para esta inscrição',
+                },
                 422
             );
         }
@@ -867,15 +908,18 @@ class InscricoesController extends ApiController
         $ehEvento = $this->ehEvento($preReg);
 
         // Prazo fechado: não aceita mais nem primeira resposta nem correção.
-        // (Evento: o prazo é o fim das inscrições.)
-        $prazo = $this->prazoDoFormulario($preReg);
+        // (Evento: o prazo é o fim das inscrições. Correção pedida pela
+        // organização: até o início da atividade, mesmo depois do prazo dela.)
+        $prazo = $this->limiteParaEnviar($preReg);
         if ($prazo !== null && $prazo->getTimestamp() < time()) {
             $quando = $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i');
 
             return $this->apiError(
-                $ehEvento
-                    ? "As inscrições terminaram em {$quando}."
-                    : "O prazo para responder o formulário terminou em {$quando}.",
+                match (true) {
+                    in_array($status, self::STATUS_CORRECAO, true) => 'A atividade já começou, então não dá mais para corrigir o formulário.',
+                    $ehEvento => "As inscrições terminaram em {$quando}.",
+                    default   => "O prazo para responder o formulário terminou em {$quando}.",
+                },
                 422
             );
         }
@@ -883,11 +927,25 @@ class InscricoesController extends ApiController
         return $preReg;
     }
 
+    /**
+     * Até quando a pessoa pode enviar: com correção pedida, até o início da
+     * atividade; senão, o prazo do formulário (evento: o fim das inscrições).
+     */
+    private function limiteParaEnviar(object $preReg): mixed
+    {
+        if ($this->correcaoDa($preReg)) {
+            return $preReg->activity->start_date ?? null;
+        }
+
+        return $this->prazoDoFormulario($preReg);
+    }
+
     /** Valida e grava as respostas enviadas (parte final de salvarFormulario). */
-    private function gravarRespostas(EntityInterface $preReg, array $questions): Response
+    private function gravarRespostas(EntityInterface $preReg, array $questions, int $quem): Response
     {
         $activity = $preReg->activity;
         $ehEvento = $this->ehEvento($preReg);
+        $arquivos = $this->fetchTable('UserDocuments')->dasInscricoes([(int)$preReg->id])[(int)$preReg->id] ?? [];
 
         $enviadas = [];
         foreach ((array)($this->request->getData('answers') ?? []) as $item) {
@@ -906,9 +964,23 @@ class InscricoesController extends ApiController
             if (!isset($visiveis[$qId])) continue;
 
             $valor = $enviadas[$qId] ?? '';
+            // Arquivo: a resposta é o arquivo atual da pergunta (o que subiu por
+            // último), seja qual for o id que a tela guardou.
+            if ($q->type === 'arquivo' && $valor !== '') {
+                if (!isset($arquivos[$qId])) {
+                    return $this->apiError("O arquivo da pergunta \"{$q->text}\" não foi encontrado. Envie de novo.", 422);
+                }
+                $valor = (string)$arquivos[$qId]->id;
+                $enviadas[$qId] = $valor;
+            }
             if ($valor === '') {
                 if ($q->is_required) {
-                    return $this->apiError("A pergunta \"{$q->text}\" é obrigatória.", 422);
+                    return $this->apiError(
+                        $q->type === 'arquivo'
+                            ? "Envie o arquivo da pergunta \"{$q->text}\"."
+                            : "A pergunta \"{$q->text}\" é obrigatória.",
+                        422
+                    );
                 }
                 continue;
             }
@@ -921,7 +993,7 @@ class InscricoesController extends ApiController
 
         $salvas = 0;
         $semVaga = false;
-        $ok = $this->Answers->getConnection()->transactional(function () use ($questions, $visiveis, $enviadas, $preReg, $activity, $ehEvento, &$salvas, &$semVaga) {
+        $ok = $this->Answers->getConnection()->transactional(function () use ($questions, $visiveis, $enviadas, $preReg, $activity, $ehEvento, $arquivos, &$salvas, &$semVaga) {
             // Evento: a vaga só é garantida no primeiro envio, por ordem de chegada.
             // A linha do evento fica travada até o fim da transação, então dois
             // envios ao mesmo tempo não levam a mesma última vaga.
@@ -958,6 +1030,13 @@ class InscricoesController extends ApiController
                         $antiga->deleted = $agora;
                         if (!$this->Answers->save($antiga)) return false;
                     }
+                    // Arquivo removido (pergunta opcional) ou que deixou de valer sai junto.
+                    if ($q->type === 'arquivo' && isset($arquivos[$qId])) {
+                        $this->fetchTable('UserDocuments')->updateAll(
+                            ['deleted' => $agora],
+                            ['pre_registration_id' => $preReg->id, 'question_id' => $qId, 'deleted IS' => null]
+                        );
+                    }
                     continue;
                 }
 
@@ -986,10 +1065,24 @@ class InscricoesController extends ApiController
             return $this->apiError('Não foi possível salvar o formulário. Tente novamente.', 500);
         }
 
+        // Reenviou depois de a organização pedir correção: o pedido fecha e a
+        // situação volta a "Formulário Enviado".
+        $corrigiu = $this->correcaoDa($preReg) !== null;
+        if ($corrigiu) {
+            $this->fetchTable('FormCorrections')->resolver((int)$preReg->id, FormCorrectionsTable::REENVIADO, $quem);
+            $this->fetchTable('UserChangeLogs')->registrar(
+                (int)$preReg->user_id,
+                $quem,
+                "Formulário de {$activity->name} reenviado depois da correção."
+            );
+            $this->correcoesCache[(int)$preReg->id] = null;
+        }
+
         return $this->apiResponse([
-            'saved'     => $salvas,
-            'message'   => 'Formulário salvo com sucesso',
-            'pagamento' => $this->serializePagamento($preReg, $activity),
+            'saved'            => $salvas,
+            'message'          => 'Formulário salvo com sucesso',
+            'correcao_enviada' => $corrigiu,
+            'pagamento'        => $this->serializePagamento($preReg, $activity),
         ]);
     }
 
@@ -1085,6 +1178,10 @@ class InscricoesController extends ApiController
                 if (!$this->dataValida($valor)) {
                     return "A pergunta \"{$q->text}\" espera uma data válida.";
                 }
+                break;
+
+            case 'arquivo':
+                // Conferido em gravarRespostas: o arquivo precisa ser desta inscrição e desta pergunta.
                 break;
 
             case 'texto':
@@ -1348,8 +1445,42 @@ class InscricoesController extends ApiController
     private function statusPermiteFormulario(object $preReg, string $status): bool
     {
         return $this->ehEvento($preReg)
-            ? in_array($status, ['Inscrição em andamento', 'Inscrito'], true)
+            ? in_array($status, ['Inscrição em andamento', 'Inscrito', ...self::STATUS_CORRECAO], true)
             : in_array($status, self::STATUS_COM_FORMULARIO, true);
+    }
+
+    /** O pedido de correção aberto da inscrição (do cache das listas, ou consultado). */
+    private function correcaoDa(object $preReg): ?EntityInterface
+    {
+        $id = (int)$preReg->id;
+        if (!array_key_exists($id, $this->correcoesCache)) {
+            $this->correcoesCache[$id] = $this->fetchTable('FormCorrections')->aberta($id);
+        }
+
+        return $this->correcoesCache[$id];
+    }
+
+    /** Carrega de uma vez os pedidos de correção abertos de uma lista de inscrições. */
+    private function carregarCorrecoes(array $preRegs): void
+    {
+        $ids = array_map(fn($p) => (int)$p->id, $preRegs);
+        $abertas = $this->fetchTable('FormCorrections')->abertas($ids);
+        foreach ($ids as $id) {
+            $this->correcoesCache[$id] = $abertas[$id] ?? null;
+        }
+    }
+
+    /** O texto que explica a situação: motivo da correção, do cancelamento ou da recusa. */
+    private function motivoDaSituacao(object $preReg, string $status): ?string
+    {
+        if (in_array($status, self::STATUS_CORRECAO, true)) {
+            return (string)$this->correcaoDa($preReg)?->reason;
+        }
+        if (in_array($status, ['Cancelada pela organização', 'Recusada'], true)) {
+            return $preReg->disqualification_note;
+        }
+
+        return null;
     }
 
     /**
@@ -1362,7 +1493,7 @@ class InscricoesController extends ApiController
     {
         if ((int)$activity->total_vacancies <= 0) return true;
 
-        $concluidas = ['activity_id' => $activity->id, 'deleted IS' => null, 'is_quitter' => false];
+        $concluidas = ['activity_id' => $activity->id, 'deleted IS' => null, 'is_quitter' => false, 'disqualified_at IS' => null];
         // Com formulário, só conta quem enviou; sem formulário, toda inscrição já é concluída.
         if ($activity->event_form_id) $concluidas['form_submitted'] = true;
 
@@ -1372,6 +1503,17 @@ class InscricoesController extends ApiController
     private function calcularStatus(object $preReg): string
     {
         if ($preReg->is_quitter) return 'Desistência';
+        // Decisões da organização (aba Respostas) valem para acampamento e evento.
+        if ($preReg->disqualified_at !== null) {
+            if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CANCELADA) return 'Cancelada pela organização';
+            if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CORRECAO) return 'Recusada';
+        }
+        // A organização pediu correção do formulário enviado: a vaga continua.
+        // Passou do prazo da correção: "atrasada", ainda com a vaga.
+        $correcao = $preReg->form_submitted && $preReg->disqualified_at === null ? $this->correcaoDa($preReg) : null;
+        if ($correcao) {
+            return $correcao->deadline->getTimestamp() < time() ? 'Correção atrasada' : 'Correção pedida';
+        }
         // Evento não tem sorteio. Com formulário (que tenha perguntas), a
         // inscrição só conclui quando a pessoa envia.
         if ($this->ehEvento($preReg)) {
@@ -1414,8 +1556,10 @@ class InscricoesController extends ApiController
             // Prazo e pendências do formulário, para o painel avisar antes de vencer.
             'prazoFormulario'    => $prazoFormulario?->format('Y-m-d\TH:i'),
             'formularioEnviado'  => (bool)$preReg->form_submitted,
-            'formularioPendente' => in_array($status, ['Sorteado', 'Indicado', 'Suplente', 'Inscrição em andamento'], true)
-                && !$preReg->form_submitted,
+            'formularioPendente' => (in_array($status, ['Sorteado', 'Indicado', 'Suplente', 'Inscrição em andamento'], true)
+                && !$preReg->form_submitted) || in_array($status, self::STATUS_CORRECAO, true),
+            // Correção pedida, cancelada ou recusada pela organização: o motivo que a pessoa lê.
+            'motivoOrganizacao'  => $this->motivoDaSituacao($preReg, $status),
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.
             'temFormulario'      => $this->temFormularioMontado($preReg),

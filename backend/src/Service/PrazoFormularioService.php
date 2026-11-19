@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Service;
 
+use App\Model\Table\FormCorrectionsTable;
 use Cake\I18n\DateTime;
 use Cake\ORM\Locator\TableLocator;
 
@@ -45,6 +46,12 @@ class PrazoFormularioService
     /** Valores gravados em `disqualification_reason`. */
     public const MOTIVO_PRAZO_FORMULARIO = 'prazo_formulario';
     public const MOTIVO_PRAZO_PAGAMENTO  = 'prazo_pagamento';
+    /** A organização cancelou a inscrição (aba Respostas), com o motivo escrito. */
+    public const MOTIVO_CANCELADA        = 'cancelada_organizacao';
+    /** Correção pedida e não feita até o início da atividade: a inscrição fica "Recusada". */
+    public const MOTIVO_CORRECAO         = 'correcao_nao_feita';
+    /** Motivos definitivos: um resorteio não devolve a pessoa ao sorteio. */
+    public const MOTIVOS_DEFINITIVOS     = [self::MOTIVO_CANCELADA, self::MOTIVO_CORRECAO];
 
     public const GRUPOS_CAMPISTA = ['Homem', 'Mulher', 'Casado'];
 
@@ -58,6 +65,9 @@ class PrazoFormularioService
     private $AcsSectors;
     private $AcsSectorsUsers;
     private $Questions;
+    private $FormCorrections;
+    private $UserChangeLogs;
+    private $UserDocuments;
     private MercadoPagoService $mercadoPago;
 
     public function __construct()
@@ -71,6 +81,9 @@ class PrazoFormularioService
         $this->AcsSectors       = $locator->get('ActivitiesCategoriesSectors');
         $this->AcsSectorsUsers  = $locator->get('ActivitiesCategoriesSectorsUsers');
         $this->Questions        = $locator->get('Questions');
+        $this->FormCorrections  = $locator->get('FormCorrections');
+        $this->UserChangeLogs   = $locator->get('UserChangeLogs');
+        $this->UserDocuments    = $locator->get('UserDocuments');
         $this->mercadoPago      = new MercadoPagoService();
     }
 
@@ -143,7 +156,91 @@ class PrazoFormularioService
             }
         }
 
+        $this->recusarCorrecoesNaoFeitas($log);
+        $apagados = $this->UserDocuments->limparNaoEnviados();
+        if ($apagados) {
+            $log[] = "{$apagados} arquivo(s) de formulários nunca enviados foram apagados.";
+        }
+
         return $log;
+    }
+
+    /**
+     * Correção pedida e não feita até o início do acampamento (ou do evento): a
+     * inscrição fica "Recusada" e a vaga entra em "Chamar próximo", como no
+     * prazo perdido. Antes disso, a correção atrasada não tira a vaga.
+     */
+    private function recusarCorrecoesNaoFeitas(array &$log): void
+    {
+        $vencidas = $this->FormCorrections->find()
+            ->contain(['PreRegistrations' => ['Users', 'Activities']])
+            ->where([
+                'FormCorrections.resolved_at IS' => null,
+                'Activities.start_date <='       => date('Y-m-d H:i:s'),
+            ])
+            ->all();
+
+        foreach ($vencidas as $pedido) {
+            $preReg = $pedido->pre_registration;
+            $this->FormCorrections->resolver((int)$preReg->id, FormCorrectionsTable::RECUSADO, null);
+            if ($preReg->deleted !== null || $preReg->disqualified_at !== null) continue;
+
+            $activity = $preReg->activity;
+            $quando = $activity->camping_id === null ? 'do evento' : 'do acampamento';
+            $jaTratados = [];
+            $recusadas = $this->tirar($activity, $preReg, self::MOTIVO_CORRECAO, $jaTratados, $log, null, "Correção não feita até o início {$quando}.");
+            foreach ($recusadas as $pr) {
+                $this->UserChangeLogs->registrar(
+                    (int)$pr->user_id,
+                    null,
+                    "Inscrição em {$activity->name} recusada: correção não feita até o início {$quando}."
+                );
+            }
+        }
+    }
+
+    /**
+     * A organização cancela a inscrição (aba Respostas), com o motivo que a
+     * pessoa vai ler no site. Acampamento: a vaga entra em "Chamar próximo"
+     * (casal sai junto; servo sai da equipe; suplente sai da fila). Evento: a
+     * vaga volta para as inscrições. Não dá para desfazer.
+     *
+     * @return list<object> as inscrições canceladas (a pedida e, num casal, a do cônjuge)
+     */
+    public function cancelarPelaOrganizacao(object $preReg, string $motivo, int $por): array
+    {
+        $activity = $this->Activities->get($preReg->activity_id);
+        $preReg = $this->PreRegistrations->get($preReg->id, contain: ['Users']);
+
+        $log = [];
+        $jaTratados = [];
+        $canceladas = $this->tirar($activity, $preReg, self::MOTIVO_CANCELADA, $jaTratados, $log, $por, $motivo);
+        foreach ($canceladas as $pr) {
+            $this->FormCorrections->resolver((int)$pr->id, FormCorrectionsTable::CANCELADO, $por);
+            $this->UserChangeLogs->registrar(
+                (int)$pr->user_id,
+                $por,
+                "Inscrição em {$activity->name} cancelada pela organização: “{$motivo}”"
+            );
+        }
+
+        return $canceladas;
+    }
+
+    /**
+     * Tira a vaga do titular ou o lugar na fila do suplente.
+     *
+     * @return list<object> as inscrições atingidas
+     */
+    private function tirar(object $activity, object $preReg, string $motivo, array &$jaTratados, array &$log, ?int $por, ?string $nota): array
+    {
+        if ($preReg->substitute_position !== null) {
+            $this->tirarSuplenteDaFila($activity, $preReg, (string)$preReg->subscription_type, $jaTratados, $log, $motivo, $por, $nota);
+
+            return [$preReg];
+        }
+
+        return $this->tirarVaga($activity, $preReg, $motivo, $jaTratados, $log, $por, $nota);
     }
 
     private function processarFormularios(object $activity, object $camping, string $tipo, array &$log): void
@@ -231,9 +328,18 @@ class PrazoFormularioService
     /**
      * Tira a vaga de um titular (e do cônjuge, se for casal campista). Para servo,
      * a pessoa também sai da equipe — o setor fica com a vaga aberta.
+     *
+     * @return list<object> as inscrições que perderam a vaga
      */
-    private function tirarVaga(object $activity, object $preReg, string $motivo, array &$jaTratados, array &$log): void
-    {
+    private function tirarVaga(
+        object $activity,
+        object $preReg,
+        string $motivo,
+        array &$jaTratados,
+        array &$log,
+        ?int $por = null,
+        ?string $nota = null
+    ): array {
         $tipo = (string)$preReg->subscription_type;
         $doGrupo = [$preReg];
 
@@ -253,7 +359,7 @@ class PrazoFormularioService
         $acsIds = $tipo === 'Servo' ? $this->acsIdsDaAtividade((int)$activity->id) : [];
 
         foreach ($doGrupo as $pr) {
-            $this->desclassificar($pr, $motivo);
+            $this->desclassificar($pr, $motivo, $por, $nota);
             $jaTratados[$pr->id] = true;
 
             if (!empty($acsIds)) {
@@ -267,11 +373,21 @@ class PrazoFormularioService
             $nome = $pr->user->name ?? "usuário #{$pr->user_id}";
             $log[] = "Atividade #{$activity->id}: {$nome} ({$tipo}) perdeu a vaga {$this->textoMotivo($motivo)}. A vaga ficou aberta para chamar o próximo suplente.";
         }
+
+        return $doGrupo;
     }
 
-    private function tirarSuplenteDaFila(object $activity, object $preReg, string $tipo, array &$jaTratados, array &$log): void
-    {
-        $this->desclassificar($preReg, self::MOTIVO_PRAZO_FORMULARIO);
+    private function tirarSuplenteDaFila(
+        object $activity,
+        object $preReg,
+        string $tipo,
+        array &$jaTratados,
+        array &$log,
+        string $motivo = self::MOTIVO_PRAZO_FORMULARIO,
+        ?int $por = null,
+        ?string $nota = null
+    ): void {
+        $this->desclassificar($preReg, $motivo, $por, $nota);
         $jaTratados[$preReg->id] = true;
 
         if ($tipo === 'Servo') {
@@ -287,14 +403,17 @@ class PrazoFormularioService
 
         $nome = $preReg->user->name ?? "usuário #{$preReg->user_id}";
         $pos  = (int)$preReg->substitute_position;
-        $log[] = "Atividade #{$activity->id}: suplente {$nome} ({$tipo}, posição {$pos}) saiu da fila por não responder o formulário no prazo.";
+        $log[] = "Atividade #{$activity->id}: suplente {$nome} ({$tipo}, posição {$pos}) saiu da fila {$this->textoMotivo($motivo)}.";
     }
 
     private function textoMotivo(string $motivo): string
     {
-        return $motivo === self::MOTIVO_PRAZO_PAGAMENTO
-            ? 'por não pagar a inscrição no prazo'
-            : 'por não responder o formulário no prazo';
+        return match ($motivo) {
+            self::MOTIVO_PRAZO_PAGAMENTO => 'por não pagar a inscrição no prazo',
+            self::MOTIVO_CANCELADA       => 'porque a organização cancelou a inscrição',
+            self::MOTIVO_CORRECAO        => 'por não corrigir o formulário até o início',
+            default                      => 'por não responder o formulário no prazo',
+        };
     }
 
     // ─── Vagas abertas e "chamar o próximo" ─────────────────────────────────
@@ -491,10 +610,12 @@ class PrazoFormularioService
 
     // ─── Operações básicas ──────────────────────────────────────────────────
 
-    private function desclassificar(object $preReg, string $motivo): void
+    private function desclassificar(object $preReg, string $motivo, ?int $por = null, ?string $nota = null): void
     {
         $preReg->disqualified_at = DateTime::now();
         $preReg->disqualification_reason = $motivo;
+        $preReg->disqualified_by = $por;
+        $preReg->disqualification_note = $nota;
         $this->PreRegistrations->save($preReg);
     }
 

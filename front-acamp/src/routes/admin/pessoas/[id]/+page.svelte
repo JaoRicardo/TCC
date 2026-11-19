@@ -33,6 +33,8 @@
 		previaFicha,
 		getInscricoesDaPessoa,
 		getEstadosCivis,
+		getAlteracoes,
+		type Alteracao,
 		type DadosDaFicha,
 		type ErrosDaFicha,
 		type FichaPessoa,
@@ -152,6 +154,7 @@
 
 	function aplicarFicha(nova: FichaPessoa) {
 		ficha = nova;
+		registroCompleto = null;
 		orig = camposDa(nova);
 		f = { ...orig };
 		tentou = false;
@@ -431,6 +434,7 @@
 			}
 			senhaGerada = res.senha;
 			ficha.senha_provisoria_em = res.geradaEm ?? null;
+			atualizarRegistro();
 			copiou = false;
 			modal = 'senhaGerada';
 		} catch {
@@ -464,7 +468,49 @@
 			ficha.usa_painel = res.ficha.usa_painel;
 			ficha.ultimo_gestor = res.ficha.ultimo_gestor;
 			ficha.telas_liberadas = res.ficha.telas_liberadas;
+			ficha.alteracoes = res.ficha.alteracoes;
+			registroCompleto = null;
 		}
+	}
+
+	// ─── Registro de alterações (vale na hora: não depende do Salvar) ─────
+	/** O registro inteiro, depois de "Ver tudo"; antes disso, as mais recentes da ficha. */
+	let registroCompleto: Alteracao[] | null = $state(null);
+	let carregandoRegistro = $state(false);
+	let registro = $derived.by(() => {
+		if (registroCompleto) return registroCompleto;
+		if (!ficha) return [] as Alteracao[];
+		return ficha.alteracoes.lista;
+	});
+
+	/** Depois de uma ação que vale na hora (senha, permissões), traz as entradas novas. */
+	async function atualizarRegistro() {
+		const res = await getFicha(userId).catch(() => null);
+		if (res?.ficha && ficha) {
+			ficha.alteracoes = res.ficha.alteracoes;
+			registroCompleto = null;
+		}
+	}
+
+	async function verTudo() {
+		carregandoRegistro = true;
+		try {
+			const res = await getAlteracoes(userId);
+			if (res.registro) registroCompleto = res.registro.lista;
+			else avisar(res.error ?? 'Não foi possível carregar o registro.');
+		} catch {
+			avisar('Não foi possível carregar o registro. Verifique sua conexão.');
+		} finally {
+			carregandoRegistro = false;
+		}
+	}
+
+	/** "2026-11-18T22:41" → "18/11/2026 às 22:41" */
+	function quandoFoi(iso: string | null): string {
+		if (!iso) return '';
+		const [data, hora = ''] = iso.split('T');
+		const [a, m, d] = data.split('-');
+		return `${d}/${m}/${a}${hora ? ` às ${hora.slice(0, 5)}` : ''}`;
 	}
 
 	function contaDesativada() {
@@ -512,7 +558,11 @@
 		Suplente: 'esp',
 		'Prazo Perdido': 'can',
 		'Desistência': 'can',
-		'Retirado do sorteio': 'can'
+		'Retirado do sorteio': 'can',
+		'Correção pedida': 'esp',
+		'Correção atrasada': 'can',
+		'Cancelada pela organização': 'can',
+		'Recusada': 'can'
 	};
 
 	let gruposInscricoes = $derived.by(() => {
@@ -960,12 +1010,33 @@
 										<span class="insc-textos">
 											<span class="insc-nome">{comAno(insc.atividade, insc.ano)}</span>
 											<span class="insc-como">{insc.como}</span>
+											{#if insc.motivo}<span class="insc-motivo">“{insc.motivo}”</span>{/if}
 										</span>
 										<span class="pill {SITUACAO[insc.status] ?? 'neu'}"><i></i>{insc.status}</span>
 									</div>
 								{/each}
 							</div>
 						{/each}
+					{/if}
+				</section>
+
+				<section class="fm-cartao cartao cartao--lista" aria-labelledby="t-registro">
+					<div>
+						<h2 id="t-registro" class="h2">Registro de alterações</h2>
+						<p class="sub">Quem mudou o quê nesta ficha.</p>
+					</div>
+					<ol class="registro">
+						{#each registro as a, i (i)}
+							<li class="registro-item">
+								<span class="registro-quando">{quandoFoi(a.quando)} · {a.quem}</span>
+								<span class="registro-texto">{a.texto}</span>
+							</li>
+						{/each}
+					</ol>
+					{#if !registroCompleto && ficha.alteracoes.total > registro.length}
+						<button type="button" class="fm-link ver-tudo" disabled={carregandoRegistro} onclick={verTudo}>
+							{carregandoRegistro ? 'Carregando...' : `Ver tudo (${ficha.alteracoes.total})`}
+						</button>
 					{/if}
 				</section>
 			</div>
@@ -1605,6 +1676,45 @@
 	.insc-como {
 		font-size: 15px;
 		color: var(--tinta-3);
+	}
+
+	.insc-motivo {
+		font-size: 15px;
+		line-height: 1.35;
+		color: var(--tinta-2);
+	}
+
+	/* ─── Registro de alterações ─── */
+	.registro {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.registro-item {
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+		padding: 10px 0;
+		border-top: 1px solid var(--linha);
+	}
+
+	.registro-quando {
+		font-size: 14px;
+		font-weight: 600;
+		color: var(--ouro-texto);
+	}
+
+	.registro-texto {
+		font-size: 16px;
+		line-height: 1.4;
+		overflow-wrap: anywhere;
+	}
+
+	.ver-tudo {
+		align-self: flex-start;
 	}
 
 	/* ─── Barra de salvar ─── */

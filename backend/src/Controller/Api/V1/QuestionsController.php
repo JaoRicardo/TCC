@@ -11,12 +11,13 @@ use Cake\Http\Response;
 #[AllowDynamicProperties]
 class QuestionsController extends ApiController
 {
-    // Tipos de resposta suportados pelo form builder. Os 3 primeiros usam texto
-    // livre ("texto" é um só, de caixa grande); os 4 últimos usam opções (sim_nao
-    // gera Sim/Não sozinho, os outros 3 pedem uma lista de opções do próprio admin).
-    private const TIPOS_TEXTO   = ['texto', 'numero', 'data'];
-    private const TIPOS_OPCOES  = ['sim_nao', 'unica_escolha', 'multipla_escolha', 'lista_suspensa'];
-    private const TIPOS_VALIDOS = [...self::TIPOS_TEXTO, ...self::TIPOS_OPCOES];
+    // Tipos de resposta suportados pelo form builder. Os 4 primeiros não têm
+    // opções ("texto" é um só, de caixa grande; "arquivo" é uma foto ou PDF);
+    // os 4 últimos usam opções (sim_nao gera Sim/Não sozinho, os outros 3 pedem
+    // uma lista de opções do próprio admin).
+    private const TIPOS_SEM_OPCOES = ['texto', 'numero', 'data', 'arquivo'];
+    private const TIPOS_OPCOES     = ['sim_nao', 'unica_escolha', 'multipla_escolha', 'lista_suspensa'];
+    private const TIPOS_VALIDOS    = [...self::TIPOS_SEM_OPCOES, ...self::TIPOS_OPCOES];
     /** Tipos em que a própria organização escreve as opções (mínimo 2). */
     private const TIPOS_ESCOLHA = ['unica_escolha', 'multipla_escolha', 'lista_suspensa'];
     private const OPCOES_SIM_NAO = ['Sim', 'Não'];
@@ -200,7 +201,26 @@ class QuestionsController extends ApiController
             return $this->apiResponse(['error' => 'Erro ao atualizar', 'errors' => $question->getErrors()], 422);
         }
 
-        $resultado = $this->Questions->getConnection()->transactional(function () use ($question, $id, $opcoes) {
+        // Virar "arquivo" ou deixar de ser: as respostas antigas não servem para o
+        // tipo novo e deixam de aparecer (exclusão lógica, ficam guardadas). Quem
+        // já enviou não precisa reenviar; a pergunta fica em branco para essa pessoa.
+        $mudaArquivo = ($tipo === 'arquivo') !== ($tipoAntigo === 'arquivo');
+
+        $resultado = $this->Questions->getConnection()->transactional(function () use ($question, $id, $opcoes, $tipo, $mudaArquivo) {
+            if ($mudaArquivo) {
+                $this->fetchTable('Answers')->updateAll(
+                    ['deleted' => date('Y-m-d H:i:s')],
+                    ['question_id' => $id, 'deleted IS' => null]
+                );
+            }
+            // Pergunta de arquivo não tem opções, então não pode ter condicionais:
+            // as que dependiam dela passam a aparecer sempre.
+            if ($tipo === 'arquivo') {
+                $minhasOpcoes = $this->Options->find()->select(['id'])->where(['question_id' => $id])->all()->extract('id')->toList();
+                if ($minhasOpcoes) {
+                    $this->Questions->updateAll(['depends_on_option_id' => null], ['depends_on_option_id IN' => $minhasOpcoes]);
+                }
+            }
             if ($opcoes !== null) {
                 $erro = $this->sincronizarOpcoes($id, $opcoes);
                 if ($erro !== null) return $erro;

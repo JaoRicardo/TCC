@@ -199,27 +199,7 @@ class SorteioService
         // Reset só o resultado do sorteio anterior (Sorteados/Suplentes). Indicações
         // (Base/Forania/Conselho) nunca são tocadas aqui — sobrevivem a quantos
         // resorteios forem feitos, até serem removidas manualmente via removeIndicacao.
-        $this->PreRegistrations->updateAll(
-            [
-                'selection_method_id' => null,
-                'substitute_position' => null,
-                // Sorteio refeito/zerado recomeça do zero: desclassificação por prazo
-                // e promoção de suplente pertencem ao resultado anterior.
-                'disqualified_at' => null,
-                'disqualification_reason' => null,
-                'promoted_at' => null,
-                'selected_at' => null,
-            ],
-            [
-                'activity_id'       => $activityId,
-                'subscription_type' => 'Campista',
-                'deleted IS'        => null,
-                'OR'                => [
-                    'selection_method_id IS' => null,
-                    'selection_method_id'    => $raffleMethodId,
-                ],
-            ]
-        );
+        $this->zerarResultado($activityId, 'Campista', $raffleMethodId);
 
         // Pool do sorteio: só quem ainda não tem indicação — quem já foi indicado
         // tem vaga garantida fora do sorteio e não concorre nem conta nas vagas informadas.
@@ -235,6 +215,8 @@ class SorteioService
                 'PreRegistrations.selection_method_id IS' => null,
                 // Retirado do sorteio ao corrigir nascimento, sexo ou cidade na ficha.
                 'PreRegistrations.removed_from_raffle_at IS' => null,
+                // Cancelado pela organização ou recusado: não concorre de novo.
+                'PreRegistrations.disqualified_at IS'        => null,
             ])
             ->all()
             ->toArray();
@@ -302,27 +284,7 @@ class SorteioService
         $raffleMethodId = $this->getRaffleMethodId();
 
         // Só zera o resultado do sorteio — indicações permanecem intactas.
-        $this->PreRegistrations->updateAll(
-            [
-                'selection_method_id' => null,
-                'substitute_position' => null,
-                // Sorteio refeito/zerado recomeça do zero: desclassificação por prazo
-                // e promoção de suplente pertencem ao resultado anterior.
-                'disqualified_at' => null,
-                'disqualification_reason' => null,
-                'promoted_at' => null,
-                'selected_at' => null,
-            ],
-            [
-                'activity_id'       => $activityId,
-                'subscription_type' => 'Campista',
-                'deleted IS'        => null,
-                'OR'                => [
-                    'selection_method_id IS' => null,
-                    'selection_method_id'    => $raffleMethodId,
-                ],
-            ]
-        );
+        $this->zerarResultado($activityId, 'Campista', $raffleMethodId);
     }
 
     // ─── Sorteio de Servos ──────────────────────────────────────────────────
@@ -370,27 +332,7 @@ class SorteioService
                 'is_indicated'                         => false,
             ]);
         }
-        $this->PreRegistrations->updateAll(
-            [
-                'selection_method_id' => null,
-                'substitute_position' => null,
-                // Sorteio refeito/zerado recomeça do zero: desclassificação por prazo
-                // e promoção de suplente pertencem ao resultado anterior.
-                'disqualified_at' => null,
-                'disqualification_reason' => null,
-                'promoted_at' => null,
-                'selected_at' => null,
-            ],
-            [
-                'activity_id'       => $activityId,
-                'subscription_type' => 'Servo',
-                'deleted IS'        => null,
-                'OR'                => [
-                    'selection_method_id IS' => null,
-                    'selection_method_id'    => $raffleMethodId,
-                ],
-            ]
-        );
+        $this->zerarResultado($activityId, 'Servo', $raffleMethodId);
 
         // Depois do delete acima, as linhas que sobram em activities_categories_sectors_users
         // para esses setores são só as colocações manuais — então já servem como a lista
@@ -422,6 +364,8 @@ class SorteioService
                 'PreRegistrations.deleted IS'         => null,
                 'PreRegistrations.is_quitter'         => false,
                 'PreRegistrations.removed_from_raffle_at IS' => null,
+                // Cancelado pela organização ou recusado: não concorre de novo.
+                'PreRegistrations.disqualified_at IS'        => null,
                 'Users.deleted IS'                    => null,
             ]);
         if (!empty($excludedUserIds)) {
@@ -519,26 +463,49 @@ class SorteioService
             ]);
         }
 
+        $this->zerarResultado($activityId, 'Servo', $raffleMethodId);
+    }
+
+    /**
+     * Zera o resultado do sorteio anterior (sorteados e suplentes) de um tipo de
+     * inscrição. Indicações (Base/Forania/Conselho) não são tocadas: sobrevivem a
+     * quantos resorteios forem feitos, até serem removidas manualmente.
+     *
+     * Sorteio refeito/zerado recomeça do zero: desclassificação por prazo e
+     * promoção de suplente pertencem ao resultado anterior. Só o cancelamento
+     * pela organização e a recusa por correção não feita continuam valendo — a
+     * pessoa não volta para o sorteio (os pools ignoram quem está desclassificado).
+     */
+    private function zerarResultado(int $activityId, string $tipo, int $raffleMethodId): void
+    {
+        $doResultado = [
+            'activity_id'       => $activityId,
+            'subscription_type' => $tipo,
+            'deleted IS'        => null,
+            'OR'                => [
+                'selection_method_id IS' => null,
+                'selection_method_id'    => $raffleMethodId,
+            ],
+        ];
+        $definitivo = ['disqualification_reason IN' => PrazoFormularioService::MOTIVOS_DEFINITIVOS];
+
+        $this->PreRegistrations->updateAll(
+            ['selection_method_id' => null, 'substitute_position' => null, 'promoted_at' => null, 'selected_at' => null],
+            $doResultado + ['AND' => [$definitivo]]
+        );
         $this->PreRegistrations->updateAll(
             [
-                'selection_method_id' => null,
-                'substitute_position' => null,
-                // Sorteio refeito/zerado recomeça do zero: desclassificação por prazo
-                // e promoção de suplente pertencem ao resultado anterior.
-                'disqualified_at' => null,
+                'selection_method_id'     => null,
+                'substitute_position'     => null,
+                'disqualified_at'         => null,
                 'disqualification_reason' => null,
-                'promoted_at' => null,
-                'selected_at' => null,
+                'promoted_at'             => null,
+                'selected_at'             => null,
             ],
-            [
-                'activity_id'       => $activityId,
-                'subscription_type' => 'Servo',
-                'deleted IS'        => null,
-                'OR'                => [
-                    'selection_method_id IS' => null,
-                    'selection_method_id'    => $raffleMethodId,
-                ],
-            ]
+            $doResultado + ['AND' => [['OR' => [
+                'disqualification_reason IS'     => null,
+                'disqualification_reason NOT IN' => PrazoFormularioService::MOTIVOS_DEFINITIVOS,
+            ]]]]
         );
     }
 

@@ -123,11 +123,15 @@ return function (RouteBuilder $routes): void {
             $builder->get('/admin/formularios/resumo', ['controller' => 'Questions', 'action' => 'resumo']);
             $builder->post('/admin/formularios/importar', ['controller' => 'Questions', 'action' => 'importar']);
             $builder->get('/admin/formularios/respostas', ['controller' => 'Respostas', 'action' => 'index']);
+            // Pedir correção do formulário e cancelar inscrição pela organização.
+            $builder->post('/admin/inscricoes/{id}/correcao', ['controller' => 'Respostas', 'action' => 'pedirCorrecao'])->setPass(['id']);
+            $builder->delete('/admin/inscricoes/{id}/correcao', ['controller' => 'Respostas', 'action' => 'desfazerCorrecao'])->setPass(['id']);
+            $builder->post('/admin/inscricoes/{id}/cancelar', ['controller' => 'Respostas', 'action' => 'cancelar'])->setPass(['id']);
             $builder->get('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'index']);
             $builder->post('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'add']);
             $builder->patch('/admin/formularios-evento/{id}', ['controller' => 'EventForms', 'action' => 'edit'])->setPass(['id']);
 
-            // --- Documento de identidade (enviado em /inscricoes/{id}/documento) ---
+            // --- Arquivos das respostas (enviados em /inscricoes/{id}/arquivo) ---
             $builder->get('/admin/documentos/{id}/arquivo', ['controller' => 'Documentos', 'action' => 'arquivo'])->setPass(['id']);
             $builder->get('/admin/secoes', ['controller' => 'Questions', 'action' => 'secoes']);
             $builder->post('/admin/secoes', ['controller' => 'Questions', 'action' => 'criarSecao']);
@@ -171,7 +175,7 @@ return function (RouteBuilder $routes): void {
             $builder->get('/me/inscricoes', ['controller' => 'Inscricoes', 'action' => 'minhas']);
             $builder->get('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'formulario'])->setPass(['id']);
             $builder->post('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'salvarFormulario'])->setPass(['id']);
-            $builder->post('/inscricoes/{id}/documento', ['controller' => 'Inscricoes', 'action' => 'enviarDocumento'])->setPass(['id']);
+            $builder->post('/inscricoes/{id}/arquivo', ['controller' => 'Inscricoes', 'action' => 'enviarArquivo'])->setPass(['id']);
 
             // --- Pagamento da inscrição (Mercado Pago / Checkout Pro) ---
             $builder->post('/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'criar'])->setPass(['id']);
@@ -201,6 +205,7 @@ return function (RouteBuilder $routes): void {
             $builder->get('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminFicha'])->setPass(['id']); // ficha da pessoa
             $builder->post('/admin/users/{id}/senha-provisoria', ['controller' => 'Users', 'action' => 'adminSenhaProvisoria'])->setPass(['id']);
             $builder->get('/admin/users/{id}/inscricoes', ['controller' => 'Inscricoes', 'action' => 'daPessoa'])->setPass(['id']);
+            $builder->get('/admin/users/{id}/alteracoes', ['controller' => 'Users', 'action' => 'adminAlteracoes'])->setPass(['id']); // registro de alterações
             $builder->patch('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminEdit'])->setPass(['id']);
             $builder->post('/admin/users/{id}/previa', ['controller' => 'Users', 'action' => 'adminPrevia'])->setPass(['id']); // "Conferir antes de salvar"
             $builder->delete('/admin/users/{id}', ['controller' => 'Users', 'action' => 'adminDelete'])->setPass(['id']);

@@ -121,7 +121,10 @@
 		if (status === 'Formulário Enviado') return 'badge-form';
 		if (status === 'Suplente') return 'badge-reserve';
 		// Perdeu o prazo do formulário ou do pagamento, ou saiu do sorteio ao ter a ficha corrigida.
-		if (status === 'Desistência' || status === 'Prazo Perdido' || status === 'Retirado do sorteio') return 'badge-cancelled';
+		// Ou a organização cancelou / recusou (correção não feita) pela aba Respostas.
+		if (['Desistência', 'Prazo Perdido', 'Retirado do sorteio', 'Cancelada pela organização', 'Recusada', 'Correção atrasada'].includes(status))
+			return 'badge-cancelled';
+		if (status === 'Correção pedida') return 'badge-reserve';
 		return 'badge-waiting';
 	}
 
@@ -228,7 +231,10 @@
 	);
 
 	function textoMotivo(motivo: string) {
-		return motivo === 'prazo_pagamento' ? 'não pagou' : 'sem formulário';
+		if (motivo === 'prazo_pagamento') return 'não pagou';
+		if (motivo === 'cancelada_organizacao') return 'cancelada pela organização';
+		if (motivo === 'correcao_nao_feita') return 'correção não feita';
+		return 'sem formulário';
 	}
 
 	async function submitIndication() {

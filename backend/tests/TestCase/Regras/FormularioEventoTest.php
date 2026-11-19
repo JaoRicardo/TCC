@@ -71,13 +71,6 @@ class FormularioEventoTest extends RegrasTestCase
 
     private function enviar(EntityInterface $pessoa, int $inscricaoId, int $perguntaId): void
     {
-        // Documento desta inscrição (sem ele o formulário não é enviado; ver DocumentoIdentidadeTest).
-        if (!$this->fetchTable('UserDocuments')->daInscricao($inscricaoId)) {
-            $this->salvar('UserDocuments', [
-                'user_id' => $pessoa->id, 'pre_registration_id' => $inscricaoId,
-                'file' => 'x.png', 'original_name' => 'rg.png', 'mime' => 'image/png', 'size' => 1,
-            ]);
-        }
         $this->autenticarComo($pessoa);
         $this->post("/api/v1/inscricoes/{$inscricaoId}/formulario", ['answers' => [['question_id' => $perguntaId, 'answer' => 'Jardim Riva']]]);
     }
