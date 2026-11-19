@@ -166,9 +166,9 @@ class PrazoFormularioService
     }
 
     /**
-     * Correção pedida e não feita até o início do acampamento (ou do evento): a
-     * inscrição fica "Recusada" e a vaga entra em "Chamar próximo", como no
-     * prazo perdido. Antes disso, a correção atrasada não tira a vaga.
+     * Correção pedida e não feita até o prazo dela (ou até o início da
+     * atividade, se não tiver prazo): a inscrição fica "Recusada" e a vaga entra
+     * em "Chamar próximo", como no prazo perdido (evento: a vaga volta).
      */
     private function recusarCorrecoesNaoFeitas(array &$log): void
     {
@@ -176,7 +176,10 @@ class PrazoFormularioService
             ->contain(['PreRegistrations' => ['Users', 'Activities']])
             ->where([
                 'FormCorrections.resolved_at IS' => null,
-                'Activities.start_date <='       => date('Y-m-d H:i:s'),
+                'OR' => [
+                    'FormCorrections.deadline <' => date('Y-m-d H:i:s'),
+                    'Activities.start_date <='   => date('Y-m-d H:i:s'),
+                ],
             ])
             ->all();
 
@@ -186,14 +189,16 @@ class PrazoFormularioService
             if ($preReg->deleted !== null || $preReg->disqualified_at !== null) continue;
 
             $activity = $preReg->activity;
-            $quando = $activity->camping_id === null ? 'do evento' : 'do acampamento';
+            $quando = $pedido->deadline !== null
+                ? $pedido->deadline->format('d/m/Y')
+                : 'o início ' . ($activity->camping_id === null ? 'do evento' : 'do acampamento');
             $jaTratados = [];
-            $recusadas = $this->tirar($activity, $preReg, self::MOTIVO_CORRECAO, $jaTratados, $log, null, "Correção não feita até o início {$quando}.");
+            $recusadas = $this->tirar($activity, $preReg, self::MOTIVO_CORRECAO, $jaTratados, $log, null, "Correção não feita até {$quando}.");
             foreach ($recusadas as $pr) {
                 $this->UserChangeLogs->registrar(
                     (int)$pr->user_id,
                     null,
-                    "Inscrição em {$activity->name} recusada: correção não feita até o início {$quando}."
+                    "Inscrição em {$activity->name} recusada: correção não feita até {$quando}."
                 );
             }
         }
@@ -411,7 +416,7 @@ class PrazoFormularioService
         return match ($motivo) {
             self::MOTIVO_PRAZO_PAGAMENTO => 'por não pagar a inscrição no prazo',
             self::MOTIVO_CANCELADA       => 'porque a organização cancelou a inscrição',
-            self::MOTIVO_CORRECAO        => 'por não corrigir o formulário até o início',
+            self::MOTIVO_CORRECAO        => 'por não corrigir o formulário no prazo',
             default                      => 'por não responder o formulário no prazo',
         };
     }

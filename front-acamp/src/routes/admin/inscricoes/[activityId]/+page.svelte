@@ -122,7 +122,7 @@
 		if (status === 'Suplente') return 'badge-reserve';
 		// Perdeu o prazo do formulário ou do pagamento, ou saiu do sorteio ao ter a ficha corrigida.
 		// Ou a organização cancelou / recusou (correção não feita) pela aba Respostas.
-		if (['Desistência', 'Prazo Perdido', 'Retirado do sorteio', 'Cancelada pela organização', 'Recusada', 'Correção atrasada'].includes(status))
+		if (['Desistência', 'Prazo Perdido', 'Retirado do sorteio', 'Cancelada pela organização', 'Recusada'].includes(status))
 			return 'badge-cancelled';
 		if (status === 'Correção pedida') return 'badge-reserve';
 		return 'badge-waiting';

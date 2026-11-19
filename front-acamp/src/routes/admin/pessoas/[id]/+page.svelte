@@ -560,7 +560,6 @@
 		'Desistência': 'can',
 		'Retirado do sorteio': 'can',
 		'Correção pedida': 'esp',
-		'Correção atrasada': 'can',
 		'Cancelada pela organização': 'can',
 		'Recusada': 'can'
 	};

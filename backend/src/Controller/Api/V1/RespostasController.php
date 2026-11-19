@@ -41,6 +41,9 @@ class RespostasController extends ApiController
         $identity = $this->requirePermissao('respostas_formularios');
         if ($identity instanceof Response) return $identity;
 
+        // Recusa quem passou do prazo da correção antes de montar Pendentes.
+        (new PrazoFormularioService())->executarPrazosVencidos();
+
         $pedida = intval($this->request->getQuery('atividade_id') ?? 0);
 
         // Formulário de evento: as "edições" são os eventos que usam o formulário.
@@ -310,8 +313,8 @@ class RespostasController extends ApiController
      *
      * Pede à pessoa que corrija o formulário já enviado. A inscrição continua
      * com a vaga e o formulário volta a ficar aberto. O prazo é só desta
-     * inscrição: passar dele deixa a correção "atrasada" (ainda com a vaga); se
-     * não corrigir até o início da atividade, a inscrição fica "Recusada".
+     * inscrição: se não corrigir até ele, a inscrição fica "Recusada" e a vaga
+     * vai para "Chamar próximo" (evento: volta para as inscrições).
      */
     public function pedirCorrecao(int $id): Response
     {

@@ -11,9 +11,8 @@ use Cake\Datasource\EntityInterface;
 /**
  * "Pedir correção" na aba Respostas: a organização pede que a pessoa corrija o
  * formulário já enviado. A inscrição continua com a vaga e o formulário reabre,
- * com um prazo só desta inscrição. Passar desse prazo deixa a correção
- * "atrasada" (ainda com a vaga); se não corrigir até o início da atividade, a
- * inscrição fica "Recusada" e a vaga vai para "Chamar próximo".
+ * com um prazo só desta inscrição. Se não corrigir até esse prazo, a inscrição
+ * fica "Recusada" e a vaga vai para "Chamar próximo".
  */
 class CorrecaoFormularioTest extends RegrasTestCase
 {
@@ -118,30 +117,36 @@ class CorrecaoFormularioTest extends RegrasTestCase
         $this->assertContains("Pedido de correção desfeito no formulário de {$this->acampamento->name}.", $this->registro($this->pessoa));
     }
 
-    public function testCorrecaoAtrasadaNaoTiraAVagaMasNoInicioFicaRecusada(): void
+    public function testCorrecaoNaoFeitaNoPrazoFicaRecusadaELiberaAVaga(): void
     {
         $this->pedir();
         $this->fetchTable('FormCorrections')->updateAll(['deadline' => $this->ontem()], ['pre_registration_id' => $this->inscricao->id]);
-        $this->assertSame('Correção atrasada', $this->situacao());
-
-        (new PrazoFormularioService())->executarPrazosVencidos();
-        $this->assertNull($this->recarregar($this->inscricao)->disqualified_at, 'Atrasada continua com a vaga.');
-        $this->reenviar();
-        $this->assertResponseOk('Mesmo atrasada, ainda dá para corrigir até o início.');
-
-        // Pede de novo e deixa o acampamento começar sem a correção.
-        $this->pedir();
-        $this->fetchTable('Activities')->updateAll(['start_date' => $this->ontem()], ['id' => $this->acampamento->id]);
         (new PrazoFormularioService())->executarPrazosVencidos();
 
         $recusada = $this->recarregar($this->inscricao);
         $this->assertSame(PrazoFormularioService::MOTIVO_CORRECAO, $recusada->disqualification_reason);
-        $this->assertSame('Recusada', $this->situacao());
+        $form = $this->formulario();
+        $this->assertSame('Recusada', $form['status']);
+        $this->assertFalse($form['editavel']);
+        $this->reenviar();
+        $this->assertResponseCode(422, 'Depois do prazo da correção não dá mais para reenviar.');
+
         $this->assertSame(1, (new PrazoFormularioService())->vagasAbertasCampistas((int)$this->acampamento->id)['Mulher']);
-        $this->assertSame(FormCorrectionsTable::RECUSADO, $this->fetchTable('FormCorrections')->find()->orderBy(['id' => 'DESC'])->firstOrFail()->resolution);
+        $this->assertSame(FormCorrectionsTable::RECUSADO, $this->fetchTable('FormCorrections')->find()->firstOrFail()->resolution);
         $ultima = $this->fetchTable('UserChangeLogs')->daFicha((int)$this->pessoa->id, 1)[0];
         $this->assertSame('Sistema', $ultima['quem']);
-        $this->assertSame("Inscrição em {$this->acampamento->name} recusada: correção não feita até o início do acampamento.", $ultima['texto']);
+        $this->assertSame(
+            "Inscrição em {$this->acampamento->name} recusada: correção não feita até " . date('d/m/Y', strtotime('-1 day')) . '.',
+            $ultima['texto']
+        );
+    }
+
+    public function testDentroDoPrazoDaCorrecaoAVagaContinua(): void
+    {
+        $this->pedir();
+        (new PrazoFormularioService())->executarPrazosVencidos();
+        $this->assertNull($this->recarregar($this->inscricao)->disqualified_at);
+        $this->assertSame('Correção pedida', $this->situacao());
     }
 
     public function testPedidoPrecisaDeMotivoDataValidaEFormularioEnviado(): void
@@ -180,7 +185,6 @@ class CorrecaoFormularioTest extends RegrasTestCase
         $pessoa = $this->respostaJson()['data']['pessoas'][0];
         $this->assertTrue($pessoa['enviou']);
         $this->assertSame('A foto do documento ficou cortada.', $pessoa['correcao']['motivo']);
-        $this->assertFalse($pessoa['correcao']['atrasada']);
         $this->assertNull($pessoa['encerrada']);
     }
 }

@@ -14,12 +14,11 @@ export interface MinhaInscricao {
         | 'Prazo Perdido'
         /** A organização corrigiu nascimento, sexo ou cidade e a pessoa não concorre mais. */
         | 'Retirado do sorteio'
-        /** A organização pediu correção do formulário (a vaga continua); "atrasada" depois do prazo dela. */
+        /** A organização pediu correção do formulário (a vaga continua até o prazo dela). */
         | 'Correção pedida'
-        | 'Correção atrasada'
         /** A organização cancelou a inscrição (motivo em motivoOrganizacao). */
         | 'Cancelada pela organização'
-        /** Correção não feita até o início da atividade. */
+        /** Correção não feita no prazo. */
         | 'Recusada'
         | string;
     dataInscricao?: string;

@@ -80,7 +80,6 @@ class FormCorrectionsTable extends Table
             'motivo'    => (string)$pedido->reason,
             'perguntas' => array_map('intval', json_decode((string)$pedido->question_ids, true) ?: []),
             'prazo'     => $pedido->deadline?->format('Y-m-d\TH:i'),
-            'atrasada'  => $pedido->deadline !== null && $pedido->deadline->getTimestamp() < time(),
         ];
     }
 }

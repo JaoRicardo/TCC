@@ -56,7 +56,6 @@ export interface CorrecaoPedida {
 	perguntas: number[];
 	/** Corrigir até (AAAA-MM-DDTHH:mm). */
 	prazo: string | null;
-	atrasada: boolean;
 }
 
 export interface PrazoFormulario {
@@ -115,7 +114,7 @@ export interface FormularioData {
 	total_perguntas: number;
 	prazo: PrazoFormulario | null;
 	perfil: PerfilConfirmacao;
-	/** A organização pediu correção: o formulário reabre até o início da atividade. */
+	/** A organização pediu correção: o formulário reabre até o prazo da correção. */
 	correcao: CorrecaoPedida | null;
 	sections: SecaoFormulario[];
 	pagamento: PagamentoInscricao | null;

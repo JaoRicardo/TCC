@@ -485,8 +485,8 @@
 		if (!prazo) return '';
 		if (form?.correcao) {
 			return prazo.vencido
-				? `O prazo da correção era ${diaMes(prazo.limite)}. Corrija o quanto antes: sem a correção, a inscrição é recusada no início ${ehEvento ? 'do evento' : 'do acampamento'}.`
-				: `Corrija até ${diaEHora(prazo.limite)}. Sua vaga continua garantida.`;
+				? `O prazo da correção terminou em ${diaMes(prazo.limite)}.`
+				: `Corrija até ${diaEHora(prazo.limite)}. Se não corrigir até lá, a inscrição é recusada e você perde a vaga.`;
 		}
 		if (ehEvento) {
 			if (prazo.vencido) return `As inscrições terminaram em ${diaMes(prazo.limite)}.`;
@@ -877,8 +877,7 @@
 					<div class="faixa-prazo">
 						<span
 							class="selo"
-							class:selo--aviso={['Suplente', 'Inscrição em andamento', 'Correção pedida'].includes(form.status)}
-							class:selo--perigo={form.status === 'Correção atrasada'}><span class="selo-ponto"></span>{form.status}</span
+							class:selo--aviso={['Suplente', 'Inscrição em andamento', 'Correção pedida'].includes(form.status)}><span class="selo-ponto"></span>{form.status}</span
 						>
 						<span>{textoDoPrazo}</span>
 					</div>
@@ -890,7 +889,7 @@
 						<span class="aviso-correcao-motivo">“{correcao.motivo}”</span>
 						<span>
 							Você pode mudar qualquer resposta.{#if perguntasMarcadas.length}{' '}O que precisa de atenção: {perguntasMarcadas.map((q) => q.text).join(', ')}.{/if}{' '}
-							Depois, envie de novo{correcao.prazo && !correcao.atrasada ? ` até ${diaMes(correcao.prazo)}` : ''}.
+							Depois, envie de novo{correcao.prazo ? ` até ${diaMes(correcao.prazo)}` : ''}.
 						</span>
 						{#if etapaDaPrimeiraMarcada !== null && etapa !== etapaDaPrimeiraMarcada}
 							<button type="button" class="btn btn--leve" onclick={irParaOQueCorrigir}>Ir para o que precisa corrigir</button>

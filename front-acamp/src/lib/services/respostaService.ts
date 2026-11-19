@@ -45,7 +45,7 @@ export interface PessoaComRespostas {
 	arquivos: Record<string, ArquivoEnviado>;
 	/** Pedido de correção aberto. */
 	correcao: CorrecaoDoPainel | null;
-	/** Cancelada pela organização ou recusada (correção não feita até o início). */
+	/** Cancelada pela organização ou recusada (correção não feita no prazo). */
 	encerrada: InscricaoEncerrada | null;
 	/** Nome do cônjuge (casal: sai junto se a inscrição for cancelada). */
 	conjuge: string | null;
@@ -59,7 +59,6 @@ export interface CorrecaoDoPainel {
 	motivo: string;
 	perguntas: number[];
 	prazo: string | null;
-	atrasada: boolean;
 }
 
 export interface InscricaoEncerrada {

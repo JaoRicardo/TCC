@@ -106,15 +106,10 @@
 		if (!dados) return [];
 		return dados.pessoas.filter((p) => p.enviou);
 	});
-	/** Correções (atrasadas primeiro) e depois quem ainda não enviou. */
-	let pendentes: PessoaComRespostas[] = $derived([
-		...ativas.filter((p) => p.correcao?.atrasada),
-		...ativas.filter((p) => p.correcao && !p.correcao.atrasada),
-		...ativas.filter((p) => !p.enviou)
-	]);
+	/** Correções pedidas e depois quem ainda não enviou. */
+	let pendentes: PessoaComRespostas[] = $derived([...ativas.filter((p) => p.correcao), ...ativas.filter((p) => !p.enviou)]);
 	let semEnviar = $derived(ativas.filter((p) => !p.enviou).length);
 	let comCorrecao = $derived(ativas.filter((p) => p.correcao).length);
-	let atrasadas = $derived(ativas.filter((p) => p.correcao?.atrasada).length);
 	let edicao = $derived.by(() => {
 		if (!dados) return undefined;
 		const id = dados.atividade_id;
@@ -140,7 +135,7 @@
 	const ehArquivo = (q: PerguntaOrdenada) => q.type === 'arquivo';
 	const primeiroNome = (nome: string) => nome.trim().split(/\s+/)[0] ?? nome;
 	const nomeDaSituacao = (p: PessoaComRespostas) =>
-		p.encerrada?.situacao ?? (p.correcao ? (p.correcao.atrasada ? 'Correção atrasada' : 'Correção pedida') : p.enviou ? 'Formulário Enviado' : p.situacao);
+		p.encerrada?.situacao ?? (p.correcao ? 'Correção pedida' : p.enviou ? 'Formulário Enviado' : p.situacao);
 
 	function avisar(texto: string) {
 		aviso = texto;
@@ -600,7 +595,7 @@
 					: `Precisamos que você corrija o seu formulário do ${atividade}:`,
 				`“${a.motivo}”`,
 				'',
-				`É só entrar no site, em Meus Formulários, e corrigir até ${a.ate ? diaEMes(a.ate) : ''}. A vaga continua garantida.`
+				`É só entrar no site, em Meus Formulários, e corrigir até ${a.ate ? diaEMes(a.ate) : ''}. Se não corrigir até esse dia, a inscrição é recusada e perde a vaga.`
 			);
 		} else {
 			linhas.push(
@@ -686,7 +681,6 @@
 	}
 
 	function situacaoDoPendente(p: PessoaComRespostas): string {
-		if (p.correcao?.atrasada) return `Correção atrasada · era até ${p.correcao.prazo ? diaEMes(p.correcao.prazo) : ''}`;
 		if (p.correcao) return `Correção pedida · até ${p.correcao.prazo ? diaEMes(p.correcao.prazo) : ''}`;
 		return `${p.situacao} · não enviou`;
 	}
@@ -727,7 +721,7 @@
 
 {#snippet seloDaPessoa(p: PessoaComRespostas)}
 	{@const nome = nomeDaSituacao(p)}
-	{@render selo(nome, p.encerrada || p.correcao?.atrasada ? 'perigo' : p.correcao ? 'ambar' : 'ok')}
+	{@render selo(nome, p.encerrada ? 'perigo' : p.correcao ? 'ambar' : 'ok')}
 {/snippet}
 
 {#snippet caixaDoArquivo(a: ArquivoEnviado)}
@@ -1080,7 +1074,7 @@
 									“{c.motivo}”
 								</span>
 								<span class="faixa-sub">
-									{c.atrasada ? 'Era para corrigir até' : 'Pode corrigir até'}
+									Pode corrigir até
 									{c.prazo ? diaEMes(c.prazo) : ''}.{#if nomesMarcadas.length}{' '}{nomesMarcadas.length === 1 ? 'Marcada' : 'Marcadas'}: {nomesMarcadas.join(', ')}.{/if}
 								</span>
 							</div>
@@ -1218,9 +1212,7 @@
 						<span>
 							<strong>
 								{#if semEnviar}{semEnviar} {semEnviar === 1 ? 'pessoa ainda não enviou' : 'pessoas ainda não enviaram'}{/if}{#if semEnviar && comCorrecao}
-									e{' '}{/if}{#if comCorrecao}{comCorrecao} {semEnviar ? '' : comCorrecao === 1 ? 'pessoa ' : 'pessoas '}{comCorrecao === 1 ? 'está' : 'estão'} com correção pedida{atrasadas
-										? ` (${atrasadas} ${atrasadas === 1 ? 'atrasada' : 'atrasadas'})`
-										: ''}{/if}.
+									e{' '}{/if}{#if comCorrecao}{comCorrecao} {semEnviar ? '' : comCorrecao === 1 ? 'pessoa ' : 'pessoas '}{comCorrecao === 1 ? 'está' : 'estão'} com correção pedida{/if}.
 							</strong>
 							{#if cabecalho.evento}
 								{#if dados.prazo}{situacaoDoPrazo}.{/if} Sem enviar, a inscrição não é concluída e a vaga não fica garantida.
@@ -1232,12 +1224,10 @@
 								Este acampamento ainda não tem prazo para o formulário.
 							{/if}
 							{#if comCorrecao}
-								Quem está com correção pedida não perde a vaga no prazo da correção: aparece aqui como “Correção atrasada”. Se
-								ainda não tiver corrigido em {edicao ? diaEMes(edicao.inicio) : 'o início'}, início {cabecalho.evento
-									? 'do evento'
-									: 'do acampamento'}, a inscrição fica <strong>Recusada</strong>{cabecalho.evento
-									? ' e a vaga volta para as inscrições.'
-									: ' e a vaga vai para “Chamar próximo”.'}
+								Quem está com correção pedida e não corrigir até o prazo da correção fica com a inscrição
+								<strong>Recusada</strong>{cabecalho.evento
+									? ', e a vaga volta para as inscrições.'
+									: ', e a vaga vai para “Chamar próximo”.'}
 							{/if}
 						</span>
 					</div>
@@ -1261,7 +1251,7 @@
 												<span class="pendente-situacao">
 													{@render selo(
 														situacaoDoPendente(p),
-														p.correcao?.atrasada ? 'perigo' : p.correcao || p.situacao === 'Suplente' || p.situacao === 'Em andamento' ? 'ambar' : 'ok'
+														p.correcao || p.situacao === 'Suplente' || p.situacao === 'Em andamento' ? 'ambar' : 'ok'
 													)}
 													{#if p.correcao}<span class="pendente-motivo">“{p.correcao.motivo}”</span>{/if}
 												</span>
@@ -1387,12 +1377,8 @@
 		</label>
 		<div class="fm-aviso fm-aviso--azul fm-aviso--pequeno">
 			<span>
-				Se {quem} não corrigir até {ateTexto}, aparece em Pendentes como “Correção atrasada”, ainda com a vaga. Se não tiver
-				corrigido em <strong>{edicao ? diaEMes(edicao.inicio) : 'o início'}</strong>, quando começa {cabecalho?.evento
-					? 'o evento'
-					: 'o acampamento'}, a inscrição fica <strong>Recusada</strong>{cabecalho?.evento
-					? ' e a vaga volta para as inscrições.'
-					: ' e a vaga vai para “Chamar próximo”.'}
+				Até {ateTexto}, {quem} continua com a vaga. Se não corrigir até esse dia, a inscrição fica
+				<strong>Recusada</strong>{cabecalho?.evento ? ' e a vaga volta para as inscrições.' : ' e a vaga vai para “Chamar próximo”.'}
 			</span>
 		</div>
 		{#if erroAcao}<p class="fm-erro-linha" role="alert">{erroAcao}</p>{/if}

@@ -37,10 +37,10 @@ class InscricoesController extends ApiController
      * de propósito: ele também precisa entregar o formulário dentro do prazo, e é
      * isso que o habilita a assumir uma vaga liberada sem prazo extra.
      */
-    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Correção pedida', 'Correção atrasada'];
+    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Correção pedida'];
 
     /** Situações em que a organização pediu correção do formulário enviado. */
-    private const STATUS_CORRECAO = ['Correção pedida', 'Correção atrasada'];
+    private const STATUS_CORRECAO = ['Correção pedida'];
 
     /** Cache de acampamentos por id, para não reconsultar o mesmo a cada inscrição. */
     private array $campingsCache = [];
@@ -443,6 +443,8 @@ class InscricoesController extends ApiController
         $identity = $this->requirePermissao('usuarios');
         if ($identity instanceof Response) return $identity;
 
+        $this->prazoFormularioService->executarPrazosVencidos();
+
         $preRegs = $this->PreRegistrations->find()
             ->contain(['Activities', 'SelectionMethods'])
             ->where([
@@ -505,8 +507,7 @@ class InscricoesController extends ApiController
         $status   = $this->calcularStatus($preReg);
         $ehEvento = $this->ehEvento($preReg);
 
-        // Com correção pedida, o prazo que aparece é o da correção; passar dele
-        // não fecha o formulário (só o início da atividade fecha).
+        // Com correção pedida, o prazo que aparece (e que fecha o formulário) é o da correção.
         $correcao     = $this->correcaoDa($preReg);
         $prazo        = $correcao ? $correcao->deadline : $this->prazoDoFormulario($preReg);
         $prazoVencido = $prazo !== null && $prazo->getTimestamp() < time();
@@ -909,14 +910,14 @@ class InscricoesController extends ApiController
 
         // Prazo fechado: não aceita mais nem primeira resposta nem correção.
         // (Evento: o prazo é o fim das inscrições. Correção pedida pela
-        // organização: até o início da atividade, mesmo depois do prazo dela.)
+        // organização: o prazo da correção.)
         $prazo = $this->limiteParaEnviar($preReg);
         if ($prazo !== null && $prazo->getTimestamp() < time()) {
             $quando = $prazo->format('d/m/Y') . ' às ' . $prazo->format('H:i');
 
             return $this->apiError(
                 match (true) {
-                    in_array($status, self::STATUS_CORRECAO, true) => 'A atividade já começou, então não dá mais para corrigir o formulário.',
+                    in_array($status, self::STATUS_CORRECAO, true) => "O prazo para corrigir o formulário terminou em {$quando}.",
                     $ehEvento => "As inscrições terminaram em {$quando}.",
                     default   => "O prazo para responder o formulário terminou em {$quando}.",
                 },
@@ -928,13 +929,15 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * Até quando a pessoa pode enviar: com correção pedida, até o início da
-     * atividade; senão, o prazo do formulário (evento: o fim das inscrições).
+     * Até quando a pessoa pode enviar: com correção pedida, o prazo da correção
+     * (sem ele, o início da atividade); senão, o prazo do formulário (evento: o
+     * fim das inscrições).
      */
     private function limiteParaEnviar(object $preReg): mixed
     {
-        if ($this->correcaoDa($preReg)) {
-            return $preReg->activity->start_date ?? null;
+        $correcao = $this->correcaoDa($preReg);
+        if ($correcao) {
+            return $correcao->deadline ?? $preReg->activity->start_date ?? null;
         }
 
         return $this->prazoDoFormulario($preReg);
@@ -1508,12 +1511,10 @@ class InscricoesController extends ApiController
             if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CANCELADA) return 'Cancelada pela organização';
             if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CORRECAO) return 'Recusada';
         }
-        // A organização pediu correção do formulário enviado: a vaga continua.
-        // Passou do prazo da correção: "atrasada", ainda com a vaga.
+        // A organização pediu correção do formulário enviado: a vaga continua
+        // até o prazo da correção (depois dele, a varredura recusa a inscrição).
         $correcao = $preReg->form_submitted && $preReg->disqualified_at === null ? $this->correcaoDa($preReg) : null;
-        if ($correcao) {
-            return $correcao->deadline->getTimestamp() < time() ? 'Correção atrasada' : 'Correção pedida';
-        }
+        if ($correcao) return 'Correção pedida';
         // Evento não tem sorteio. Com formulário (que tenha perguntas), a
         // inscrição só conclui quando a pessoa envia.
         if ($this->ehEvento($preReg)) {
