@@ -196,6 +196,16 @@ class FormularioEventoTest extends RegrasTestCase
         $this->assertResponseCode(422);
     }
 
+    public function testAntesDoInicioDasInscricoesNaoInscreve(): void
+    {
+        $evento = $this->criarEvento(['participant_registration_start_date' => date('Y-m-d 08:00:00', strtotime('+2 days'))]);
+
+        $resposta = $this->inscreverNoEvento($this->participante('Ana'), $evento);
+
+        $this->assertResponseCode(422);
+        $this->assertStringContainsString('As inscrições deste evento abrem em', $resposta['error']);
+    }
+
     public function testEventoGratuitoSemDatasFicaComInscricoesAbertasAteOInicio(): void
     {
         // Evento gratuito não tem "Início das vendas": antes ficava "Em Breve" para sempre.

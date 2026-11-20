@@ -230,10 +230,31 @@
 		GRUPOS_CAMPISTA.filter((g) => (sorteio?.campistas.vagas_abertas?.[g] ?? 0) > 0)
 	);
 
+	// Quem tinha vaga e saiu: por prazo (formulário ou pagamento), cancelado pela
+	// organização ou recusado (correção não feita) — cada um no seu grupo.
+	const GRUPOS_SAIDA = [
+		{ chave: 'prazo', titulo: '⏳ Perderam a vaga por prazo' },
+		{ chave: 'cancelada_organizacao', titulo: '🚫 Canceladas pela organização' },
+		{ chave: 'correcao_nao_feita', titulo: '✖️ Recusadas: correção não feita no prazo' }
+	];
+
+	function grupoDaSaida(motivo: string) {
+		return motivo === 'cancelada_organizacao' || motivo === 'correcao_nao_feita' ? motivo : 'prazo';
+	}
+
+	function explicacaoSaida(grupo: string, servo: boolean) {
+		const vaga = servo
+			? 'a vaga do setor fica aberta até alguém chamar o próximo suplente.'
+			: 'a vaga fica aberta até alguém chamar o próximo suplente.';
+		if (grupo === 'cancelada_organizacao') return `A organização cancelou a inscrição na aba Respostas; ${vaga}`;
+		if (grupo === 'correcao_nao_feita') return `Não corrigiram o formulário até o prazo da correção; ${vaga}`;
+		return servo
+			? `Quem não enviou o formulário ou não pagou até o prazo saiu da equipe; ${vaga} Suplente sem formulário saiu da fila.`
+			: `Quem não enviou o formulário ou não pagou até o prazo saiu sozinho; ${vaga} Suplente sem formulário saiu da fila.`;
+	}
+
 	function textoMotivo(motivo: string) {
 		if (motivo === 'prazo_pagamento') return 'não pagou';
-		if (motivo === 'cancelada_organizacao') return 'cancelada pela organização';
-		if (motivo === 'correcao_nao_feita') return 'correção não feita';
 		return 'sem formulário';
 	}
 
@@ -500,7 +521,8 @@
 					<div class="vagas-abertas">
 						<h4>🔓 Vagas abertas</h4>
 						<p class="text-muted">
-							Alguém perdeu a vaga por não enviar o formulário ou não pagar no prazo. Chame o
+							Alguém perdeu a vaga (prazo do formulário ou do pagamento, inscrição cancelada ou
+							recusada — veja abaixo). Chame o
 							próximo suplente da fila do mesmo grupo — ele terá 3 dias para pagar (nunca depois
 							do início do acampamento).
 						</p>
@@ -530,27 +552,9 @@
 					</div>
 				{/if}
 
-				<!-- Quem tinha vaga e perdeu por prazo (formulário ou pagamento), e
-				     suplente que saiu da fila por não enviar o formulário. -->
-				{#if (sorteio.campistas.desclassificados?.length ?? 0) > 0}
-					<div class="raffle-disqualified">
-						<h4>⏳ Perderam a vaga por prazo ({sorteio.campistas.desclassificados.length})</h4>
-						<p class="text-muted">
-							Quem não enviou o formulário ou não pagou até o prazo saiu sozinho; a vaga fica
-							aberta até alguém chamar o próximo suplente. Suplente sem formulário saiu da fila.
-						</p>
-						<ul class="raffle-list muted-list">
-							{#each sorteio.campistas.desclassificados as p}
-								<li>
-									{p.nome}
-									<span class="tag-mini">{p.categoria}</span>
-									<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>
-									<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
-								</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
+				<!-- Quem tinha vaga e saiu (prazo, cancelamento ou recusa), e suplente
+				     que saiu da fila por não enviar o formulário. -->
+				{@render saidas(sorteio.campistas.desclassificados ?? [], false)}
 			{/if}
 		</section>
 
@@ -679,28 +683,34 @@
 				{/if}
 			{/if}
 		
-			<!-- Servos que perderam a vaga por não enviar o formulário no prazo. -->
-			{#if (sorteio.servos.desclassificados?.length ?? 0) > 0}
-				<div class="raffle-disqualified">
-					<h4>⏳ Perderam a vaga por prazo ({sorteio.servos.desclassificados.length})</h4>
-					<p class="text-muted">
-						Quem não enviou o formulário ou não pagou até o prazo saiu da equipe; a vaga do setor
-						fica aberta até alguém chamar o próximo suplente. Suplente sem formulário saiu da fila.
-					</p>
-					<ul class="raffle-list muted-list">
-						{#each sorteio.servos.desclassificados as p}
-							<li>
-								{p.nome}
-								<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>
-								<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
+			<!-- Servos que saíram (prazo, cancelamento ou recusa). -->
+			{@render saidas(sorteio.servos.desclassificados ?? [], true)}
 		</section>
 	{/if}
 {/if}
+
+{#snippet saidas(lista: any[], servo: boolean)}
+	{#each GRUPOS_SAIDA as g}
+		{@const deste = lista.filter((p) => grupoDaSaida(p.motivo) === g.chave)}
+		{#if deste.length > 0}
+			<div class="raffle-disqualified">
+				<h4>{g.titulo} ({deste.length})</h4>
+				<p class="text-muted">{explicacaoSaida(g.chave, servo)}</p>
+				<ul class="raffle-list muted-list">
+					{#each deste as p}
+						<li>
+							{p.nome}
+							{#if !servo}<span class="tag-mini">{p.categoria}</span>{/if}
+							{#if g.chave === 'prazo'}<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>{/if}
+							<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
+							{#if g.chave !== 'prazo' && p.nota}<span class="saida-nota">Motivo: {p.nota}</span>{/if}
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
+	{/each}
+{/snippet}
 
 <!-- Modal de Indicação -->
 {#if showIndicateModal}
@@ -1097,6 +1107,13 @@
 	.raffle-disqualified h4 {
 		margin: 0 0 0.3rem;
 		color: #9a3412;
+	}
+
+	.saida-nota {
+		display: block;
+		margin-top: 0.25rem;
+		font-size: 0.85rem;
+		color: #475569;
 	}
 
 	.vagas-abertas {

@@ -188,8 +188,6 @@
 
 	const taxaDe = (t: Trilha) => Number((t === 'servo' ? activity?.taxaServo : activity?.taxaParticipante) ?? 0);
 	const prazoPagDe = (t: Trilha) => dt(t === 'servo' ? activity?.prazoPagamentoServo : activity?.prazoPagamentoParticipante);
-	const linkPagDe = (t: Trilha) =>
-		(t === 'servo' ? activity?.linkPagamentoServo : activity?.linkPagamentoParticipante) as string | null;
 
 	/** Os marcos de cada trilha. Marco sem data cadastrada não entra. */
 	function marcosDe(t: Trilha): Marco[] {
@@ -324,7 +322,8 @@
 
 	let minhaTaxa = $derived(taxaDe(trilhaInscrita ?? trilhaPrincipal));
 	let meuPrazoPag = $derived(prazoPagDe(trilhaInscrita ?? trilhaPrincipal));
-	let meuLinkPag = $derived(linkPagDe(trilhaInscrita ?? trilhaPrincipal));
+	// O servidor só manda o link para quem está na hora de pagar.
+	let meuLinkPag = $derived(minhaInscricao?.linkPagamento ?? null);
 	let gratis = $derived(minhaTaxa <= 0);
 	let pago = $derived(!!minhaInscricao?.isPago);
 	let faltaPagar = $derived(!gratis && !pago);

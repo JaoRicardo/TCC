@@ -86,4 +86,39 @@ class PaginaAtividadeTest extends RegrasTestCase
         $antes = $this->inscrever($this->criarUsuario('Ana', sexo: 'F'), $this->criarAcampamento('Juvenil'));
         $this->assertFalse($this->minhaInscricao($this->fetchTable('Users')->get($antes->user_id), $antes)['naoSorteado']);
     }
+
+    public function testLinkDePagamentoSoParaQuemEstaNaHoraDePagar(): void
+    {
+        $acampamento = $this->criarAcampamento('FAC', dadosAtividade: [
+            'participant_fee' => 120, 'participant_payment_link' => 'https://exemplo.com/pagar',
+            'participant_payment_date' => date('Y-m-d 23:59:00', strtotime('+5 days')),
+        ]);
+
+        // A atividade pública não traz o link.
+        $this->configRequest(['headers' => ['Accept' => 'application/json']]);
+        $this->get("/api/v1/activities/{$acampamento->id}");
+        $this->assertArrayNotHasKey('linkPagamentoParticipante', $this->respostaJson()['data']);
+
+        $enviou = $this->inscrever($this->criarUsuario('Enviou', idade: 16), $acampamento, 'Campista', [
+            'selection_method_id' => $this->metodos['Sorteio'], 'form_submitted' => true,
+        ]);
+        $sorteada = $this->inscrever($this->criarUsuario('Sorteada', idade: 16, sexo: 'F'), $acampamento, 'Campista', [
+            'selection_method_id' => $this->metodos['Sorteio'],
+        ]);
+        $suplente = $this->inscrever($this->criarUsuario('Suplente', idade: 16), $acampamento, 'Campista', [
+            'substitute_position' => 1, 'form_submitted' => true,
+        ]);
+        $pagou = $this->inscrever($this->criarUsuario('Pagou', idade: 16), $acampamento, 'Campista', [
+            'selection_method_id' => $this->metodos['Sorteio'], 'form_submitted' => true, 'is_fee_paid' => true,
+        ]);
+        $link = fn(EntityInterface $i) => $this->minhaInscricao($this->fetchTable('Users')->get($i->user_id), $i)['linkPagamento'];
+
+        $this->assertSame('https://exemplo.com/pagar', $link($enviou));
+        $this->assertNull($link($sorteada), 'Sem o formulário enviado, ainda não paga.');
+        $this->assertNull($link($suplente), 'Suplente não paga.');
+        $this->assertNull($link($pagou));
+
+        $this->fetchTable('Activities')->updateAll(['participant_payment_date' => $this->ontem()], ['id' => $acampamento->id]);
+        $this->assertNull($link($enviou), 'Depois do prazo de pagamento, sem link.');
+    }
 }

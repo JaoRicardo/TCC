@@ -639,6 +639,8 @@ class SorteioService
                 $item['posicao']             = $descPos;
                 $item['metodo']              = $pr->selection_method->method ?? '';
                 $item['motivo']              = (string)$pr->disqualification_reason;
+                // Cancelada/recusada pela organização: o motivo que a pessoa lê.
+                $item['nota']                = $pr->disqualification_note;
                 $item['desclassificado_em']  = $pr->disqualified_at->format('Y-m-d\TH:i');
                 $item['pre_registration_id'] = $pr->id;
                 $desclassificados[] = $item;
@@ -962,6 +964,7 @@ class SorteioService
             $descPos++;
             $item = $this->serializeServoItem($pr->user, $descPos);
             $item['motivo'] = (string)$pr->disqualification_reason;
+            $item['nota'] = $pr->disqualification_note;
             $item['desclassificado_em'] = $pr->disqualified_at->format('Y-m-d\TH:i');
             $desclassificados[] = $item;
         }

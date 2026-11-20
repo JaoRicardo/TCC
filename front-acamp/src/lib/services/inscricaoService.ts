@@ -43,6 +43,8 @@ export interface MinhaInscricao {
     pagoEm?: string | null;
     /** Acampamento: continua "Inscrito" depois da data do sorteio (não foi sorteado nem ficou de suplente). */
     naoSorteado?: boolean;
+    /** Link de pagamento da atividade: só vem para quem está na hora de pagar. */
+    linkPagamento?: string | null;
     activity: { id: number; nome: string; categoria?: string; tipo?: string } | null;
 }
 

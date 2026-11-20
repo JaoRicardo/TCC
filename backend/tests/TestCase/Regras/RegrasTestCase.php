@@ -140,8 +140,9 @@ abstract class RegrasTestCase extends TestCase
             'raffle_couple_vacancies' => 0,
             'raffle_camper_date' => '2026-11-25 19:00:00',
             'raffle_servant_date' => '2026-11-25 19:00:00',
-            'raffle_servant_subscription_start_date' => '2026-11-01 08:00:00',
-            'raffle_servant_subscription_end_date' => '2026-11-20 23:59:00',
+            // Inscrições abertas hoje (campista e servo): a inscrição confere o período.
+            'raffle_servant_subscription_start_date' => date('Y-m-d 08:00:00', strtotime('-10 days')),
+            'raffle_servant_subscription_end_date' => date('Y-m-d 23:59:00', strtotime('+10 days')),
             'camper_registration_start_date' => '2026-11-26 08:00:00',
             'camper_registration_end_date' => '2026-12-01 23:59:00',
         ]);
@@ -159,6 +160,8 @@ abstract class RegrasTestCase extends TestCase
             'servant_fee' => 0,
             'category_id' => $this->categorias[$categoria],
             'camping_id' => $camping->id,
+            'participant_registration_start_date' => date('Y-m-d 08:00:00', strtotime('-10 days')),
+            'participant_registration_end_date' => date('Y-m-d 23:59:00', strtotime('+10 days')),
         ]);
     }
 

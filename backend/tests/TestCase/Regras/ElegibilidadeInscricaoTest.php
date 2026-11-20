@@ -131,4 +131,45 @@ class ElegibilidadeInscricaoTest extends RegrasTestCase
         $this->inscreverPelaApi($comSenior, $this->criarAcampamento('Discipulados'), 'Campista');
         $this->assertResponseCode(201);
     }
+
+    // ─── Período de inscrição ──────────────────────────────────────────────
+
+    public function testCampistaSoSeInscreveDentroDoPeriodoDeInscricoes(): void
+    {
+        $pessoa = $this->criarUsuario('Fora do prazo', idade: 15);
+        $amanha = date('Y-m-d 08:00:00', strtotime('+1 day'));
+        $ontem = date('Y-m-d 23:59:00', strtotime('-1 day'));
+
+        $naoAbriu = $this->criarAcampamento('FAC', dadosAtividade: ['participant_registration_start_date' => $amanha]);
+        $this->inscreverPelaApi($pessoa, $naoAbriu, 'Campista');
+        $this->assertRecusada('As inscrições de campistas abrem em');
+
+        $terminou = $this->criarAcampamento('FAC', dadosAtividade: ['participant_registration_end_date' => $ontem]);
+        $this->inscreverPelaApi($pessoa, $terminou, 'Campista');
+        $this->assertRecusada('As inscrições de campistas terminaram em');
+
+        $semData = $this->criarAcampamento('FAC', dadosAtividade: ['participant_registration_end_date' => null]);
+        $this->inscreverPelaApi($pessoa, $semData, 'Campista');
+        $this->assertRecusada('ainda não foram abertas');
+
+        $this->assertSame(0, $this->fetchTable('PreRegistrations')->find()->where(['user_id' => $pessoa->id])->count());
+    }
+
+    public function testServoUsaAsDatasDeInscricaoDeServos(): void
+    {
+        $pessoa = $this->criarUsuario('Ex-campista FAC', idade: 19);
+        $this->jaFoiCampista($pessoa, 'FAC');
+
+        // Campistas com inscrição encerrada não fecham a de servos, e vice-versa.
+        $acampamento = $this->criarAcampamento('FAC',
+            ['raffle_servant_subscription_end_date' => date('Y-m-d 23:59:00', strtotime('-1 day'))],
+            ['participant_registration_end_date' => date('Y-m-d 23:59:00', strtotime('+5 days'))],
+        );
+        $this->inscreverPelaApi($pessoa, $acampamento, 'Servo');
+        $this->assertRecusada('As inscrições de servos terminaram em');
+
+        $aberto = $this->criarAcampamento('FAC', dadosAtividade: ['participant_registration_end_date' => date('Y-m-d 23:59:00', strtotime('-1 day'))]);
+        $this->inscreverPelaApi($pessoa, $aberto, 'Servo');
+        $this->assertResponseCode(201);
+    }
 }

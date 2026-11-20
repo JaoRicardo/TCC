@@ -1137,10 +1137,10 @@ class ActivitiesController extends ApiController
             'fimInscricoes'         => $activity->participant_registration_end_date?->format('Y-m-d\TH:i'),
             'inicioInscricoesServo' => $activity->servant_registration_start_date?->format('Y-m-d\TH:i'),
             'fimInscricoesServo'    => $activity->servant_registration_end_date?->format('Y-m-d\TH:i'),
+            // O link de pagamento não é público: vem na inscrição de quem pode pagar
+            // (GET /me/inscricoes, "linkPagamento").
             'prazoPagamentoParticipante' => $activity->participant_payment_date?->format('Y-m-d\TH:i'),
-            'linkPagamentoParticipante'  => $activity->participant_payment_link,
             'prazoPagamentoServo'        => $activity->servant_payment_date?->format('Y-m-d\TH:i'),
-            'linkPagamentoServo'         => $activity->servant_payment_link,
             // Evento com formulário: a inscrição só conclui quando a pessoa envia.
             'formularioId'               => $activity->event_form_id,
         ];

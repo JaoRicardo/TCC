@@ -139,6 +139,10 @@ class InscricoesController extends ApiController
         // "campista uma vez, depois só servo") só existe para Acampamentos — Eventos
         // (Evento Geral, Celebração) não têm essa estrutura e ficam sem restrição aqui.
         if ($activity->camping_id !== null) {
+            $foraDoPeriodo = $this->foraDoPeriodoDeInscricao($activity, $tipo);
+            if ($foraDoPeriodo !== null) {
+                return $this->apiError($foraDoPeriodo, 422);
+            }
             $erro = $this->checkAcampamentoEligibility($identity, $activity, $tipo);
             if ($erro !== null) {
                 return $this->apiError($erro['mensagem'], 422);
@@ -147,6 +151,10 @@ class InscricoesController extends ApiController
             // Evento: sem sorteio, por ordem de chegada até o fim das inscrições
             // (sem data, até o início do evento) ou até acabarem as vagas. Com
             // formulário, a vaga só fica garantida quando a pessoa envia.
+            $inicioDasInscricoes = $activity->participant_registration_start_date;
+            if ($inicioDasInscricoes && $inicioDasInscricoes->getTimestamp() > time()) {
+                return $this->apiError('As inscrições deste evento abrem em ' . $this->dataEHora($inicioDasInscricoes) . '.', 422);
+            }
             $fimDasInscricoes = $activity->participant_registration_end_date ?? $activity->start_date;
             if ($fimDasInscricoes && $fimDasInscricoes->getTimestamp() < time()) {
                 return $this->apiError('As inscrições deste evento terminaram.', 422);
@@ -806,6 +814,11 @@ class InscricoesController extends ApiController
 
         $ehSuplente    = $preReg->substitute_position !== null;
         $prazoVencido  = $this->prazoPagamentoVencido($prazoPag);
+        $liberado      = $valor > 0
+            && !$preReg->is_fee_paid
+            && (bool)$preReg->form_submitted
+            && !$ehSuplente
+            && !$prazoVencido;
 
         return [
             'necessario'       => $valor > 0,
@@ -814,15 +827,12 @@ class InscricoesController extends ApiController
             // Suplente aparece com a taxa informada, mas sem cobrança.
             'eh_suplente'      => $ehSuplente,
             'prazo_vencido'    => $prazoVencido,
-            'liberado'         => $valor > 0
-                && !$preReg->is_fee_paid
-                && (bool)$preReg->form_submitted
-                && !$ehSuplente
-                && !$prazoVencido,
+            'liberado'         => $liberado,
             'integracao_ativa' => MercadoPagoService::configurado(),
             'status_provedor'  => $ultimo->status ?? null,
             'url_pagamento'    => $preReg->is_fee_paid ? null : ($ultimo->init_point ?? null),
-            'link_manual'      => $this->mercadoPagoService->linkManual($preReg, $activity),
+            // O link só vai para quem já pode pagar (não é público).
+            'link_manual'      => $liberado ? $this->mercadoPagoService->linkManual($preReg, $activity) : null,
             'prazo'            => $this->formatarDataHora($prazoPag),
         ];
     }
@@ -1355,12 +1365,44 @@ class InscricoesController extends ApiController
     private const CATEGORY_AGE_RANGES = RetiradaDoSorteioService::FAIXAS_DE_IDADE;
 
     /**
+     * Acampamento: a inscrição só vale dentro do período do tipo — campista
+     * pelas datas de inscrição da atividade, servo pelas de inscrição de servos.
+     * Sem data de fim, as inscrições ainda não foram abertas (a página faz igual).
+     * Null = dentro do período; senão, a mensagem de erro.
+     */
+    private function foraDoPeriodoDeInscricao(object $activity, string $tipo): ?string
+    {
+        if ($tipo === 'Servo') {
+            $camping = $this->Campings->find()->where(['id' => $activity->camping_id])->first();
+            [$de, $ate, $quem] = [$camping?->raffle_servant_subscription_start_date, $camping?->raffle_servant_subscription_end_date, 'servos'];
+        } else {
+            [$de, $ate, $quem] = [$activity->participant_registration_start_date, $activity->participant_registration_end_date, 'campistas'];
+        }
+
+        if ($ate === null) {
+            return "As inscrições de {$quem} ainda não foram abertas.";
+        }
+        if ($de !== null && $de->getTimestamp() > time()) {
+            return "As inscrições de {$quem} abrem em " . $this->dataEHora($de) . '.';
+        }
+        if ($ate->getTimestamp() < time()) {
+            return "As inscrições de {$quem} terminaram em " . $this->dataEHora($ate) . '.';
+        }
+
+        return null;
+    }
+
+    private function dataEHora(\DateTimeInterface $data): string
+    {
+        return $data->format('d/m/Y') . ' às ' . $data->format('H:i');
+    }
+
+    /**
      * Regras de elegibilidade específicas de Acampamento: uma pessoa só pode ser
      * campista uma vez por categoria; para servir, precisa já ter sido campista
      * naquela categoria (ou em uma "abaixo" dela na hierarquia); Juvenil exclui
      * casados/união estável; Discipulados exige ter sido campista no Sênior antes.
-     */
-    /**
+     *
      * Pode se inscrever como campista/servo neste acampamento? Null = pode;
      * senão, um código (a página da atividade escolhe o texto por ele) e a
      * mensagem que a inscrição devolve.
@@ -1551,6 +1593,22 @@ class InscricoesController extends ApiController
         return $data !== null && $data->getTimestamp() < time();
     }
 
+    /**
+     * O link de pagamento cadastrado na atividade, para quem está na hora de pagar:
+     * acampamento com o formulário enviado (sorteado ou indicado — suplente não paga)
+     * ou evento com a inscrição concluída; com taxa, ainda não pago e dentro do prazo.
+     */
+    private function linkParaPagar(object $preReg, string $status): ?string
+    {
+        $activity = $preReg->activity ?? null;
+        if (!$activity || $preReg->is_fee_paid) return null;
+        $naHora = $status === 'Formulário Enviado' || ($status === 'Inscrito' && $activity->camping_id === null);
+        if (!$naHora || $this->mercadoPagoService->valorDaTaxa($preReg, $activity) <= 0) return null;
+        if ($this->prazoPagamentoVencido($this->mercadoPagoService->prazoPagamento($preReg, $activity))) return null;
+
+        return $this->mercadoPagoService->linkManual($preReg, $activity);
+    }
+
     /** O texto que explica a situação: motivo da correção, do cancelamento ou da recusa. */
     private function motivoDaSituacao(object $preReg, string $status): ?string
     {
@@ -1649,6 +1707,9 @@ class InscricoesController extends ApiController
                 : null,
             'pagoEm'             => $preReg->is_fee_paid ? $this->pagoEm($preReg) : null,
             'naoSorteado'        => $status === 'Inscrito' && $this->sorteioJaPassou($preReg),
+            // O link de pagamento da atividade só vem para quem está na hora de pagar;
+            // a resposta pública da atividade não traz o link.
+            'linkPagamento'      => $this->linkParaPagar($preReg, $status),
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.
             'temFormulario'      => $this->temFormularioMontado($preReg),
