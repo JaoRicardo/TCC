@@ -7,11 +7,22 @@
 	import { loginUrl } from "$lib/redirect";
 	import type { Activity } from "$lib/types/models";
 	import { onMount } from "svelte";
+	import SeloFase from "$lib/components/SeloFase.svelte";
+	import {
+		algumaInscricaoAberta,
+		diaMes,
+		faseDaAtividade,
+		fraseAcontece,
+		jaTerminou,
+		servosAbertosAte,
+	} from "$lib/faseAtividade";
 	import banner from "$lib/imgs/banner.png";
 	import logoAsas from "$lib/imgs/logo-asas.png";
 
 	let activities: Activity[] = $state([]);
 	let loading = $state(true);
+	/** O selo e a frase "Acontece…" mudam com a hora: atualiza a cada minuto. */
+	let agora = $state(new Date());
 	// O filtro fica guardado na aba: "Voltar" da página da atividade volta para ele.
 	const CHAVE_FILTRO = "filtroInicio";
 	let currentFilter = $state("Todos");
@@ -21,7 +32,13 @@
 
 	// A lista de atividades é pública: visitante vê tudo, e só precisa entrar
 	// (ou criar a conta) na hora de se inscrever.
-	onMount(async () => {
+	onMount(() => {
+		const relogio = setInterval(() => (agora = new Date()), 60_000);
+		carregar();
+		return () => clearInterval(relogio);
+	});
+
+	async function carregar() {
 		try {
 			const salvo = sessionStorage.getItem(CHAVE_FILTRO);
 			if (salvo && FILTROS.some((f) => f.chave === salvo)) currentFilter = salvo;
@@ -38,7 +55,7 @@
 		} finally {
 			loading = false;
 		}
-	});
+	}
 
 	// As inscrições da pessoa só existem com login — espera a sessão salva ser
 	// conferida, senão o visitante levaria um 401 e iria parar no login.
@@ -68,7 +85,7 @@
 	const FILTROS = [
 		{ chave: "Todos", rotulo: "Todos" },
 		{ chave: "Acampamentos", rotulo: "Acampamentos" },
-		{ chave: "Eventos", rotulo: "Eventos Especiais" },
+		{ chave: "Eventos", rotulo: "Eventos" },
 	];
 
 	function doFiltro(chave: string, lista: Activity[]) {
@@ -77,7 +94,20 @@
 		return lista.filter((a) => a.activitable_type === tipo);
 	}
 
-	let filteredActivities = $derived(doFiltro(currentFilter, activities));
+	// O início esconde, para todos, só as atividades que já aconteceram (o fim
+	// é o início + a duração em dias). Inscrições encerradas de uma atividade
+	// que ainda vai acontecer continuam aparecendo — é pelo cartão que se
+	// acompanha o sorteio, o formulário e o pagamento. As que já aconteceram
+	// continuam na Gestão de Atividades do painel.
+	// Ordem: da criada mais recente para a mais antiga (decisão do usuário).
+	const criadaEm = (a: Activity) => (a.created ? new Date(a.created).getTime() : 0);
+	let ativas = $derived(
+		activities
+			.filter((a) => !jaTerminou(a.datas, agora))
+			.sort((a, b) => criadaEm(b) - criadaEm(a) || b.id - a.id),
+	);
+
+	let filteredActivities = $derived(doFiltro(currentFilter, ativas));
 
 	function escolherFiltro(chave: string) {
 		currentFilter = chave;
@@ -93,12 +123,6 @@
 		minhasInscricoesMap = {};
 		formulariosPendentes = 0;
 		inscricoesCarregadas = false;
-	}
-
-	function statusSlug(status?: string) {
-		if (status === "Inscrições Abertas") return "open";
-		if (status === "Encerrado") return "closed";
-		return "soon";
 	}
 
 	const ENCERRADAS: Record<string, string> = {
@@ -194,7 +218,7 @@
 					onclick={() => escolherFiltro(filtro.chave)}
 				>
 					{filtro.rotulo}
-					<span class="filtro-contador">{doFiltro(filtro.chave, activities).length}</span>
+					<span class="filtro-contador">{doFiltro(filtro.chave, ativas).length}</span>
 				</button>
 			{/each}
 		</nav>
@@ -251,8 +275,9 @@
 			<div class="grade">
 				{#each filteredActivities as item}
 					{@const imagem = imagemDe(item)}
-					{@const encerrado = statusSlug(item.status) === "closed"}
-					<article class="card" class:encerrado>
+					{@const fase = faseDaAtividade(item.datas, agora)}
+					{@const servosAte = servosAbertosAte(item.datas, fase, agora)}
+					<article class="card">
 						<div class="card-arco" class:sem-imagem={!imagem}>
 							{#if imagem}
 								<img src={imagem} alt="" class="card-foto" />
@@ -266,10 +291,7 @@
 								{:else}
 									<span class="etiqueta etiqueta-evento">Evento</span>
 								{/if}
-								<span class="status status-{statusSlug(item.status)}">
-									{#if statusSlug(item.status) === "open"}<span class="status-ponto"></span>{/if}
-									{item.status || "Em Breve"}
-								</span>
+								<span class="card-situacao"><SeloFase {fase} /></span>
 							</div>
 						</div>
 
@@ -280,22 +302,26 @@
 								<span class="filete-losango"></span>
 								<span class="filete-linha"></span>
 							</div>
-							<dl class="card-dados">
-								<dt>Início</dt>
-								<dd>
-									{item.start_date
-										? new Date(item.start_date).toLocaleDateString("pt-BR")
-										: "A definir"}
-								</dd>
-								{#if item.category || item.targetAudience}
-									<dt>Público</dt>
-									<dd>{item.category ? item.category.name : item.targetAudience}</dd>
-								{/if}
-								{#if item.place}
-									<dt>Local</dt>
-									<dd>{item.place}</dd>
-								{/if}
-							</dl>
+							<p class="card-quando">{fraseAcontece(item.datas, fase, agora)}</p>
+							{#if item.category || item.targetAudience || item.place}
+								<dl class="card-dados">
+									{#if item.category || item.targetAudience}
+										<dt>Público</dt>
+										<dd>{item.category ? item.category.name : item.targetAudience}</dd>
+									{/if}
+									{#if item.place}
+										<dt>Local</dt>
+										<dd>{item.place}</dd>
+									{/if}
+								</dl>
+							{/if}
+
+							{#if servosAte}
+								<p class="card-servos">
+									<span class="losango-servos" aria-hidden="true"></span>
+									<span>Inscrições para servos abertas até <strong>{diaMes(servosAte)}</strong></span>
+								</p>
+							{/if}
 
 							{#if minhasInscricoesMap[item.id]}
 								{@const aviso = avisoDoCartao(minhasInscricoesMap[item.id])}
@@ -307,7 +333,8 @@
 
 							<div class="card-botoes">
 								<a href="/dashboard/atividades/{item.id}" class="btn-detalhes">Ver Detalhes</a>
-								{#if item.status === "Inscrições Abertas" && !minhasInscricoesMap[item.id]}
+								<!-- Segue as datas, não o selo: servo pode estar aberto com o selo em outra fase. -->
+								{#if algumaInscricaoAberta(item.datas, agora) && !minhasInscricoesMap[item.id]}
 									<a href={linkInscrever(item.id)} class="btn-inscrever">Inscrever-se</a>
 								{/if}
 							</div>
@@ -340,7 +367,6 @@
 		--tinta: #1e2233;
 		--tinta-2: #2b3045;
 		--tinta-3: #4f5468;
-		--cinza-encerrado: #5e6272;
 		--margem: clamp(12px, 3vw, 48px);
 
 		min-height: 100vh;
@@ -857,10 +883,6 @@
 		justify-content: center;
 	}
 
-	.card.encerrado .card-arco {
-		filter: grayscale(0.75) opacity(0.7);
-	}
-
 	.card-foto {
 		position: absolute;
 		inset: 0;
@@ -903,24 +925,28 @@
 		right: 12px;
 		bottom: 12px;
 		display: flex;
+		flex-wrap: wrap;
 		justify-content: space-between;
-		align-items: center;
-		gap: 8px;
+		align-items: flex-end;
+		gap: 6px 8px;
 	}
 
-	.etiqueta,
-	.status {
+	/* Se a linha quebrar, o selo de situação vai para baixo, à direita. */
+	.card-situacao {
+		margin-left: auto;
+		display: flex;
+	}
+
+	.etiqueta {
 		font-size: 12px;
 		font-weight: 700;
 		text-transform: uppercase;
 		border-radius: 999px;
 		padding: 5px 10px;
 		white-space: nowrap;
-	}
-
-	.etiqueta {
 		letter-spacing: 0.08em;
 		color: var(--pergaminho);
+		box-shadow: 0 2px 8px rgba(15, 29, 61, 0.35);
 	}
 
 	.etiqueta-acampamento {
@@ -931,41 +957,6 @@
 	.etiqueta-evento {
 		background: var(--vermelho);
 		border: 1px solid #d9a9a0;
-	}
-
-	.status {
-		letter-spacing: 0.04em;
-	}
-
-	.status-open {
-		display: flex;
-		align-items: center;
-		gap: 6px;
-		color: var(--azul-noite);
-		background: var(--ouro-claro);
-		border: 1px solid #fff3c8;
-		box-shadow: 0 2px 8px rgba(15, 29, 61, 0.35);
-	}
-
-	.status-ponto {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: #1f6b3f;
-		box-shadow: 0 0 0 3px rgba(31, 107, 63, 0.2);
-	}
-
-	.status-soon {
-		color: var(--azul);
-		background: var(--pergaminho);
-		border: 1px solid #c9cfde;
-		padding: 5px 11px;
-	}
-
-	.status-closed {
-		color: var(--pergaminho);
-		background: var(--cinza-encerrado);
-		padding: 5px 11px;
 	}
 
 	.card-corpo {
@@ -981,10 +972,6 @@
 		font: 600 25px / 1.12 "Cormorant Garamond", serif;
 		color: var(--tinta);
 		text-wrap: balance;
-	}
-
-	.card.encerrado .card-titulo {
-		color: var(--tinta-3);
 	}
 
 	.filete {
@@ -1011,6 +998,32 @@
 		min-width: 0;
 		height: 1px;
 		background: var(--borda-suave);
+	}
+
+	.card-quando {
+		margin: 0;
+		font-size: 17px;
+		font-weight: 600;
+		line-height: 1.3;
+		color: var(--azul);
+	}
+
+	.card-servos {
+		margin: 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 15px;
+		line-height: 1.35;
+		color: var(--tinta-2);
+	}
+
+	.losango-servos {
+		flex: 0 0 7px;
+		width: 7px;
+		height: 7px;
+		background: var(--ouro);
+		transform: rotate(45deg);
 	}
 
 	.card-dados {

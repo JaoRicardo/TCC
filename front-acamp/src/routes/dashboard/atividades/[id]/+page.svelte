@@ -19,6 +19,8 @@
 	} from '$lib/services/inscricaoService';
 	import { loginUrl, registroUrl } from '$lib/redirect';
 	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
+	import SeloFase from '$lib/components/SeloFase.svelte';
+	import { datasDaAtividade, faseDaAtividade, servosAbertosAte } from '$lib/faseAtividade';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 	import { onMount } from 'svelte';
 
@@ -264,11 +266,10 @@
 		if (!insc.length) return !(fim && hoje > fimDoDia(fim));
 		return insc.every((m) => !!m.de && hoje < m.de);
 	});
-	let atividadeTerminou = $derived(!!fim && hoje > fimDoDia(fim));
-	/** Selo do topo: aberta / em breve / inscrições encerradas / encerrado. */
-	let situacaoAtividade = $derived<'abertas' | 'breve' | 'fechadas' | 'encerrado'>(
-		algumaAberta ? 'abertas' : atividadeTerminou ? 'encerrado' : nenhumaAbriu ? 'breve' : 'fechadas'
-	);
+	/** Selo do topo: a mesma fase do cartão do Início (`lib/faseAtividade.ts`). */
+	let datasDaFase = $derived(activity ? datasDaAtividade(activity) : null);
+	let fase = $derived(datasDaFase ? faseDaAtividade(datasDaFase, hoje) : 'emBreve');
+	let servosAte = $derived(datasDaFase ? servosAbertosAte(datasDaFase, fase, hoje) : null);
 
 	// ─── A pessoa ─────────────────────────────────────────────────────────
 
@@ -452,7 +453,10 @@
 				else
 					B.texto = [
 						inscCampista?.ate ? `Para campistas, terminaram em ${fDH(inscCampista.ate)}.` : '',
-						inscServo?.ate ? `Para servos, em ${fDH(inscServo.ate)}.` : ''
+						inscServo?.ate ? `Para servos, em ${fDH(inscServo.ate)}.` : '',
+						fase === 'aguardandoSorteio' && datasDaFase?.sorteio
+							? `O sorteio de campistas é em ${fDH(datasDaFase.sorteio)}.`
+							: ''
 					]
 						.filter(Boolean)
 						.join(' ');
@@ -942,17 +946,15 @@
 								<span class="sel sel-acamp">Acampamento</span>
 								{#if categoria}<span class="sel sel-cat">{categoria}</span>{/if}
 							{/if}
-							{#if situacaoAtividade === 'abertas'}
-								<span class="sel sel-abertas"><span class="sel-ponto"></span>Inscrições abertas</span>
-							{:else if situacaoAtividade === 'breve'}
-								<span class="sel sel-breve">Em breve</span>
-							{:else if situacaoAtividade === 'fechadas'}
-								<span class="sel sel-fechadas">Inscrições encerradas</span>
-							{:else}
-								<span class="sel sel-encerrado">Encerrado</span>
-							{/if}
+							<SeloFase {fase} />
 						</div>
 						<h1 id="t-nome">{activity.nome}</h1>
+						{#if servosAte}
+							<p class="topo-servos">
+								<span class="losango-servos" aria-hidden="true"></span>
+								<span>Inscrições para servos abertas até <strong>{fCurta(servosAte)}</strong></span>
+							</p>
+						{/if}
 						<dl class="topo-dados">
 							<div><dt>Local</dt><dd>{activity.local || 'A definir'}</dd></div>
 							<div><dt>Datas</dt><dd>{datas}</dd></div>
@@ -1635,36 +1637,21 @@
 		background: rgba(255, 253, 248, 0.12);
 		border: 1px solid rgba(226, 206, 138, 0.6);
 	}
-	.sel-abertas {
-		letter-spacing: 0.04em;
-		color: var(--azul-escuro);
-		background: var(--ouro-claro);
-		border: 1px solid #fff3c8;
+	.topo-servos {
+		margin: -4px 0 0;
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 16px;
+		color: var(--pergaminho);
 	}
-	.sel-ponto {
+
+	.losango-servos {
+		flex: 0 0 7px;
 		width: 7px;
 		height: 7px;
-		border-radius: 50%;
-		background: #1f6b3f;
-		box-shadow: 0 0 0 3px rgba(31, 107, 63, 0.2);
-	}
-	.sel-breve {
-		letter-spacing: 0.04em;
-		color: var(--azul);
-		background: var(--pergaminho);
-		border: 1px solid #c9cfde;
-	}
-	.sel-fechadas {
-		letter-spacing: 0.04em;
-		color: var(--pergaminho);
-		background: #5e6272;
-		border: 1px solid #8a8c99;
-	}
-	.sel-encerrado {
-		letter-spacing: 0.04em;
-		color: var(--pergaminho);
-		background: #5e6272;
-		border: 1px solid #5e6272;
+		background: var(--ouro-claro);
+		transform: rotate(45deg);
 	}
 
 	.topo h1 {

@@ -1,3 +1,5 @@
+import type { DatasDaAtividade } from '$lib/faseAtividade';
+
 export interface User {
     id: number;
     name: string;
@@ -28,4 +30,6 @@ export interface Activity {
     formularioId?: number | null;
     targetAudience?: string;
     status?: 'Em Breve' | 'Inscrições Abertas' | 'Encerrado' | string;
+    /** Datas que decidem a fase (selo do Início): `lib/faseAtividade.ts`. */
+    datas: DatasDaAtividade;
 }

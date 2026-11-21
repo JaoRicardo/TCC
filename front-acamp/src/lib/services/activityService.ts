@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/api';
 import type { Activity } from '$lib/types/models';
+import { datasDaAtividade } from '$lib/faseAtividade';
 
 const USE_MOCKS = false; // Mocks desativados para usar a API real
 
@@ -13,7 +14,7 @@ export async function getActivities(): Promise<{ activities: Activity[], error?:
                 { id: 3, name: 'Luau com Cristo', activitable_type: 'Events', start_date: '2026-09-15T19:00:00Z', place: 'Praia do Sol', category: { name: 'Jovens' }, image: 'https://images.unsplash.com/photo-1527529482837-4698179dc6ce?w=800&q=80' },
                 { id: 4, name: 'Seminário de Casais', activitable_type: 'Events', start_date: '2026-10-05T09:00:00Z', place: 'Auditório Principal', category: { name: 'Casais' }, image: 'https://images.unsplash.com/photo-1511895426328-dc8714191300?w=800&q=80' },
                 { id: 5, name: 'Festa das Crianças', activitable_type: 'Events', start_date: '2026-10-12T14:00:00Z', place: 'Salão Paroquial', category: { name: 'Crianças' }, image: 'https://images.unsplash.com/photo-1530103043063-8a3560731f82?w=800&q=80' }
-            ]
+            ].map(a => ({ ...a, datas: datasDaAtividade({ tipo: a.activitable_type === 'Campings' ? 'Acampamento' : 'Evento', inicioEvento: a.start_date }) }))
         };
     }
 
@@ -33,7 +34,9 @@ export async function getActivities(): Promise<{ activities: Activity[], error?:
             category: b.categoria ? { id: b.categoria.id, name: b.categoria.nome } : null,
             formularioId: b.formularioId ?? null,
             targetAudience: b.targetAudience || b.publicoAlvo,
-            status: b.status
+            status: b.status,
+            created: b.criadoEm ?? undefined,
+            datas: datasDaAtividade(b)
         }));
         return { activities: mappedActivities };
     }

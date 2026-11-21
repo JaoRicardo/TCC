@@ -3,6 +3,7 @@
 	import { getActivities, deleteActivity as apiDeleteActivity } from '$lib/services/activityService';
 	import type { Activity } from '$lib/types/models';
 	import { pode } from '$lib/permissoes';
+	import { faseDaAtividade, TEXTO_DA_FASE } from '$lib/faseAtividade';
 	import { doAcampamento, doEvento, enderecoDasRespostas } from '$lib/formularios';
 
 	let activities: Activity[] = $state([]);
@@ -52,6 +53,14 @@
 		if (!dateString) return "A definir";
 		return new Date(dateString).toLocaleDateString('pt-BR');
 	}
+
+	// A mesma fase do selo do Início; "Realizada" = já aconteceu e saiu do Início.
+	const agora = new Date();
+	function situacao(a: Activity): { texto: string; classe: string } {
+		const fase = faseDaAtividade(a.datas, agora);
+		if (fase === 'encerrado') return { texto: 'Realizada', classe: 'realizada' };
+		return { texto: TEXTO_DA_FASE[fase], classe: fase };
+	}
 </script>
 
 <svelte:head>
@@ -85,13 +94,14 @@
 					<th>Tipo</th>
 					<th>Data Inicial</th>
 					<th>Local</th>
+					<th>Situação</th>
 					<th class="center">Ações</th>
 				</tr>
 			</thead>
 			<tbody>
 				{#if activities.length === 0}
 					<tr>
-						<td colspan="6" class="empty-state">Nenhuma atividade encontrada.</td>
+						<td colspan="7" class="empty-state">Nenhuma atividade encontrada.</td>
 					</tr>
 				{/if}
 				{#each activities as activity}
@@ -107,6 +117,10 @@
 						</td>
 						<td>{formatDate(activity.start_date)}</td>
 						<td>{activity.place || 'A definir'}</td>
+						<td>
+							<!-- "Realizada" já saiu do início do site, mas continua aqui. -->
+							<span class="status-badge {situacao(activity).classe}">{situacao(activity).texto}</span>
+						</td>
 						<td class="actions-cell">
 							<a href="/dashboard/atividades/{activity.id}" class="action-btn view-btn" title="Ver Detalhes">👁️</a>
 							<!-- Cada ação só aparece para quem tem a tela liberada. -->
@@ -243,6 +257,40 @@
 	.type-badge.event {
 		background-color: #fce7f3;
 		color: #db2777;
+	}
+
+	.status-badge {
+		padding: 0.3rem 0.6rem;
+		border-radius: 20px;
+		font-size: 0.75rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.status-badge.abertas {
+		background-color: #dcfce7;
+		color: #166534;
+	}
+
+	.status-badge.emBreve,
+	.status-badge.aguardandoSorteio {
+		background-color: #e6ebf5;
+		color: #21376a;
+	}
+
+	.status-badge.inscricoesEncerradas {
+		background-color: #fef3c7;
+		color: #92400e;
+	}
+
+	.status-badge.acontecendo {
+		background-color: #1f6b3f;
+		color: #ffffff;
+	}
+
+	.status-badge.realizada {
+		background-color: #e5e7eb;
+		color: #4b5563;
 	}
 
 	/* Botões de Ação */

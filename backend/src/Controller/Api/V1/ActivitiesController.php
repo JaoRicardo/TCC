@@ -1127,6 +1127,8 @@ class ActivitiesController extends ApiController
             'inicioEvento' => $activity->start_date?->format('Y-m-d\TH:i'),
             'fimEvento'    => $this->calcEndDate($activity->start_date, $activity->duration_days),
             'status'       => $this->calcStatus($activity),
+            // O Início mostra da criada mais recente para a mais antiga.
+            'criadoEm'     => $activity->created?->format('Y-m-d\TH:i:s'),
             'idadeMinima'  => $activity->min_age,
             'idadeMaxima'  => $activity->max_age,
             'targetAudience' => $activity->target_audience ?? 'Geral',
@@ -1156,6 +1158,9 @@ class ActivitiesController extends ApiController
                 'vagasSorteioMulher'    => $camping->raffle_woman_vacancies,
                 'vagasSorteioCasal'     => $camping->raffle_couple_vacancies,
                 'inicioSorteio'         => $camping->raffle_camper_date?->format('Y-m-d\TH:i'),
+                // O selo "Aguardando sorteio" do site: um sorteio feito à mão antes
+                // da data já conta como feito.
+                'sorteioCampistasRealizado' => $this->sorteioService->campistasJaRealizado((int)$activity->id),
                 // Prazo para o selecionado responder o formulário; vencido, a vaga
                 // vai para o primeiro suplente da fila.
                 'prazoFormularioCampista' => $camping->camper_form_deadline?->format('Y-m-d\TH:i'),
