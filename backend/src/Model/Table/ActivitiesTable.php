@@ -155,7 +155,11 @@ class ActivitiesTable extends Table
         // Pagamento tem que fechar antes de o acampamento começar.
         foreach (['participant_payment_date', 'servant_payment_date'] as $campo) {
             $rules->add(
-                fn($activity) => self::pagamentoAntesDoInicio($activity->get($campo), $activity->start_date),
+                fn($activity) => self::pagamentoAntesDoInicio(
+                    $activity->get($campo),
+                    $activity->start_date,
+                    $activity->camping_id === null,
+                ),
                 "{$campo}_antes_do_inicio",
                 [
                     'errorField' => $campo,
@@ -167,10 +171,17 @@ class ActivitiesTable extends Table
         return $rules;
     }
 
-    private static function pagamentoAntesDoInicio(mixed $pagamento, mixed $inicio): bool
+    /**
+     * Acampamento: até a hora de início. Evento (datas sem hora): o prazo vale
+     * até 23h59 do dia, então basta não passar do primeiro dia do evento.
+     */
+    private static function pagamentoAntesDoInicio(mixed $pagamento, mixed $inicio, bool $evento): bool
     {
         if (!$pagamento instanceof \DateTimeInterface || !$inicio instanceof \DateTimeInterface) {
             return true;
+        }
+        if ($evento) {
+            return $pagamento->format('Y-m-d') <= $inicio->format('Y-m-d');
         }
 
         return $pagamento <= $inicio;

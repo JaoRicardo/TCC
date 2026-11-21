@@ -20,9 +20,11 @@ use Cake\ORM\Locator\TableLocator;
  *   Acampamento sem prazo cadastrado nunca desclassifica ninguém — a automação
  *   só age onde o organizador definiu o prazo de propósito.
  * - O prazo do pagamento é a data cadastrada na atividade. Só vale para quem já
- *   enviou o formulário (quem não enviou cai na regra do formulário) e só onde
- *   existe taxa. Suplente chamado para uma vaga ganha alguns dias a partir de
- *   quando foi chamado (ver MercadoPagoService::prazoPagamento).
+ *   precisa pagar (PagamentoService::precisaPagar) e só onde existe valor. A
+ *   vaga só sai PagamentoService::DIAS_DE_FOLGA dias depois do prazo, para a
+ *   equipe registrar quem pagou no último dia. Vale também para evento.
+ *   Suplente chamado para uma vaga ganha alguns dias a partir de quando foi
+ *   chamado (ver MercadoPagoService::prazoPagamento).
  * - Desclassificar não apaga o `selection_method_id`: ele continua registrando
  *   como a pessoa tinha sido escolhida, e é o `disqualified_at` que diz que a
  *   vaga não vale mais. Isso também evita que a pessoa volte pro pool e seja
@@ -68,7 +70,7 @@ class PrazoFormularioService
     private $FormCorrections;
     private $UserChangeLogs;
     private $UserDocuments;
-    private MercadoPagoService $mercadoPago;
+    private PagamentoService $pagamentos;
 
     public function __construct()
     {
@@ -84,7 +86,7 @@ class PrazoFormularioService
         $this->FormCorrections  = $locator->get('FormCorrections');
         $this->UserChangeLogs   = $locator->get('UserChangeLogs');
         $this->UserDocuments    = $locator->get('UserDocuments');
-        $this->mercadoPago      = new MercadoPagoService();
+        $this->pagamentos       = new PagamentoService();
     }
 
     // ─── Consulta de prazo (usada também pela tela do formulário) ───────────
@@ -152,8 +154,21 @@ class PrazoFormularioService
                 if ($this->prazoGeral($camping, $tipo) !== null) {
                     $this->processarFormularios($activity, $camping, $tipo, $log);
                 }
-                $this->processarPagamentos($activity, $tipo, $log);
             }
+        }
+
+        // Pagamento: acampamento e evento, onde houver valor e prazo.
+        $comValor = $this->Activities->find()
+            ->where([
+                'deleted IS' => null,
+                'OR' => [
+                    ['participant_fee >' => 0, 'participant_payment_date IS NOT' => null],
+                    ['servant_fee >' => 0, 'servant_payment_date IS NOT' => null],
+                ],
+            ])
+            ->all();
+        foreach ($comValor as $activity) {
+            $this->processarPagamentos($activity, $log);
         }
 
         $this->recusarCorrecoesNaoFeitas($log);
@@ -295,22 +310,20 @@ class PrazoFormularioService
     }
 
     /**
-     * Quem enviou o formulário mas não pagou até a data de pagamento perde a vaga.
-     * Só age onde há taxa e data de pagamento cadastradas.
+     * Quem precisa pagar e não tem pagamento registrado perde a vaga quando passam
+     * o prazo e os dias de folga (PagamentoService). Acampamento: a vaga entra em
+     * "Chamar próximo" (casal sai junto); evento: a vaga volta para as inscrições.
      */
-    private function processarPagamentos(object $activity, string $tipo, array &$log): void
+    private function processarPagamentos(object $activity, array &$log): void
     {
         $naoPagos = $this->PreRegistrations->find()
             ->contain(['Users'])
             ->where([
-                'PreRegistrations.activity_id'                => $activity->id,
-                'PreRegistrations.subscription_type'          => $tipo,
-                'PreRegistrations.deleted IS'                 => null,
-                'PreRegistrations.is_quitter'                 => false,
-                'PreRegistrations.disqualified_at IS'         => null,
-                'PreRegistrations.selection_method_id IS NOT' => null,
-                'PreRegistrations.form_submitted'             => true,
-                'PreRegistrations.is_fee_paid'                => false,
+                'PreRegistrations.activity_id'        => $activity->id,
+                'PreRegistrations.deleted IS'         => null,
+                'PreRegistrations.is_quitter'         => false,
+                'PreRegistrations.disqualified_at IS' => null,
+                'PreRegistrations.is_fee_paid'        => false,
             ])
             ->all()
             ->toArray();
@@ -319,12 +332,16 @@ class PrazoFormularioService
 
         foreach ($naoPagos as $preReg) {
             if (isset($jaTratados[$preReg->id])) continue;
-            if ($this->mercadoPago->valorDaTaxa($preReg, $activity) <= 0) continue;
+            if (!$this->pagamentos->deveTirarVaga($preReg, $activity)) continue;
 
-            $prazo = $this->mercadoPago->prazoPagamento($preReg, $activity);
-            if ($prazo === null || $this->asDateTime($prazo)->getTimestamp() >= time()) continue;
-
-            $this->tirarVaga($activity, $preReg, self::MOTIVO_PRAZO_PAGAMENTO, $jaTratados, $log);
+            $prazo = $this->pagamentos->prazo($preReg, $activity)?->format('d/m/Y');
+            foreach ($this->tirarVaga($activity, $preReg, self::MOTIVO_PRAZO_PAGAMENTO, $jaTratados, $log) as $pr) {
+                $this->UserChangeLogs->registrar(
+                    (int)$pr->user_id,
+                    null,
+                    "Inscrição em {$activity->name} perdeu a vaga: pagamento não registrado até {$prazo}."
+                );
+            }
         }
     }
 

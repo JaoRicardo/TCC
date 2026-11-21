@@ -8,6 +8,7 @@
 	import type { Activity } from "$lib/types/models";
 	import { onMount } from "svelte";
 	import SeloFase from "$lib/components/SeloFase.svelte";
+	import { textoDaFaixa } from "$lib/faixaEtaria";
 	import {
 		algumaInscricaoAberta,
 		diaMes,
@@ -133,9 +134,27 @@
 		"Retirado do sorteio": "Retirado do sorteio",
 	};
 
+	/** "2026-11-18" → "18/11". */
+	const diaMesDe = (s: string) => `${s.slice(8, 10)}/${s.slice(5, 7)}`;
+
 	/** O aviso do cartão: cor, texto antes do destaque, destaque e texto depois. */
 	function avisoDoCartao(i: MinhaInscricao): { tom: string; antes: string; forte: string; depois: string } {
+		const aviso = avisoSemPagamento(i);
+		// Qualquer inscrição ativa com pagamento registrado (até adiantado) mostra a data.
+		if (i.pagoEm && aviso.tom !== "cancelled" && !aviso.depois.includes("pago em"))
+			aviso.depois += ` · pago em ${diaMesDe(i.pagoEm)}`;
+		return aviso;
+	}
+
+	function avisoSemPagamento(i: MinhaInscricao): { tom: string; antes: string; forte: string; depois: string } {
 		const evento = i.activity?.tipo === "Evento";
+		const p = i.pagamento;
+		// Já precisa pagar (pagamento direto com a organização) e ainda não pagou.
+		if (p?.situacao === "nao_pago" && p.precisaPagar)
+			return { tom: "waiting", antes: "", forte: "Falta o pagamento", depois: p.prazo ? ` · pague até ${diaMesDe(p.prazo)}` : "" };
+		const garantida = (evento && i.status === "Inscrito") || i.status === "Formulário Enviado";
+		if (garantida)
+			return { tom: "confirmed", antes: "", forte: "Vaga garantida", depois: i.pagoEm ? ` · pago em ${diaMesDe(i.pagoEm)}` : "" };
 		if (ENCERRADAS[i.status]) return { tom: "cancelled", antes: "", forte: ENCERRADAS[i.status], depois: "" };
 		if (i.status === "Correção pedida") {
 			const ate = i.prazoCorrecao ? new Date(i.prazoCorrecao) : null;
@@ -303,11 +322,15 @@
 								<span class="filete-linha"></span>
 							</div>
 							<p class="card-quando">{fraseAcontece(item.datas, fase, agora)}</p>
-							{#if item.category || item.targetAudience || item.place}
+							{#if item.category || item.targetAudience || item.place || textoDaFaixa(item.idadeMinima, item.idadeMaxima)}
 								<dl class="card-dados">
 									{#if item.category || item.targetAudience}
 										<dt>Público</dt>
-										<dd>{item.category ? item.category.name : item.targetAudience}</dd>
+										<dd>{item.category ? item.category.name : item.targetAudience === "Geral" ? "Todos" : item.targetAudience}</dd>
+									{/if}
+									{#if item.activitable_type === "Events" && textoDaFaixa(item.idadeMinima, item.idadeMaxima)}
+										<dt>Idade</dt>
+										<dd>{textoDaFaixa(item.idadeMinima, item.idadeMaxima)}</dd>
 									{/if}
 									{#if item.place}
 										<dt>Local</dt>

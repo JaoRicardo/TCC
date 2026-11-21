@@ -39,6 +39,12 @@ class PreRegistration extends Entity
     protected array $_accessible = [
         'subscription_type'  => true,
         'is_fee_paid'        => true,
+        // Pagamento registrado à mão pela organização (dinheiro ou Pix).
+        'fee_paid_on'        => true,
+        'fee_payment_method' => true,
+        'fee_registered_by'  => true,
+        'fee_registered_at'  => true,
+        'fee_note'           => true,
         'qrcode_data'        => true,
         'is_qrcode_used'     => true,
         'user_id'            => true,

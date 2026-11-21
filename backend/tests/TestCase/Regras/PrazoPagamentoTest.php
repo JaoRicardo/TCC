@@ -11,10 +11,11 @@ use Cake\Datasource\EntityInterface;
 use Cake\I18n\DateTime;
 
 /**
- * Prazo do pagamento: quem tem vaga, enviou o formulário e não pagou até a data
- * de pagamento perde a vaga sozinho. A vaga fica aberta até um administrador ou
- * conselheiro chamar o próximo suplente — e quem é chamado tem 3 dias, a partir
- * de quando foi chamado, para pagar.
+ * Prazo do pagamento: quem tem vaga, enviou o formulário e não tem pagamento
+ * registrado perde a vaga sozinho — 2 dias depois da data de pagamento (folga
+ * para a equipe registrar quem pagou no último dia). A vaga fica aberta até um
+ * administrador ou conselheiro chamar o próximo suplente — e quem é chamado tem
+ * 3 dias, a partir de quando foi chamado, para pagar.
  */
 class PrazoPagamentoTest extends RegrasTestCase
 {
@@ -24,6 +25,12 @@ class PrazoPagamentoTest extends RegrasTestCase
             'participant_fee' => $taxa,
             'participant_payment_date' => $dataPagamento,
         ]);
+    }
+
+    /** Prazo que venceu antes dos 2 dias de folga: a vaga já pode sair. */
+    private function prazoSemFolga(): string
+    {
+        return DateTime::now()->subDays(3)->format('Y-m-d H:i:s');
     }
 
     private function titular(EntityInterface $atividade, string $nome, array $extra = []): EntityInterface
@@ -42,7 +49,7 @@ class PrazoPagamentoTest extends RegrasTestCase
 
     public function testQuemNaoPagouNoPrazoPerdeAVagaEAVagaFicaAberta(): void
     {
-        $fac = $this->facComTaxa($this->ontem());
+        $fac = $this->facComTaxa($this->prazoSemFolga());
         $pagou = $this->titular($fac, 'Pagou', ['is_fee_paid' => true]);
         $naoPagou = $this->titular($fac, 'Não pagou');
         $suplente = $this->inscrever($this->criarUsuario('Suplente'), $fac, 'Campista', ['substitute_position' => 1, 'form_submitted' => true]);
@@ -62,7 +69,7 @@ class PrazoPagamentoTest extends RegrasTestCase
     {
         // Sem prazo de formulário cadastrado: quem não enviou não pode perder a vaga
         // "por não pagar" — ele nem chegou na etapa do pagamento.
-        $fac = $this->facComTaxa($this->ontem());
+        $fac = $this->facComTaxa($this->prazoSemFolga());
         $semFormulario = $this->titular($fac, 'Sem formulário', ['form_submitted' => false]);
 
         (new PrazoFormularioService())->executarPrazosVencidos();
@@ -72,7 +79,7 @@ class PrazoPagamentoTest extends RegrasTestCase
 
     public function testSemTaxaOuSemDataDePagamentoNinguemPerdeAVaga(): void
     {
-        $semTaxa = $this->titular($this->facComTaxa($this->ontem(), taxa: 0), 'Acampamento sem taxa');
+        $semTaxa = $this->titular($this->facComTaxa($this->prazoSemFolga(), taxa: 0), 'Acampamento sem taxa');
         $semData = $this->titular($this->facComTaxa(null), 'Acampamento sem data');
         $noPrazo = $this->titular($this->facComTaxa($this->amanha()), 'Ainda no prazo');
 
@@ -85,7 +92,7 @@ class PrazoPagamentoTest extends RegrasTestCase
 
     public function testSuplenteChamadoDepoisDaDataTem3DiasParaPagar(): void
     {
-        $fac = $this->facComTaxa($this->ontem());
+        $fac = $this->facComTaxa($this->prazoSemFolga());
         $this->titular($fac, 'Não pagou');
         $suplente = $this->inscrever($this->criarUsuario('Suplente'), $fac, 'Campista', ['substitute_position' => 1, 'form_submitted' => true]);
         $prazos = new PrazoFormularioService();
@@ -101,8 +108,8 @@ class PrazoPagamentoTest extends RegrasTestCase
         $prazo = (new MercadoPagoService())->prazoPagamento($chamado, $fac);
         $this->assertEqualsWithDelta($chamado->promoted_at->addDays(3)->getTimestamp(), $prazo->getTimestamp(), 1);
 
-        // Passados os 3 dias sem pagar, perde a vaga e ela abre de novo.
-        $chamado->promoted_at = DateTime::now()->subDays(4);
+        // Passados os 3 dias (e os 2 de folga) sem pagar, perde a vaga e ela abre de novo.
+        $chamado->promoted_at = DateTime::now()->subDays(6);
         $this->fetchTable('PreRegistrations')->saveOrFail($chamado);
         $prazos->executarPrazosVencidos();
         $this->assertSame(PrazoFormularioService::MOTIVO_PRAZO_PAGAMENTO, $this->recarregar($suplente)->disqualification_reason);
@@ -115,7 +122,7 @@ class PrazoPagamentoTest extends RegrasTestCase
         $inicio = DateTime::now()->addDays(1)->format('Y-m-d H:i:s');
         $fac = $this->criarAcampamento('FAC', [], [
             'participant_fee' => 120,
-            'participant_payment_date' => $this->ontem(),
+            'participant_payment_date' => $this->prazoSemFolga(),
             'start_date' => $inicio,
         ]);
         $this->titular($fac, 'Não pagou');
@@ -133,7 +140,7 @@ class PrazoPagamentoTest extends RegrasTestCase
     {
         $fac = $this->criarAcampamento('FAC', [], [
             'participant_fee' => 120,
-            'participant_payment_date' => DateTime::now()->subDays(3)->format('Y-m-d H:i:s'),
+            'participant_payment_date' => DateTime::now()->subDays(4)->format('Y-m-d H:i:s'),
             'start_date' => $this->ontem(),
         ]);
         $this->titular($fac, 'Não pagou');
@@ -164,7 +171,7 @@ class PrazoPagamentoTest extends RegrasTestCase
     {
         $atividade = $this->criarAcampamento('FAC', [], [
             'servant_fee' => 50,
-            'servant_payment_date' => $this->ontem(),
+            'servant_payment_date' => $this->prazoSemFolga(),
         ]);
         $setor = $this->salvar('Sectors', ['name' => 'Louvor', 'place' => 'Interno']);
         $categoriaSetor = $this->salvar('CategoriesSectors', [
@@ -211,7 +218,7 @@ class PrazoPagamentoTest extends RegrasTestCase
 
     public function testSoQuemTemAcessoAInscritosESorteiosChamaOProximo(): void
     {
-        $fac = $this->facComTaxa($this->ontem());
+        $fac = $this->facComTaxa($this->prazoSemFolga());
         $this->titular($fac, 'Não pagou');
         $this->inscrever($this->criarUsuario('Suplente'), $fac, 'Campista', ['substitute_position' => 1, 'form_submitted' => true]);
         (new PrazoFormularioService())->executarPrazosVencidos();
@@ -229,5 +236,34 @@ class PrazoPagamentoTest extends RegrasTestCase
         (new PermissoesService())->definir((int)$conselheiro->id, ['inscricoes']);
         $this->chamarProximo($fac, $chamar, $conselheiro);
         $this->assertResponseOk();
+    }
+
+    public function testAVagaSoSaiDepoisDosDoisDiasDeFolga(): void
+    {
+        $prazos = new PrazoFormularioService();
+        // 1º e 2º dia de folga: ainda com a vaga. No 3º dia, perde.
+        foreach ([1 => false, 2 => false, 3 => true] as $diasDepois => $perde) {
+            $prazo = DateTime::now()->subDays($diasDepois)->addMinutes(1)->format('Y-m-d H:i:s');
+            $inscricao = $this->titular($this->facComTaxa($prazo), "Prazo há {$diasDepois} dia(s)");
+            $prazos->executarPrazosVencidos();
+
+            $this->assertSame(
+                $perde,
+                $this->recarregar($inscricao)->disqualified_at !== null,
+                "Prazo vencido há {$diasDepois} dia(s): " . ($perde ? 'devia perder a vaga.' : 'ainda está na folga.'),
+            );
+        }
+    }
+
+    public function testPerderAVagaPorPagamentoFicaNoHistoricoComoSistema(): void
+    {
+        $fac = $this->facComTaxa($this->prazoSemFolga());
+        $naoPagou = $this->titular($fac, 'Não pagou');
+
+        (new PrazoFormularioService())->executarPrazosVencidos();
+
+        $log = $this->fetchTable('UserChangeLogs')->find()->where(['user_id' => $naoPagou->user_id])->firstOrFail();
+        $this->assertNull($log->author_id);
+        $this->assertStringContainsString('perdeu a vaga: pagamento não registrado até', $log->description);
     }
 }

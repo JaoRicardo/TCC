@@ -21,6 +21,7 @@
 	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
 	import SeloFase from '$lib/components/SeloFase.svelte';
 	import { datasDaAtividade, faseDaAtividade, servosAbertosAte } from '$lib/faseAtividade';
+	import { faixaNaFrase, textoDaFaixa } from '$lib/faixaEtaria';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 	import { onMount } from 'svelte';
 
@@ -138,7 +139,10 @@
 	const fHora = (x: Date) =>
 		x.getHours() === 23 && x.getMinutes() === 59 ? '23h59' : `${x.getHours()}h${x.getMinutes() ? p2(x.getMinutes()) : ''}`;
 	const temHora = (x: Date) => x.getHours() !== 0 || x.getMinutes() !== 0;
-	const fDH = (x: Date) => (temHora(x) ? `${fData(x)}, às ${fHora(x)}` : fData(x));
+	// Evento: as datas não têm hora (o fechamento e o prazo valem até 23h59 do dia).
+	const fDH = (x: Date) => (temHora(x) && !ehEvento ? `${fData(x)}, às ${fHora(x)}` : fData(x));
+	/** "2026-11-18" (só a data) → Date local, sem o deslocamento do UTC. */
+	const diaLocal = (s: string) => new Date(s.length <= 10 ? `${s}T00:00` : s);
 	const diaMes = (x: Date) => `${x.getDate()} ${MES[x.getMonth()]}`;
 	const dia0 = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
 	const difDias = (a: Date, b: Date) => Math.round((dia0(b) - dia0(a)) / 864e5);
@@ -323,14 +327,13 @@
 
 	let minhaTaxa = $derived(taxaDe(trilhaInscrita ?? trilhaPrincipal));
 	let meuPrazoPag = $derived(prazoPagDe(trilhaInscrita ?? trilhaPrincipal));
-	// O servidor só manda o link para quem está na hora de pagar.
-	let meuLinkPag = $derived(minhaInscricao?.linkPagamento ?? null);
+	// Sem pagamento online: a pessoa paga direto com a organização, que registra.
 	let gratis = $derived(minhaTaxa <= 0);
 	let pago = $derived(!!minhaInscricao?.isPago);
+	let pagoEm = $derived(minhaInscricao?.pagoEm ? fData(diaLocal(minhaInscricao.pagoEm)) : '');
 	let faltaPagar = $derived(!gratis && !pago);
-	let dentroDoPrazoPag = $derived(!meuPrazoPag || hoje <= meuPrazoPag);
+	/** Já precisa pagar: formulário enviado (acampamento) ou inscrição concluída (evento). */
 	let situacaoPaga = $derived(sit === 'enviado' || sit === 'evInscrito');
-	let podePagar = $derived(situacaoPaga && faltaPagar && dentroDoPrazoPag && linkDeVerdade(meuLinkPag));
 
 	const linkForm = (m: MinhaInscricao) => `/dashboard/formulario/${m.id}`;
 
@@ -411,7 +414,6 @@
 		const sorteio = get('sorteio')?.em;
 		const prazoForm = dt(m?.prazoFormulario) ?? get('form')?.em;
 		const formAcao = (label: string, ouro = true): Acao[] => (m ? [{ label, ouro, href: linkForm(m) }] : []);
-		const pagar: Acao[] = podePagar && meuLinkPag ? [{ label: `Pagar ${brl(minhaTaxa)}`, ouro: true, href: meuLinkPag, fora: true }] : [];
 		const inscCampista = inscricoesDe(ehEvento ? 'participante' : 'campista');
 		const inscServo = ehEvento ? undefined : inscricoesDe('servo');
 
@@ -419,10 +421,22 @@
 			case 'abertas': {
 				if (!auth.isAuthenticated) {
 					const ate = trilhasDaAtividade.map(inscricoesDe).find((x) => abertaHoje(x))?.ate;
-					B.titulo = ehEvento || !ate ? 'As inscrições estão abertas.' : `As inscrições estão abertas até ${fDH(ate)}.`;
+					B.titulo = !ate ? 'As inscrições estão abertas.' : `As inscrições estão abertas até ${fDH(ate)}.`;
 					B.texto = 'Para se inscrever, entre na sua conta ou crie uma. Depois de entrar, você volta direto para esta página.';
 					B.acoes = [{ label: 'Entrar para se inscrever', ouro: true, href: loginUrl(`/dashboard/atividades/${activity.id}?inscrever=1`) }];
 					B.criarConta = true;
+					break;
+				}
+				// Evento com faixa etária e a pessoa fora dela: aviso antes de tentar, sem botão.
+				const foraDaFaixa = elegibilidade?.participante?.codigo;
+				if (ehEvento && (foraDaFaixa === 'fora_faixa_etaria' || foraDaFaixa === 'sem_nascimento')) {
+					if (foraDaFaixa === 'sem_nascimento') {
+						B.titulo = 'Complete a data de nascimento para se inscrever.';
+						B.texto = elegibilidade?.participante?.mensagem ?? '';
+					} else {
+						B.titulo = `Este evento é para pessoas ${faixaNaFrase(activity.idadeMinima, activity.idadeMaxima)}.`;
+						B.texto = 'Pela data de nascimento do seu cadastro, você não pode se inscrever. A idade é contada no primeiro dia do evento.';
+					}
 					break;
 				}
 				B.titulo = ehEvento ? 'As inscrições estão abertas.' : 'Escolha como quer participar.';
@@ -506,7 +520,7 @@
 							: `O prazo para alterar as respostas terminou em ${fDH(prazoForm)}.`
 						: '',
 					pagamento: true,
-					acoes: [...pagar, ...formAcao(prazoForm && hoje > prazoForm ? 'Ver formulário' : 'Ver ou editar formulário', false)]
+					acoes: formAcao(prazoForm && hoje > prazoForm ? 'Ver formulário' : 'Ver ou editar formulário', false)
 				});
 				break;
 			case 'suplente':
@@ -606,10 +620,12 @@
 					texto:
 						m?.temFormulario && prazoForm && hoje <= prazoForm ? `Você pode alterar as respostas até ${fDH(prazoForm)}.` : '',
 					pagamento: true,
-					acoes: [...pagar, ...(m?.temFormulario ? formAcao('Ver formulário', false) : [])]
+					acoes: m?.temFormulario ? formAcao('Ver formulário', false) : []
 				});
 				break;
 		}
+		// Pagou adiantado (sorteado, suplente, em andamento...): a caixa mostra "Pago em".
+		if (pago && !gratis && !['cancel', 'cinza'].includes(B.tom)) B.pagamento = true;
 		return B;
 	});
 
@@ -622,14 +638,16 @@
 		if (pago)
 			return {
 				valor: brl(minhaTaxa),
-				linha: minhaInscricao?.pagoEm ? `Pago em ${fData(new Date(minhaInscricao.pagoEm))}.` : 'Pagamento confirmado.',
+				linha: pagoEm ? `Pago em ${pagoEm}.` : 'Pagamento confirmado.',
 				selo: 'Pago',
 				tom: 'ok'
 			};
 		if (gratis) return { valor: 'Gratuito', linha: 'Não há pagamento.', selo: 'Sem pagamento', tom: 'ok' };
 		return {
 			valor: brl(minhaTaxa),
-			linha: meuPrazoPag ? `Pague até ${fDH(meuPrazoPag)}. Quem não paga no prazo perde a vaga.` : 'Quem não paga perde a vaga.',
+			linha: meuPrazoPag
+				? `Pague ${brl(minhaTaxa)} diretamente com a organização (dinheiro ou Pix) até ${fDH(meuPrazoPag)}. Quem não paga no prazo perde a vaga.`
+				: `Pague ${brl(minhaTaxa)} diretamente com a organização (dinheiro ou Pix). Quem não paga perde a vaga.`,
 			selo: 'Não pago',
 			tom: 'espera'
 		};
@@ -670,7 +688,7 @@
 					: x.de && x.ate && dia0(x.de) !== dia0(x.ate)
 						? `${diaMes(x.de)} – ${diaMes(x.ate)}`
 						: diaMes((x.de ?? x.ate) as Date);
-			const sub = x.em ? `${x.em.getFullYear()}${temHora(x.em) ? ` · ${fHora(x.em)}` : ''}` : `${((x.ate ?? x.de) as Date).getFullYear()}`;
+			const sub = x.em ? `${x.em.getFullYear()}${temHora(x.em) && !ehEvento ? ` · ${fHora(x.em)}` : ''}` : `${((x.ate ?? x.de) as Date).getFullYear()}`;
 			let desc = x.desc;
 			if (!x.em) {
 				if (x.k === 'ativ' && x.de && x.ate) desc = `${periodo(x.de, x.ate)}. ${x.desc}`.trim();
@@ -741,25 +759,13 @@
 
 	let notaValores = $derived.by(() => {
 		if (gratis) return 'Não há pagamento.';
-		if (!minhaInscricao) {
-			if (sit === 'encerradas') return '';
-			return ehEvento
-				? 'O link de pagamento aparece aqui depois que você concluir a inscrição.'
-				: 'O link de pagamento aparece aqui depois que você for sorteado(a) e enviar o formulário.';
-		}
-		if (situacaoPaga && pago) return '';
-		if (podePagar) return 'O link abre o pagamento numa aba nova.';
-		if (situacaoPaga && !dentroDoPrazoPag && meuPrazoPag) return `O prazo de pagamento terminou em ${fDH(meuPrazoPag)}.`;
-		if (situacaoPaga) return 'O link de pagamento ainda não foi cadastrado pela organização.';
+		if (pago) return '';
+		const direto = 'O pagamento é feito diretamente com a organização, em dinheiro ou Pix.';
+		if (!minhaInscricao) return sit === 'encerradas' ? '' : direto;
 		if (sit === 'prazoPag' && meuPrazoPag) return `O prazo de pagamento terminou em ${fDH(meuPrazoPag)}.`;
 		if (fechado) return 'Esta inscrição não tem pagamento.';
-		if (['sorteado', 'indicado', 'suplente', 'correcao', 'evAndamento'].includes(sit))
-			return ehEvento
-				? 'O link de pagamento aparece aqui depois que você concluir a inscrição.'
-				: 'O link de pagamento aparece aqui depois que você enviar o formulário.';
-		return ehEvento
-			? 'O link de pagamento aparece aqui depois que você concluir a inscrição.'
-			: 'O link de pagamento aparece aqui depois que você for sorteado(a) e enviar o formulário.';
+		if (situacaoPaga) return 'Pague diretamente com a organização, em dinheiro ou Pix.';
+		return `${direto} O prazo vale depois que você ${ehEvento ? 'concluir a inscrição' : 'enviar o formulário'}.`;
 	});
 
 	let documentos = $derived.by(() => {
@@ -958,6 +964,9 @@
 						<dl class="topo-dados">
 							<div><dt>Local</dt><dd>{activity.local || 'A definir'}</dd></div>
 							<div><dt>Datas</dt><dd>{datas}</dd></div>
+							{#if ehEvento && textoDaFaixa(activity.idadeMinima, activity.idadeMaxima)}
+								<div><dt>Idade</dt><dd>{textoDaFaixa(activity.idadeMinima, activity.idadeMaxima)}</dd></div>
+							{/if}
 							{#if activity.vagasTotais}
 								<div><dt>Vagas</dt><dd>{activity.vagasTotais}</dd></div>
 							{/if}
@@ -1062,6 +1071,14 @@
 						</div>
 					</section>
 
+					<!-- ===== Sobre o evento (texto livre da organização) ===== -->
+					{#if ehEvento && activity.sobre}
+						<section class="card sobre" aria-labelledby="t-sobre">
+							<h2 id="t-sobre" class="h2">Sobre o evento</h2>
+							<p class="sobre-texto">{activity.sobre}</p>
+						</section>
+					{/if}
+
 					<!-- ===== Cronograma ===== -->
 					{#if cronograma.length || outraLista.length}
 						<section class="card" aria-labelledby="t-crono">
@@ -1145,13 +1162,8 @@
 						{#if !gratis && meuPrazoPag}
 							<p class="ajuda">Pagamento até <strong>{fDH(meuPrazoPag)}</strong>.</p>
 						{/if}
-						{#if podePagar && meuLinkPag}
-							<a href={meuLinkPag} target="_blank" rel="noopener noreferrer" class="btn b-ouro">Pagar {brl(minhaTaxa)}</a>
-						{/if}
-						{#if situacaoPaga && pago && !gratis}
-							<span class="pill t-ok pill-sozinha"
-								><i></i>{minhaInscricao?.pagoEm ? `Pago em ${fData(new Date(minhaInscricao.pagoEm))}` : 'Pago'}</span
-							>
+						{#if pago && !gratis}
+							<span class="pill t-ok pill-sozinha"><i></i>{pagoEm ? `Pago em ${pagoEm}` : 'Pago'}</span>
 						{/if}
 						{#if notaValores}<p class="ajuda">{notaValores}</p>{/if}
 					</section>
@@ -1369,6 +1381,21 @@
 		margin: 0;
 		font: 600 30px/1.1 'Cormorant Garamond', serif;
 		color: var(--azul);
+	}
+
+	.sobre {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+		padding: 28px 32px;
+	}
+
+	.sobre-texto {
+		margin: 0;
+		font-size: 17px;
+		line-height: 1.6;
+		color: var(--tinta-2);
+		white-space: pre-line;
 	}
 
 	.h2-menor {

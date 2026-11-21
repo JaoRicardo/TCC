@@ -45,7 +45,7 @@ const TELAS_FORA_DO_MENU: [string, string, string][] = [
 	['/admin/pessoas', 'Pessoas e acessos', '/admin/usuarios'],
 	['/admin/inscricoes', 'Inscritos e Sorteios', '/admin/atividades'],
 	['/admin/acampamentos/editar', 'Editar acampamento', '/admin/acampamentos/criar'],
-	['/admin/eventos/editar', 'Editar evento', '/admin/eventos/criar']
+	['/admin/eventos/editar', 'Gestão de Atividades', '/admin/atividades']
 ];
 
 /**

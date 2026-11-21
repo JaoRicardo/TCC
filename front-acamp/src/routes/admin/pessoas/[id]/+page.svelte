@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { linhaDoPago } from '$lib/pagamentos';
 	/**
 	 * Ficha da pessoa no painel: a organização vê e corrige o cadastro de
 	 * alguém, inclusive CPF e nascimento (que a própria pessoa não muda em "Meu
@@ -1010,6 +1011,7 @@
 											<span class="insc-nome">{comAno(insc.atividade, insc.ano)}</span>
 											<span class="insc-como">{insc.como}</span>
 											{#if insc.motivo}<span class="insc-motivo">“{insc.motivo}”</span>{/if}
+											{#if insc.pagamento?.situacao === 'pago'}<span class="insc-pago">{linhaDoPago(insc.pagamento)}</span>{/if}
 										</span>
 										<span class="pill {SITUACAO[insc.status] ?? 'neu'}"><i></i>{insc.status}</span>
 									</div>
@@ -1675,6 +1677,12 @@
 	.insc-como {
 		font-size: 15px;
 		color: var(--tinta-3);
+	}
+
+	.insc-pago {
+		font-size: 15px;
+		font-weight: 600;
+		color: #1b5236;
 	}
 
 	.insc-motivo {

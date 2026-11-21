@@ -1,3 +1,4 @@
+import type { ResumoPagamento } from '$lib/pagamentos';
 import { apiFetch } from '$lib/api';
 
 export interface MinhaInscricao {
@@ -39,20 +40,22 @@ export interface MinhaInscricao {
     prazoCorrecao?: string | null;
     /** "Prazo Perdido": por não enviar o formulário ou por não pagar. */
     perdeuPor?: 'formulario' | 'pagamento' | null;
-    /** Data do pagamento aprovado; null quando a organização marcou como pago à mão. */
+    /** Data do pagamento ("2026-11-18"), registrado pela organização. */
     pagoEm?: string | null;
+    /** Pagamento direto com a organização: valor, prazo e se já precisa pagar. */
+    pagamento?: ResumoPagamento | null;
     /** Acampamento: continua "Inscrito" depois da data do sorteio (não foi sorteado nem ficou de suplente). */
     naoSorteado?: boolean;
-    /** Link de pagamento da atividade: só vem para quem está na hora de pagar. */
-    linkPagamento?: string | null;
     activity: { id: number; nome: string; categoria?: string; tipo?: string } | null;
 }
 
 export interface Elegibilidade {
     pode: boolean;
-    /** nunca_campista, nao_pode_servir, ja_campista, idade, casado_juvenil, discipulados */
+    /** nunca_campista, nao_pode_servir, ja_campista, idade, casado_juvenil, discipulados, fora_faixa_etaria */
     codigo: string | null;
     mensagem: string | null;
+    /** Evento com faixa etária: "de 18 a 35 anos". */
+    faixa?: string | null;
 }
 
 /** Pode se inscrever como campista/servo (acampamento) ou participante (evento)? */

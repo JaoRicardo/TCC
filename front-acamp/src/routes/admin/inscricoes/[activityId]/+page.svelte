@@ -2,6 +2,8 @@
 	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { apiFetch } from '$lib/api';
+	import PagamentosAtividade from '$lib/components/painel/PagamentosAtividade.svelte';
+	import { linhaCurta, SITUACAO } from '$lib/pagamentos';
 
 	const activityId = $page.params.activityId;
 
@@ -16,6 +18,12 @@
 	let isBusy = $state(false);
 
 	let showIndicateModal = $state(false);
+	/** Janela lateral "Pagamentos" (registro à mão de quem pagou direto com a organização). */
+	let pagamentosAberto = $state(false);
+	const agora = new Date();
+	/** Atividade paga: aparecem o botão "Pagamentos" e a coluna "Pagamento". */
+	let cobra = $derived(Number(activity?.taxaParticipante ?? 0) > 0 || Number(activity?.taxaServo ?? 0) > 0);
+	let naoPagos = $derived(subscriptions.filter((s) => s.pagamento?.situacao === 'nao_pago').length);
 	let selectedSubToIndicate = $state<any>(null);
 	let selectedMethodId = $state<number | null>(null);
 
@@ -318,6 +326,12 @@
 				⭐️ Indicar
 			</button>
 		{/if}
+		{#if cobra}
+			<button class="btn-pagamentos" aria-haspopup="dialog" onclick={() => (pagamentosAberto = true)}>
+				<span class="rs" aria-hidden="true">R$</span>Pagamentos
+				{#if naoPagos > 0}<span class="nao-pagos">{naoPagos} não {naoPagos === 1 ? 'pago' : 'pagos'}</span>{/if}
+			</button>
+		{/if}
 		<a href="/admin/atividades" class="btn-secondary">Voltar para Atividades</a>
 	</div>
 </div>
@@ -377,11 +391,12 @@
 						<th>Tipo</th>
 						<th>Inscrição</th>
 						<th class="center">Status</th>
+						{#if cobra}<th class="th-pagamento">Pagamento</th>{/if}
 					</tr>
 				</thead>
 				<tbody>
 					{#if subscriptions.length === 0}
-						<tr><td colspan="9" class="text-center py-4">Nenhuma inscrição encontrada.</td></tr>
+						<tr><td colspan={cobra ? 10 : 9} class="text-center py-4">Nenhuma inscrição encontrada.</td></tr>
 					{/if}
 					{#each subscriptions as sub}
 						<tr>
@@ -406,10 +421,21 @@
 								<span class="badge {statusBadgeClass(sub.status)}">{sub.status}</span>
 								{#if sub.status === 'Indicado'}
 									<button class="btn-remove-ind" onclick={() => removeIndication(sub.id, sub.user.name)} disabled={isBusy} title="Remover indicação">✕</button>
-								{:else if sub.status === 'Inscrito' || sub.status === 'Suplente'}
+								{:else if activity?.tipo === 'Acampamento' && (sub.status === 'Inscrito' || sub.status === 'Suplente')}
 									<button class="btn-row-indicate" onclick={() => openIndicateModalFor(sub)} disabled={isBusy} title="Indicar {sub.user.name}">⭐️ Indicar</button>
 								{/if}
 							</td>
+							{#if cobra}
+								<td class="td-pagamento">
+									{#if sub.pagamento?.situacao}
+										{@const sit = SITUACAO[sub.pagamento.situacao as keyof typeof SITUACAO]}
+										<span class="pill-pag {sit.tom}"><i></i>{sit.texto}</span>
+										<span class="pag-curto">{linhaCurta(sub.pagamento, activity?.tipo === 'Evento', agora)}</span>
+									{:else}
+										<span class="text-muted">—</span>
+									{/if}
+								</td>
+							{/if}
 						</tr>
 					{/each}
 				</tbody>
@@ -747,6 +773,15 @@
 	</div>
 {/if}
 
+{#if pagamentosAberto && activity}
+	<PagamentosAtividade
+		atividade={activity}
+		inscricoes={subscriptions}
+		onfechar={() => (pagamentosAberto = false)}
+		onmudou={loadSubscriptions}
+	/>
+{/if}
+
 <style>
 	.page-header {
 		display: flex;
@@ -755,6 +790,104 @@
 		margin-bottom: 2rem;
 		flex-wrap: wrap;
 		gap: 1rem;
+	}
+
+	/* Pagamentos (peças novas, já na identidade nova; o resto da tela será redesenhado depois). */
+	.btn-pagamentos {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		height: 44px;
+		padding: 0 18px 0 8px;
+		font: 700 16px 'Source Sans 3', system-ui, sans-serif;
+		color: #1b2f5e;
+		background: #fffdf8;
+		border: 1.5px solid #1b2f5e;
+		border-radius: 999px;
+		box-shadow: 0 0 0 3px rgba(182, 158, 85, 0.35);
+		cursor: pointer;
+	}
+	.btn-pagamentos:hover {
+		background: #eef1f7;
+	}
+	.btn-pagamentos .rs {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		border-radius: 50%;
+		background: #1b2f5e;
+		color: #e2ce8a;
+		font: 700 12px 'Source Sans 3', sans-serif;
+	}
+	.btn-pagamentos .nao-pagos {
+		font-size: 13px;
+		font-weight: 700;
+		color: #6a480c;
+		background: #fbf0d6;
+		border: 1px solid #ebd39c;
+		border-radius: 999px;
+		padding: 1px 8px;
+	}
+	.data-table th.th-pagamento {
+		font: 700 13px 'Source Sans 3', sans-serif;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: #7a6528;
+		background: #fbf6e6;
+		border-left: 1px solid #e3d8bc;
+	}
+	.data-table td.td-pagamento {
+		background: #fffdf8;
+		border-left: 1px solid #e3d8bc;
+		font-family: 'Source Sans 3', sans-serif;
+		white-space: nowrap;
+	}
+	.pill-pag {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		font-size: 14px;
+		font-weight: 600;
+		border: 1px solid;
+		border-radius: 8px;
+		padding: 2px 9px;
+	}
+	.pill-pag i {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+	}
+	.pill-pag.ok {
+		color: #1b5236;
+		background: #e4f1e8;
+		border-color: #b9d9c4;
+	}
+	.pill-pag.ok i {
+		background: #2e7d4f;
+	}
+	.pill-pag.esp {
+		color: #6a480c;
+		background: #fbf0d6;
+		border-color: #ebd39c;
+	}
+	.pill-pag.esp i {
+		background: #c08a1e;
+	}
+	.pill-pag.can {
+		color: #842424;
+		background: #f6e2df;
+		border-color: #e6bdb6;
+	}
+	.pill-pag.can i {
+		background: #b33a3a;
+	}
+	.pag-curto {
+		display: block;
+		margin-top: 3px;
+		font-size: 14px;
+		color: #4f5468;
 	}
 
 	.header-actions {

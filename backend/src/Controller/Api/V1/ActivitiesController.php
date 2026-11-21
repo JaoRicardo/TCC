@@ -117,6 +117,14 @@ class ActivitiesController extends ApiController
         return $this->apiResponse(['data' => [
             'activity' => $this->entityToFormArray($activity),
             'camping'  => $camping ? $this->entityToFormArray($camping) : null,
+            // Avisos da tela Editar Evento ("já tem n inscrições", "n pagamentos").
+            'resumo'   => [
+                'inscricoes'    => $this->contarInscricoes($activity, false),
+                'vagasOcupadas' => $this->contarInscricoes($activity, true),
+                'pagamentos'    => $this->fetchTable('PreRegistrations')->find()
+                    ->where(['activity_id' => $activity->id, 'deleted IS' => null, 'is_fee_paid' => true])
+                    ->count(),
+            ],
         ]]);
     }
 
@@ -155,6 +163,10 @@ class ActivitiesController extends ApiController
 
         if (!in_array($type, ['Camping', 'Event'], true)) {
             return $this->apiError('Tipo inválido. Use "Camping" ou "Event"', 422);
+        }
+        if ($type === 'Event') {
+            $erros = $this->validarEvento($data['activity'] ?? [], null);
+            if ($erros) return $this->apiResponse(['error' => 'Confira os campos do evento.', 'errors' => $erros], 422);
         }
 
         $imageBase64 = $data['activity']['image_base64'] ?? null;
@@ -241,6 +253,7 @@ class ActivitiesController extends ApiController
                 'min_age'                             => isset($ad['min_age']) && $ad['min_age'] !== '' && $ad['min_age'] !== 'null' ? intval($ad['min_age']) : null,
                 'max_age'                             => isset($ad['max_age']) && $ad['max_age'] !== '' && $ad['max_age'] !== 'null' ? intval($ad['max_age']) : null,
                 'target_audience'                     => $ad['target_audience'] ?? 'Geral',
+                'description'                         => $this->textoOuNulo($ad['description'] ?? null),
                 // Formulário de inscrição do evento (vazio = a inscrição conclui na hora).
                 'event_form_id'                       => $type === 'Event' ? $this->formularioDeEvento($ad) : null,
             ]);
@@ -305,6 +318,11 @@ class ActivitiesController extends ApiController
         $files = $this->request->getUploadedFiles();
         $ad    = $data['activity'] ?? [];
 
+        if ($activity->camping_id === null) {
+            $erros = $this->validarEvento($ad, $activity);
+            if ($erros) return $this->apiResponse(['error' => 'Confira os campos do evento.', 'errors' => $erros], 422);
+        }
+
         $imageBase64 = $ad['image_base64'] ?? null;
         $imagePath   = $imageBase64
             ? $this->saveBase64File($imageBase64, 'activities')
@@ -326,7 +344,13 @@ class ActivitiesController extends ApiController
             'category_id'     => !empty($ad['category_id']) ? intval($ad['category_id']) : $activity->category_id,
             'year'            => $startDate ? (int)date('Y', strtotime($startDate)) : $activity->year,
         ];
-        if ($imagePath) $activityPatch['image'] = $imagePath;
+        if ($imagePath) {
+            $activityPatch['image'] = $imagePath;
+        } elseif (!empty($ad['remove_image'])) {
+            // Sem imagem, o Início usa o vitral com o brasão.
+            $activityPatch['image'] = '';
+        }
+        if (array_key_exists('description', $ad)) $activityPatch['description'] = $this->textoOuNulo($ad['description']);
         if (isset($ad['min_age'])) $activityPatch['min_age'] = ($ad['min_age'] !== '' && $ad['min_age'] !== 'null') ? intval($ad['min_age']) : null;
         if (isset($ad['max_age'])) $activityPatch['max_age'] = ($ad['max_age'] !== '' && $ad['max_age'] !== 'null') ? intval($ad['max_age']) : null;
         if (isset($ad['target_audience'])) $activityPatch['target_audience'] = $ad['target_audience'];
@@ -349,8 +373,9 @@ class ActivitiesController extends ApiController
             return $this->apiResponse(['error' => 'Erro ao atualizar atividade', 'errors' => $activity->getErrors()], 422);
         }
 
-        // Sync sectors: add any categories_sectors for this category that aren't in activities_categories_sectors yet
-        $csLinks = $this->CategoriesSectors->find()
+        // Sync sectors: add any categories_sectors for this category that aren't in activities_categories_sectors yet.
+        // Evento sem categoria não tem setores (antes, editar um evento assim dava erro 500).
+        $csLinks = $activity->category_id === null ? [] : $this->CategoriesSectors->find()
             ->where(['category_id' => $activity->category_id, 'deleted IS' => null])
             ->all();
         foreach ($csLinks as $cs) {
@@ -1132,6 +1157,8 @@ class ActivitiesController extends ApiController
             'idadeMinima'  => $activity->min_age,
             'idadeMaxima'  => $activity->max_age,
             'targetAudience' => $activity->target_audience ?? 'Geral',
+            // "Sobre o evento": texto livre da organização (quebras de linha mantidas).
+            'sobre'          => $activity->description,
             // Registration fields live on activity for both types
             'taxaParticipante'      => (float)$activity->participant_fee,
             'taxaServo'             => (float)$activity->servant_fee,
@@ -1179,6 +1206,108 @@ class ActivitiesController extends ApiController
         }
 
         return $base;
+    }
+
+    private function textoOuNulo(mixed $valor): ?string
+    {
+        return is_string($valor) && trim($valor) !== '' ? trim($valor) : null;
+    }
+
+    /**
+     * Inscrições ativas do evento; com $concluidas, só as que ocupam vaga (com
+     * formulário, só quem enviou) — a mesma conta do "acabaram as vagas".
+     */
+    private function contarInscricoes(object $activity, bool $concluidas): int
+    {
+        $where = ['activity_id' => $activity->id, 'deleted IS' => null, 'is_quitter' => false, 'disqualified_at IS' => null];
+        if ($concluidas && $activity->event_form_id) $where['form_submitted'] = true;
+
+        return $this->fetchTable('PreRegistrations')->find()->where($where)->count();
+    }
+
+    /**
+     * Regras da tela Criar / Editar Evento (handoff design_handoff_painel_evento).
+     * As datas do evento não têm hora: a tela manda o primeiro dia às 00h00, a
+     * abertura às 00h00 e o fechamento e o prazo do pagamento às 23h59.
+     *
+     * @return array<string, array<string, string>> erros por campo, no formato do Cake
+     */
+    private function validarEvento(array $ad, ?object $atual): array
+    {
+        $valor = function (string $campo) use ($ad, $atual): mixed {
+            if (array_key_exists($campo, $ad)) return $ad[$campo];
+            $v = $atual?->get($campo);
+
+            return $v instanceof \DateTimeInterface ? $v->format('Y-m-d H:i:s') : $v;
+        };
+        $dia = function (mixed $v): ?string {
+            if (!is_string($v) || trim($v) === '') return null;
+            $t = strtotime($v);
+
+            return $t === false ? null : date('Y-m-d', $t);
+        };
+        $br = fn(string $ymd) => date('d/m/Y', strtotime($ymd));
+        $erros = [];
+        $erro = function (string $campo, string $msg) use (&$erros): void {
+            $erros[$campo] ??= ['regra' => $msg];
+        };
+
+        if (trim((string)$valor('name')) === '') $erro('name', 'Informe o nome do evento.');
+        if (trim((string)$valor('place')) === '') $erro('place', 'Informe o local.');
+
+        $inicio = $dia($valor('start_date'));
+        if ($inicio === null) {
+            $erro('start_date', 'Informe o primeiro dia do evento.');
+        } elseif ($atual === null && $inicio < date('Y-m-d')) {
+            $erro('start_date', 'O primeiro dia já passou. Escolha hoje ou uma data futura.');
+        }
+
+        $vagas = (int)$valor('total_vacancies');
+        if ($vagas < 1) {
+            $erro('total_vacancies', 'Informe quantas vagas o evento tem (pelo menos 1).');
+        } elseif ($atual !== null && $vagas < ($ocupadas = $this->contarInscricoes($atual, true))) {
+            $erro('total_vacancies', "Já há {$ocupadas} vagas ocupadas: o total não pode ser menor que isso.");
+        }
+
+        $abre = $dia($valor('participant_registration_start_date'));
+        $fecha = $dia($valor('participant_registration_end_date'));
+        if ($abre === null) $erro('participant_registration_start_date', 'Informe quando as inscrições abrem.');
+        if ($fecha === null) {
+            $erro('participant_registration_end_date', 'Informe quando as inscrições fecham.');
+        } elseif ($abre !== null && $fecha < $abre) {
+            $erro('participant_registration_end_date', 'O fechamento não pode ser antes da abertura.');
+        } elseif ($inicio !== null && $fecha > $inicio) {
+            $erro('participant_registration_end_date', "As inscrições precisam fechar até o primeiro dia do evento ({$br($inicio)}).");
+        }
+
+        $idades = [];
+        foreach (['min_age', 'max_age'] as $campo) {
+            $v = $valor($campo);
+            if ($v === null || $v === '' || $v === 'null') continue;
+            if (!is_numeric($v) || (int)$v != $v || (int)$v < 0 || (int)$v > 120) {
+                $erro($campo, 'Use idades entre 0 e 120 anos.');
+                continue;
+            }
+            $idades[$campo] = (int)$v;
+        }
+        if (isset($idades['min_age'], $idades['max_age']) && $idades['min_age'] > $idades['max_age']) {
+            $erro('min_age', 'A idade mínima não pode ser maior que a máxima.');
+        }
+
+        if ((float)$valor('participant_fee') > 0) {
+            $prazo = $dia($valor('participant_payment_date'));
+            if ($prazo === null) {
+                $erro('participant_payment_date', 'Informe o prazo do pagamento.');
+            } elseif ($inicio !== null && $prazo > $inicio) {
+                $erro('participant_payment_date', "O prazo do pagamento precisa ser até o primeiro dia do evento ({$br($inicio)}).");
+            } elseif ($abre !== null && $prazo < $abre) {
+                $erro('participant_payment_date', 'O prazo do pagamento não pode ser antes da abertura das inscrições.');
+            }
+        } elseif ($valor('participant_fee') !== null && (float)$valor('participant_fee') < 0) {
+            $erro('participant_fee', 'Informe o valor por pessoa. Se não houver cobrança, escolha “Gratuito”.');
+        }
+
+        return $erros;
     }
 
     private function tamanhoDoArquivo(?string $caminho): ?int

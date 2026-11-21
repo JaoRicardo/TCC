@@ -1,3 +1,4 @@
+import type { ResumoPagamento } from '$lib/pagamentos';
 import { apiFetch } from '$lib/api';
 import type { User } from '$lib/types/models';
 
@@ -232,6 +233,8 @@ export interface InscricaoDaPessoa {
     motivo: string | null;
     /** A atividade ainda não terminou. */
     andamento: boolean;
+    /** Pagamento registrado: "Pago em {data} · {forma} · registrado por {nome}". */
+    pagamento: ResumoPagamento | null;
 }
 
 /** `naoEncontrada`: a pessoa foi desativada ou o link é antigo. */

@@ -36,6 +36,8 @@ export async function getActivities(): Promise<{ activities: Activity[], error?:
             targetAudience: b.targetAudience || b.publicoAlvo,
             status: b.status,
             created: b.criadoEm ?? undefined,
+            idadeMinima: b.idadeMinima ?? null,
+            idadeMaxima: b.idadeMaxima ?? null,
             datas: datasDaAtividade(b)
         }));
         return { activities: mappedActivities };

@@ -40,6 +40,7 @@ class Activity extends Entity
         'name'                                => true,
         'image'                               => true,
         'place'                               => true,
+        'description'                         => true,
         'year'                                => true,
         'start_date'                          => true,
         'duration_days'                       => true,

@@ -28,7 +28,6 @@
 	import {
 		getFormulario,
 		salvarFormulario,
-		iniciarPagamento,
 		enviarArquivo,
 		TAMANHO_MAXIMO_ARQUIVO,
 		TIPOS_DE_ARQUIVO,
@@ -56,8 +55,6 @@
 	/** null = sem erro; '' = falha de conexão; texto = o que o servidor disse. */
 	let erroEnvio: string | null = $state(null);
 	let rascunhoAs = $state('');
-	let pagando = $state(false);
-	let erroPagamento = $state('');
 	let topo: HTMLElement | undefined = $state();
 	/** Respostas como estavam no servidor: com correção pedida, mostra o que a pessoa já atualizou. */
 	let originais: Record<number, string> = $state({});
@@ -425,23 +422,6 @@
 		etapa = secoes.length + 1;
 	}
 
-	async function pagar() {
-		pagando = true;
-		erroPagamento = '';
-		try {
-			const res = await iniciarPagamento(preRegId);
-			if (res.url) {
-				window.location.href = res.url;
-				return;
-			}
-			erroPagamento = res.error || 'Não foi possível iniciar o pagamento.';
-		} catch {
-			erroPagamento = 'Não foi possível iniciar o pagamento. Verifique sua conexão.';
-		}
-		pagando = false;
-	}
-
-
 	// ─── Textos e datas ──────────────────────────────────────────────────
 	function isoLocal(d: Date): string {
 		const p = (n: number) => String(n).padStart(2, '0');
@@ -794,24 +774,13 @@
 					O prazo para pagar terminou{pg.prazo ? ` em ${diaMes(pg.prazo)}` : ''}. Procure a organização.
 				</p>
 			{:else}
-				{#if pg.prazo}<p class="nota">Pague até {diaEHora(pg.prazo)}.</p>{/if}
-				{#if erroPagamento}<p class="faixa faixa--erro" role="alert">{erroPagamento}</p>{/if}
-				{#if pg.integracao_ativa}
-					<p class="nota">
-						Você vai para o Mercado Pago, onde dá para pagar por Pix, cartão ou boleto. A confirmação chega aqui sozinha.
-					</p>
-					<button type="button" class="btn btn--ouro btn--largo" onclick={pagar} disabled={pagando}>
-						{pagando ? 'Abrindo o Mercado Pago...' : 'Pagar com Mercado Pago'}
-					</button>
-					{#if pg.status_provedor === 'pending' && pg.url_pagamento}
-						<p class="nota">Já existe um pagamento em aberto: o botão abre o mesmo.</p>
-					{/if}
-				{:else if pg.link_manual}
-					<p class="nota">Use o link de pagamento informado pela organização:</p>
-					<a class="btn btn--ouro btn--largo" href={pg.link_manual} target="_blank" rel="noopener noreferrer">Abrir link de pagamento</a>
-				{:else}
-					<p class="nota">O pagamento online ainda está sendo configurado. Assim que for liberado, o botão aparece aqui.</p>
-				{/if}
+				<!-- Sem pagamento online: a pessoa paga direto com a organização, que registra no painel. -->
+				<p class="nota">
+					Pague {valorEmReais(pg.valor)} diretamente com a organização (dinheiro ou Pix){pg.prazo
+						? ` até ${ehEvento ? diaMes(pg.prazo) : diaEHora(pg.prazo)}`
+						: ''}. Quem não paga no prazo perde a vaga.
+				</p>
+				<p class="nota">Assim que a organização registrar, aparece aqui “Pagamento confirmado”.</p>
 			{/if}
 		</section>
 	{/if}

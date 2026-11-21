@@ -9,6 +9,7 @@ use App\Model\Table\FormCorrectionsTable;
 use App\Model\Table\UserDocumentsTable;
 use App\Service\FormulariosService;
 use App\Service\MercadoPagoService;
+use App\Service\PagamentoService;
 use App\Service\PrazoFormularioService;
 use App\Service\RetiradaDoSorteioService;
 use Cake\Datasource\EntityInterface;
@@ -30,6 +31,7 @@ class InscricoesController extends ApiController
         $this->Campings                    = $this->fetchTable('Campings');
         $this->prazoFormularioService      = new PrazoFormularioService();
         $this->mercadoPagoService          = new MercadoPagoService();
+        $this->pagamentoService            = new PagamentoService();
     }
 
     /**
@@ -92,7 +94,12 @@ class InscricoesController extends ApiController
             'mensagem' => $erro['mensagem'] ?? null,
         ];
         if ($activity->camping_id === null) {
-            return $this->apiResponse(['data' => ['participante' => $resultado(null)]]);
+            $erro = $this->foraDaFaixaEtaria($identity, $activity);
+
+            return $this->apiResponse(['data' => ['participante' => $resultado($erro) + [
+                // "de 18 a 35 anos" — para o aviso da página antes de tentar.
+                'faixa' => $this->textoDaFaixa($activity),
+            ]]]);
         }
 
         return $this->apiResponse(['data' => [
@@ -161,6 +168,10 @@ class InscricoesController extends ApiController
             }
             if (!$this->eventoTemVaga($activity)) {
                 return $this->apiError('As vagas deste evento acabaram.', 422);
+            }
+            $foraDaFaixa = $this->foraDaFaixaEtaria($identity, $activity);
+            if ($foraDaFaixa !== null) {
+                return $this->apiError($foraDaFaixa['mensagem'], 422);
             }
         }
 
@@ -237,8 +248,11 @@ class InscricoesController extends ApiController
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
+        // Os prazos vencidos (formulário e pagamento) valem antes de montar a lista.
+        $this->prazoFormularioService->executarPrazosVencidos();
+
         $subs = $this->PreRegistrations->find()
-            ->contain(['Users' => ['MaritalStatuses'], 'SelectionMethods'])
+            ->contain(['Users' => ['MaritalStatuses'], 'SelectionMethods', 'Activities'])
             ->where([
                 'PreRegistrations.activity_id' => $activityId,
                 'PreRegistrations.deleted IS'  => null,
@@ -246,6 +260,7 @@ class InscricoesController extends ApiController
             ->all()
             ->toArray();
         $this->carregarCorrecoes($subs);
+        $quemRegistrou = $this->nomesDeQuemRegistrou($subs);
 
         $spouseIds = array_filter(array_column($subs, 'spouse_id'));
         $spousesMap = [];
@@ -267,6 +282,8 @@ class InscricoesController extends ApiController
                 'selection_method_id' => $sub->selection_method_id,
                 'substitute_position' => $sub->substitute_position,
                 'created'             => $sub->created?->format('Y-m-d\TH:i:s'),
+                // Coluna "Pagamento" e janela "Pagamentos" (situacao null = não entra).
+                'pagamento'           => $this->pagamentoService->resumo($sub, $sub->activity, $quemRegistrou),
                 'user' => [
                     'id'             => $user->id,
                     'name'           => $user->name,
@@ -512,6 +529,8 @@ class InscricoesController extends ApiController
                 // Correção pedida, cancelada ou recusada: o motivo aparece embaixo da atividade.
                 'motivo'    => $this->motivoDaSituacao($preReg, $status),
                 'andamento' => $fim === null || $fim->format('Y-m-d') >= $hoje->format('Y-m-d'),
+                // "Pago em {data} · {forma} · registrado por {nome}".
+                'pagamento' => $preReg->is_fee_paid ? $this->pagamentoService->resumo($preReg, $activity) : null,
             ];
         }
 
@@ -831,8 +850,8 @@ class InscricoesController extends ApiController
             'integracao_ativa' => MercadoPagoService::configurado(),
             'status_provedor'  => $ultimo->status ?? null,
             'url_pagamento'    => $preReg->is_fee_paid ? null : ($ultimo->init_point ?? null),
-            // O link só vai para quem já pode pagar (não é público).
-            'link_manual'      => $liberado ? $this->mercadoPagoService->linkManual($preReg, $activity) : null,
+            // Pagamento direto com a organização: não há mais link (decisão de 2026-11-21).
+            'link_manual'      => null,
             'prazo'            => $this->formatarDataHora($prazoPag),
         ];
     }
@@ -1568,17 +1587,6 @@ class InscricoesController extends ApiController
         return null;
     }
 
-    /** Data do pagamento aprovado (Mercado Pago); null quando a organização marcou como pago à mão. */
-    private function pagoEm(object $preReg): ?string
-    {
-        $pagamento = $this->fetchTable('Payments')->find()
-            ->where(['pre_registration_id' => $preReg->id, 'paid_at IS NOT' => null, 'deleted IS' => null])
-            ->orderBy(['paid_at' => 'DESC'])
-            ->first();
-
-        return $pagamento?->paid_at?->format('Y-m-d\TH:i');
-    }
-
     /**
      * Acampamento: a data do sorteio do tipo da inscrição já passou? Quem
      * continua só "Inscrito" depois dela não foi sorteado nem ficou de suplente.
@@ -1594,19 +1602,55 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * O link de pagamento cadastrado na atividade, para quem está na hora de pagar:
-     * acampamento com o formulário enviado (sorteado ou indicado — suplente não paga)
-     * ou evento com a inscrição concluída; com taxa, ainda não pago e dentro do prazo.
+     * Nomes de quem registrou os pagamentos destas inscrições, por id.
+     *
+     * @return array<int, string>
      */
-    private function linkParaPagar(object $preReg, string $status): ?string
+    private function nomesDeQuemRegistrou(array $preRegs): array
     {
-        $activity = $preReg->activity ?? null;
-        if (!$activity || $preReg->is_fee_paid) return null;
-        $naHora = $status === 'Formulário Enviado' || ($status === 'Inscrito' && $activity->camping_id === null);
-        if (!$naHora || $this->mercadoPagoService->valorDaTaxa($preReg, $activity) <= 0) return null;
-        if ($this->prazoPagamentoVencido($this->mercadoPagoService->prazoPagamento($preReg, $activity))) return null;
+        $ids = array_values(array_unique(array_filter(array_column($preRegs, 'fee_registered_by'))));
+        if (!$ids) return [];
 
-        return $this->mercadoPagoService->linkManual($preReg, $activity);
+        return $this->fetchTable('Users')->find('list', valueField: 'name')->where(['id IN' => $ids])->toArray();
+    }
+
+    /** "de 18 a 35 anos", "a partir de 15 anos", "até 12 anos"; null sem faixa. */
+    private function textoDaFaixa(object $activity): ?string
+    {
+        $min = $activity->min_age;
+        $max = $activity->max_age;
+        if ($min !== null && $max !== null) return "de {$min} a {$max} anos";
+        if ($min !== null) return "a partir de {$min} anos";
+        if ($max !== null) return "até {$max} anos";
+
+        return null;
+    }
+
+    /**
+     * Evento com faixa etária: a pessoa está fora dela? A idade é a do primeiro
+     * dia do evento, pela data de nascimento do cadastro.
+     *
+     * @return array{codigo: string, mensagem: string}|null
+     */
+    private function foraDaFaixaEtaria(object $identity, object $activity): ?array
+    {
+        $faixa = $this->textoDaFaixa($activity);
+        if ($faixa === null) return null;
+
+        $nascimento = $this->fetchTable('Users')->find()->select(['birthday'])->where(['id' => $identity->id])->first()?->birthday;
+        if ($nascimento === null) {
+            return ['codigo' => 'sem_nascimento', 'mensagem' => 'Para se inscrever neste evento, complete a data de nascimento em Meu cadastro.'];
+        }
+        $dia = new \DateTimeImmutable(($activity->start_date ?? new \DateTimeImmutable('today'))->format('Y-m-d'));
+        $idade = (new \DateTimeImmutable($nascimento->format('Y-m-d')))->diff($dia)->y;
+        $foraMin = $activity->min_age !== null && $idade < $activity->min_age;
+        $foraMax = $activity->max_age !== null && $idade > $activity->max_age;
+        if (!$foraMin && !$foraMax) return null;
+
+        return [
+            'codigo'   => 'fora_faixa_etaria',
+            'mensagem' => "Não foi possível fazer a inscrição: este evento é para pessoas {$faixa}, e no dia do evento você terá {$idade} anos.",
+        ];
     }
 
     /** O texto que explica a situação: motivo da correção, do cancelamento ou da recusa. */
@@ -1651,6 +1695,8 @@ class InscricoesController extends ApiController
         // até o prazo da correção (depois dele, a varredura recusa a inscrição).
         $correcao = $preReg->form_submitted && $preReg->disqualified_at === null ? $this->correcaoDa($preReg) : null;
         if ($correcao) return 'Correção pedida';
+        // Evento que perdeu a vaga por não pagar (PagamentoService).
+        if ($this->ehEvento($preReg) && $preReg->disqualified_at !== null) return 'Prazo Perdido';
         // Evento não tem sorteio. Com formulário (que tenha perguntas), a
         // inscrição só conclui quando a pessoa envia.
         if ($this->ehEvento($preReg)) {
@@ -1705,11 +1751,10 @@ class InscricoesController extends ApiController
             'perdeuPor'          => $status === 'Prazo Perdido'
                 ? ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_PRAZO_PAGAMENTO ? 'pagamento' : 'formulario')
                 : null,
-            'pagoEm'             => $preReg->is_fee_paid ? $this->pagoEm($preReg) : null,
+            'pagoEm'             => $this->pagamentoService->pagoEm($preReg),
+            // Pagamento direto com a organização: valor, prazo e se já precisa pagar.
+            'pagamento'          => $activity ? $this->pagamentoService->resumo($preReg, $activity) : null,
             'naoSorteado'        => $status === 'Inscrito' && $this->sorteioJaPassou($preReg),
-            // O link de pagamento da atividade só vem para quem está na hora de pagar;
-            // a resposta pública da atividade não traz o link.
-            'linkPagamento'      => $this->linkParaPagar($preReg, $status),
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.
             'temFormulario'      => $this->temFormularioMontado($preReg),

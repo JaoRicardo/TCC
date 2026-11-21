@@ -30,6 +30,9 @@ export interface Activity {
     formularioId?: number | null;
     targetAudience?: string;
     status?: 'Em Breve' | 'Inscrições Abertas' | 'Encerrado' | string;
+    /** Faixa etária do evento (recusa quem está fora dela). */
+    idadeMinima?: number | null;
+    idadeMaxima?: number | null;
     /** Datas que decidem a fase (selo do Início): `lib/faseAtividade.ts`. */
     datas: DatasDaAtividade;
 }

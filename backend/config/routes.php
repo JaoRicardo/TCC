@@ -128,6 +128,9 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/inscricoes/{id}/correcao', ['controller' => 'Respostas', 'action' => 'pedirCorrecao'])->setPass(['id']);
             $builder->delete('/admin/inscricoes/{id}/correcao', ['controller' => 'Respostas', 'action' => 'desfazerCorrecao'])->setPass(['id']);
             $builder->post('/admin/inscricoes/{id}/cancelar', ['controller' => 'Respostas', 'action' => 'cancelar'])->setPass(['id']);
+            // Pagamento registrado à mão pela organização (Inscritos e Sorteios › Pagamentos).
+            $builder->post('/admin/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'registrar'])->setPass(['id']);
+            $builder->delete('/admin/inscricoes/{id}/pagamento', ['controller' => 'Pagamentos', 'action' => 'desfazer'])->setPass(['id']);
             $builder->get('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'index']);
             $builder->post('/admin/formularios-evento', ['controller' => 'EventForms', 'action' => 'add']);
             $builder->patch('/admin/formularios-evento/{id}', ['controller' => 'EventForms', 'action' => 'edit'])->setPass(['id']);
