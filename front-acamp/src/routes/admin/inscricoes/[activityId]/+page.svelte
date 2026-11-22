@@ -543,7 +543,10 @@
 						{/if}
 						<ul class="raffle-list muted-list">
 							{#each sorteio.campistas.nao_sorteados as p}
-								<li>{p.nome} <span class="tag-mini">{p.categoria}</span></li>
+								<li>
+									{p.nome} <span class="tag-mini">{p.categoria}</span>
+									{#if p.foraDaArea}<span class="tag-form tag-form--falta">não concorreu: não mora em Primavera do Leste ou Poxoréu</span>{/if}
+								</li>
 							{/each}
 						</ul>
 					</div>
@@ -708,7 +711,10 @@
 						<h4>❌ Não Sorteados ({sorteio.servos.nao_sorteados.length})</h4>
 						<ul class="raffle-list muted-list">
 							{#each sorteio.servos.nao_sorteados as p}
-								<li>{p.nome}</li>
+								<li>
+									{p.nome}
+									{#if p.foraDaArea}<span class="tag-form tag-form--falta">não concorreu: não mora em Primavera do Leste ou Poxoréu</span>{/if}
+								</li>
 							{/each}
 						</ul>
 					</div>

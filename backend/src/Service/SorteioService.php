@@ -114,8 +114,22 @@ class SorteioService
         $this->Campings->updateAll([$coluna => $quando], ['id' => $activity->camping_id]);
     }
 
+    /** O sorteio deste tipo tem a data de quando foi feito (apagada no reset). */
+    private function feitoEmGravado(int $activityId, string $tipo): bool
+    {
+        $activity = $this->Activities->find()->select(['camping_id'])->where(['id' => $activityId])->first();
+        if (!$activity?->camping_id) return false;
+        $camping = $this->Campings->find()->where(['id' => $activity->camping_id])->first();
+
+        return ($tipo === 'Servo' ? $camping?->servant_raffle_done_at : $camping?->camper_raffle_done_at) !== null;
+    }
+
     public function campistasJaRealizado(int $activityId): bool
     {
+        // Sorteio em que ninguém pôde ser sorteado (ex.: ninguém mora em
+        // Primavera do Leste/Poxoréu) continua feito: vale a data gravada.
+        if ($this->feitoEmGravado($activityId, 'Campista')) return true;
+
         $raffleMethodId = $this->getRaffleMethodId();
 
         return $this->PreRegistrations->find()
@@ -133,6 +147,8 @@ class SorteioService
 
     public function servosJaRealizado(int $activityId): bool
     {
+        if ($this->feitoEmGravado($activityId, 'Servo')) return true;
+
         $acsIds = $this->AcsSectors->find()
             ->where(['activity_id' => $activityId, 'deleted IS' => null])
             ->all()
@@ -622,12 +638,17 @@ class SorteioService
         usort($suplentes, fn($a, $b) => $a['posicao'] - $b['posicao']);
         usort($indicados, fn($a, $b) => strcmp($a['nome'], $b['nome']));
 
+        $raffleRealizado = $raffleRealizado || $this->campistasJaRealizado($activityId);
+
         $naoSorteados = [];
         if ($raffleRealizado) {
+            $daArea = $this->getEligibleCityUserIds();
             foreach ($allCampistas as $pr) {
                 if (!isset($drawnIds[$pr->user_id])) {
                     $item = $this->serializeCampistaItem($pr, $grupoDe($pr));
                     $item['posicao'] = count($naoSorteados) + 1;
+                    // Não concorreu: só quem mora em Primavera do Leste/Poxoréu entra no sorteio.
+                    $item['foraDaArea'] = !isset($daArea[$pr->user_id]);
                     $naoSorteados[]  = $item;
                 }
             }
@@ -859,7 +880,7 @@ class SorteioService
             ];
         }
 
-        if (!$anyDrawn) {
+        if (!$anyDrawn && !$this->servosJaRealizado($activityId)) {
             return [
                 'realizado'            => false,
                 'setores'              => $setores,
@@ -884,6 +905,7 @@ class SorteioService
             ->toArray();
 
         $naoSorteados = [];
+        $daArea = $this->getEligibleCityUserIds();
         foreach ($allServos as $pr) {
             if (
                 !isset($drawnUserIds[$pr->user_id])
@@ -893,7 +915,10 @@ class SorteioService
                 // Quem perdeu a vaga por prazo aparece na própria lista, abaixo.
                 && empty($desclassificadoPorUsuario[$pr->user_id])
             ) {
-                $naoSorteados[] = $this->serializeServoItem($pr->user, 0);
+                $item = $this->serializeServoItem($pr->user, 0);
+                // Não concorreu: só quem mora em Primavera do Leste/Poxoréu entra no sorteio.
+                $item['foraDaArea'] = !isset($daArea[$pr->user_id]);
+                $naoSorteados[] = $item;
             }
         }
 
