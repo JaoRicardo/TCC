@@ -470,6 +470,20 @@ class ActivitiesController extends ApiController
 
         if (!$activity) return $this->apiError('Atividade não encontrada', 404);
 
+        // Com inscrições, quem exclui tem que digitar o nome da atividade
+        // (handoff design_handoff_gestao_atividades) — a tela pede, e o servidor
+        // confere para não depender só dela.
+        $inscritos = $this->inscricoesAtivasPorAtividade([(int)$activity->id]);
+        if (count($inscritos[(int)$activity->id] ?? []) > 0) {
+            $digitado = (string)($this->request->getData('confirmacao') ?? '');
+            if ($this->nomeParaConferir($digitado) !== $this->nomeParaConferir((string)$activity->name)) {
+                return $this->apiResponse([
+                    'error'  => 'Para excluir uma atividade com inscrições, digite o nome dela.',
+                    'codigo' => 'confirmar_nome',
+                ], 422);
+            }
+        }
+
         $this->Activities->getConnection()->transactional(function () use ($activity) {
             $now = date('Y-m-d H:i:s');
             $this->Activities->updateAll(['deleted' => $now], ['id' => $activity->id]);
@@ -479,6 +493,94 @@ class ActivitiesController extends ApiController
         });
 
         return $this->apiResponse(['deleted' => true], 200);
+    }
+
+    /**
+     * GET /admin/atividades/resumo — números da Gestão de Atividades, por id da
+     * atividade (a lista em si vem de GET /activities, que é pública):
+     *
+     * - `inscritos`: inscrições ativas (campistas, servos ou participantes);
+     * - `pagamento`: null quando não há cobrança para mostrar (atividade
+     *   gratuita, ou ninguém ainda precisa pagar — acampamento antes do
+     *   sorteio); senão `noPrazo` (precisa pagar, não pagou, prazo não passou) e
+     *   `vencido` (prazo passou: está nos dias de folga antes de perder a vaga).
+     */
+    public function resumoDoPainel(): Response
+    {
+        $this->request->allowMethod(['get']);
+        $identity = $this->requirePermissao('atividades');
+        if ($identity instanceof Response) return $identity;
+
+        $atividades = $this->Activities->find()
+            ->where(['Activities.deleted IS' => null])
+            ->all()
+            ->indexBy('id')
+            ->toArray();
+
+        $pagamentos = new \App\Service\PagamentoService();
+        $agora = \Cake\I18n\DateTime::now()->getTimestamp();
+        $porAtividade = $this->inscricoesAtivasPorAtividade(array_keys($atividades));
+
+        $resumo = [];
+        foreach ($atividades as $id => $atividade) {
+            $inscricoes = $porAtividade[$id] ?? [];
+            $cobra = false;
+            $noPrazo = 0;
+            $vencido = 0;
+            foreach ($inscricoes as $inscricao) {
+                if (!$pagamentos->precisaPagar($inscricao, $atividade)) continue;
+                $cobra = true;
+                if ($inscricao->is_fee_paid) continue;
+                $prazo = $pagamentos->prazo($inscricao, $atividade);
+                if ($prazo !== null && $agora > $prazo->getTimestamp()) {
+                    $vencido++;
+                } else {
+                    $noPrazo++;
+                }
+            }
+            $resumo[(string)$id] = [
+                'inscritos' => count($inscricoes),
+                'pagamento' => $cobra ? ['noPrazo' => $noPrazo, 'vencido' => $vencido] : null,
+            ];
+        }
+
+        return $this->apiResponse(['data' => $resumo]);
+    }
+
+    /**
+     * Inscrições ativas (PagamentoService::ativa) agrupadas pela atividade.
+     *
+     * @param array<int> $atividadeIds
+     * @return array<int, array<object>>
+     */
+    private function inscricoesAtivasPorAtividade(array $atividadeIds): array
+    {
+        if (!$atividadeIds) return [];
+
+        $pagamentos = new \App\Service\PagamentoService();
+        $porAtividade = [];
+        $inscricoes = $this->PreRegistrations->find()
+            ->innerJoinWith('Users', fn($q) => $q->where(['Users.deleted IS' => null]))
+            ->where([
+                'PreRegistrations.activity_id IN' => $atividadeIds,
+                'PreRegistrations.deleted IS'     => null,
+            ])
+            ->all();
+        foreach ($inscricoes as $inscricao) {
+            if ($pagamentos->ativa($inscricao)) {
+                $porAtividade[(int)$inscricao->activity_id][] = $inscricao;
+            }
+        }
+
+        return $porAtividade;
+    }
+
+    /** Nome comparado sem maiúsculas, acentos e espaços a mais (confirmação da exclusão). */
+    private function nomeParaConferir(string $nome): string
+    {
+        $semAcento = \Cake\Utility\Text::transliterate($nome, 'Any-Latin; Latin-ASCII');
+
+        return mb_strtolower(trim((string)preg_replace('/\s+/', ' ', $semAcento)));
     }
 
     public function feature(int $id): Response

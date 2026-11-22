@@ -45,19 +45,34 @@ export async function getActivities(): Promise<{ activities: Activity[], error?:
     return { activities: [], error: data.error || 'Erro ao carregar atividades' };
 }
 
-export async function deleteActivity(id: number): Promise<{ success: boolean, message?: string }> {
-    if (USE_MOCKS) {
-        await new Promise(resolve => setTimeout(resolve, 300));
-        return { success: true, message: 'Atividade excluída com sucesso no mock' };
-    }
+/** Números da linha na Gestão de Atividades (GET /admin/atividades/resumo). */
+export interface ResumoDaAtividade {
+    inscritos: number;
+    /** null = não há cobrança para mostrar (gratuita, ou ninguém precisa pagar ainda). */
+    pagamento: { noPrazo: number; vencido: number } | null;
+}
 
-    const res = await apiFetch(`/activities/${id}`, {
-        method: 'DELETE'
-    });
+export async function getResumoDoPainel(): Promise<Record<string, ResumoDaAtividade> | null> {
+    const res = await apiFetch('/admin/atividades/resumo');
+    if (!res.ok) return null;
     const data = await res.json();
+    return data.data ?? {};
+}
 
-    if (res.ok) {
-        return { success: true, message: 'Atividade excluída com sucesso.' };
+/**
+ * Exclui a atividade. Com inscrições, o servidor exige `confirmacao` = o nome
+ * da atividade (sem diferenciar maiúsculas, acentos e espaços a mais).
+ */
+export async function deleteActivity(id: number, confirmacao = ''): Promise<{ success: boolean, message?: string }> {
+    try {
+        const res = await apiFetch(`/activities/${id}`, {
+            method: 'DELETE',
+            body: JSON.stringify({ confirmacao })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (res.ok) return { success: true };
+        return { success: false, message: data.error || data.message };
+    } catch {
+        return { success: false };
     }
-    return { success: false, message: data.message || 'Erro ao excluir atividade.' };
 }
