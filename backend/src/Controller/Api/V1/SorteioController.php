@@ -68,7 +68,24 @@ class SorteioController extends ApiController
             return $this->apiError($resultado['error'], 422);
         }
 
-        return $this->apiResponse(['chamados' => $resultado['chamados']]);
+        return $this->apiResponse(['chamados' => $resultado['chamados'], 'prazo' => $resultado['prazo'] ?? null]);
+    }
+
+    /**
+     * Sortear de novo e apagar o resultado ficam bloqueados quando alguém com
+     * vaga pelo sorteio ou na fila já enviou o formulário ou já pagou.
+     */
+    private function recusaSeBloqueado(int $activityId, string $tipo): ?Response
+    {
+        $jaFeito = $tipo === 'Servo'
+            ? $this->sorteioService->servosJaRealizado($activityId)
+            : $this->sorteioService->campistasJaRealizado($activityId);
+        if (!$jaFeito || !$this->sorteioService->sorteioBloqueado($activityId, $tipo)) return null;
+
+        return $this->apiResponse([
+            'error'  => 'O sorteio não pode ser refeito nem apagado: já há quem enviou o formulário ou pagou.',
+            'codigo' => 'sorteio_bloqueado',
+        ], 422);
     }
 
     // POST /activities/{id}/sorteio/campistas
@@ -78,15 +95,21 @@ class SorteioController extends ApiController
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
-        $homem  = (int)($this->request->getData('homem')  ?? 0);
-        $mulher = (int)($this->request->getData('mulher') ?? 0);
-        $casado = (int)($this->request->getData('casado') ?? 0);
+        $bloqueio = $this->recusaSeBloqueado($activityId, 'Campista');
+        if ($bloqueio) return $bloqueio;
 
-        if ($homem < 0 || $mulher < 0 || $casado < 0) {
-            return $this->apiError('Valores de vagas não podem ser negativos', 422);
-        }
+        // As vagas vêm sempre do cadastro do acampamento (Editar acampamento);
+        // a tela só as mostra. Casado = número de casais.
+        $activity = $this->fetchTable('Activities')->find()->select(['camping_id'])->where(['id' => $activityId, 'deleted IS' => null])->first();
+        $camping = $activity?->camping_id ? $this->fetchTable('Campings')->find()->where(['id' => $activity->camping_id])->first() : null;
+        if (!$camping) return $this->apiError('Acampamento não encontrado', 404);
 
-        $result = $this->sorteioService->realizarCampistas($activityId, $homem, $mulher, $casado);
+        $result = $this->sorteioService->realizarCampistas(
+            $activityId,
+            (int)$camping->raffle_man_vacancies,
+            (int)$camping->raffle_woman_vacancies,
+            (int)$camping->raffle_couple_vacancies
+        );
 
         return $this->apiResponse($result);
     }
@@ -97,6 +120,9 @@ class SorteioController extends ApiController
         $this->request->allowMethod(['delete']);
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
+
+        $bloqueio = $this->recusaSeBloqueado($activityId, 'Campista');
+        if ($bloqueio) return $bloqueio;
 
         $this->sorteioService->resetarCampistas($activityId);
 
@@ -110,6 +136,9 @@ class SorteioController extends ApiController
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
+        $bloqueio = $this->recusaSeBloqueado($activityId, 'Servo');
+        if ($bloqueio) return $bloqueio;
+
         $result = $this->sorteioService->realizarServos($activityId);
 
         return $this->apiResponse($result);
@@ -121,6 +150,9 @@ class SorteioController extends ApiController
         $this->request->allowMethod(['delete']);
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
+
+        $bloqueio = $this->recusaSeBloqueado($activityId, 'Servo');
+        if ($bloqueio) return $bloqueio;
 
         $this->sorteioService->resetarServos($activityId);
 

@@ -12,6 +12,7 @@
 		faixa = 'var(--vitral)',
 		travada = false,
 		lateral = false,
+		alerta = false,
 		onfechar,
 		children
 	}: {
@@ -23,6 +24,8 @@
 		travada?: boolean;
 		/** Painel que entra pela direita, com a altura toda. O conteúdo monta o próprio miolo. */
 		lateral?: boolean;
+		/** Confirmação pesada ou de desfazer: `role="alertdialog"`. */
+		alerta?: boolean;
 		onfechar: () => void;
 		children: Snippet;
 	} = $props();
@@ -71,7 +74,7 @@
 		class="fm-janela"
 		class:fm-janela--lateral={lateral}
 		style="max-width:{largura}px"
-		role="dialog"
+		role={alerta ? 'alertdialog' : 'dialog'}
 		aria-modal="true"
 		aria-labelledby={idTitulo}
 		tabindex="-1"

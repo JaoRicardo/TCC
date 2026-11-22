@@ -167,6 +167,112 @@ class SorteioService
 
     // ─── Sorteio de Campistas ───────────────────────────────────────────────
 
+    /**
+     * Campistas que entrariam no sorteio se ele fosse feito agora, antes do
+     * filtro da cidade: sem indicação, sem ter desistido, saído ou sido retirado.
+     * Depois de um sorteio, os sorteados (que ganharam o método "Sorteio") ficam
+     * de fora desta lista — ela só serve antes do sorteio e no próprio sorteio
+     * (que zera o resultado antes de chamar).
+     *
+     * @return array<object>
+     */
+    private function candidatosCampistas(int $activityId): array
+    {
+        return $this->PreRegistrations->find()
+            ->contain(['Users'])
+            ->where([
+                'PreRegistrations.activity_id'            => $activityId,
+                'PreRegistrations.subscription_type'      => 'Campista',
+                'PreRegistrations.deleted IS'              => null,
+                'PreRegistrations.is_quitter'              => false,
+                'PreRegistrations.selection_method_id IS' => null,
+                // Retirado do sorteio ao corrigir nascimento, sexo ou cidade na ficha.
+                'PreRegistrations.removed_from_raffle_at IS' => null,
+                // Cancelado pela organização ou recusado: não concorre de novo.
+                'PreRegistrations.disqualified_at IS'        => null,
+                'Users.deleted IS'                           => null,
+            ])
+            ->all()
+            ->toArray();
+    }
+
+    /**
+     * Quem tem resultado do sorteio (com vaga pelo sorteio ou na fila de
+     * suplentes) e já enviou o formulário ou já pagou: com alguém assim, o
+     * sorteio não pode mais ser refeito nem apagado (decisão do usuário,
+     * 2026-11-23). O pagamento pode ser adiantado, antes do formulário.
+     *
+     * @return array{formularios: int, pagos: int}
+     */
+    public function bloqueioDoSorteio(int $activityId, string $tipo): array
+    {
+        $doResultado = $this->PreRegistrations->find()
+            ->where([
+                'activity_id'       => $activityId,
+                'subscription_type' => $tipo,
+                'deleted IS'        => null,
+                'is_quitter'        => false,
+                'disqualified_at IS' => null,
+                'OR' => [
+                    'selection_method_id'        => $this->getRaffleMethodId(),
+                    'substitute_position IS NOT' => null,
+                ],
+            ])
+            ->all();
+
+        $formularios = 0;
+        $pagos = 0;
+        foreach ($doResultado as $pr) {
+            if ($pr->form_submitted) $formularios++;
+            if ($pr->is_fee_paid) $pagos++;
+        }
+
+        return ['formularios' => $formularios, 'pagos' => $pagos];
+    }
+
+    public function sorteioBloqueado(int $activityId, string $tipo): bool
+    {
+        $b = $this->bloqueioDoSorteio($activityId, $tipo);
+
+        return $b['formularios'] + $b['pagos'] > 0;
+    }
+
+    /** O acampamento (campings) da atividade, ou null. */
+    private function acampamentoDa(int $activityId): ?object
+    {
+        $activity = $this->Activities->find()->select(['camping_id'])->where(['id' => $activityId])->first();
+
+        return $activity?->camping_id ? $this->Campings->find()->where(['id' => $activity->camping_id])->first() : null;
+    }
+
+    /** Quando o sorteio foi feito (Y-m-d\TH:i), ou null (não feito, ou feito antes de a data ser guardada). */
+    private function dataDoSorteio(?object $camping, string $tipo): ?string
+    {
+        $em = $tipo === 'Servo' ? $camping?->servant_raffle_done_at : $camping?->camper_raffle_done_at;
+
+        return $em?->format('Y-m-d\TH:i');
+    }
+
+    /** Candidatos que não concorrem porque não moram na área: nome e cidade, para a tela explicar. */
+    private function naoConcorrem(array $candidatos, callable $grupoDe): array
+    {
+        $daArea = $this->getEligibleCityUserIds();
+        $fora = array_filter($candidatos, fn($pr) => !isset($daArea[$pr->user_id]));
+        if (!$fora) return [];
+
+        $cidades = [];
+        foreach ($this->Addresses->find()->where(['user_id IN' => array_map(fn($pr) => $pr->user_id, $fora), 'deleted IS' => null])->all() as $end) {
+            $cidades[$end->user_id] = $end->city;
+        }
+
+        return array_values(array_map(fn($pr) => [
+            'user_id'   => (int)$pr->user_id,
+            'nome'      => $pr->user->name,
+            'categoria' => $grupoDe($pr),
+            'cidade'    => $cidades[$pr->user_id] ?? null,
+        ], $fora));
+    }
+
     public function realizarCampistas(int $activityId, int $homem, int $mulher, int $casado): array
     {
         $raffleMethodId = $this->getRaffleMethodId();
@@ -180,22 +286,10 @@ class SorteioService
         // tem vaga garantida fora do sorteio e não concorre nem conta nas vagas informadas.
         // Só residentes de Primavera do Leste/Poxoréu são elegíveis pra serem sorteados.
         $cidadesElegiveis = $this->getEligibleCityUserIds();
-        $campistas = $this->PreRegistrations->find()
-            ->contain(['Users'])
-            ->where([
-                'PreRegistrations.activity_id'            => $activityId,
-                'PreRegistrations.subscription_type'      => 'Campista',
-                'PreRegistrations.deleted IS'              => null,
-                'PreRegistrations.is_quitter'              => false,
-                'PreRegistrations.selection_method_id IS' => null,
-                // Retirado do sorteio ao corrigir nascimento, sexo ou cidade na ficha.
-                'PreRegistrations.removed_from_raffle_at IS' => null,
-                // Cancelado pela organização ou recusado: não concorre de novo.
-                'PreRegistrations.disqualified_at IS'        => null,
-            ])
-            ->all()
-            ->toArray();
-        $campistas = array_values(array_filter($campistas, fn($pr) => isset($cidadesElegiveis[$pr->user_id])));
+        $campistas = array_values(array_filter(
+            $this->candidatosCampistas($activityId),
+            fn($pr) => isset($cidadesElegiveis[$pr->user_id])
+        ));
 
         // Casais só existem na categoria Casais (que só tem casais): lá todo mundo
         // concorre como casal. Nas outras, quem é casado concorre como homem ou mulher.
@@ -313,47 +407,10 @@ class SorteioService
         }
         $this->zerarResultado($activityId, 'Servo', $raffleMethodId);
 
-        // Depois do delete acima, as linhas que sobram em activities_categories_sectors_users
-        // para esses setores são só as colocações manuais — então já servem como a lista
-        // de "quem já tem vaga garantida numa equipe" (líderes inclusive).
-        $placedUserIds = [];
-        if (!empty($acsIds)) {
-            $placedUserIds = $this->AcsSectorsUsers->find()
-                ->where(['activities_categories_sector_id IN' => $acsIds])
-                ->all()
-                ->map(fn($r) => $r->user_id)
-                ->toArray();
-        }
-        // Servo geral da atividade não entra no sorteio de equipe — os dois papéis
-        // são mutuamente exclusivos (mesma regra de ActivitiesController::addSectorMember).
-        $generalServantUserIds = $this->ActivitiesGeneralServants->find()
-            ->where(['activity_id' => $activityId])
-            ->all()
-            ->map(fn($g) => $g->user_id)
-            ->toArray();
-
-        $excludedUserIds = array_unique(array_merge($indicatedUserIds, $placedUserIds, $generalServantUserIds));
-
-        // Pool: servos restantes — inscritos que não têm vaga garantida em lugar nenhum.
-        $poolQuery = $this->PreRegistrations->find()
-            ->contain(['Users'])
-            ->where([
-                'PreRegistrations.activity_id'       => $activityId,
-                'PreRegistrations.subscription_type' => 'Servo',
-                'PreRegistrations.deleted IS'         => null,
-                'PreRegistrations.is_quitter'         => false,
-                'PreRegistrations.removed_from_raffle_at IS' => null,
-                // Cancelado pela organização ou recusado: não concorre de novo.
-                'PreRegistrations.disqualified_at IS'        => null,
-                'Users.deleted IS'                    => null,
-            ]);
-        if (!empty($excludedUserIds)) {
-            $poolQuery = $poolQuery->where(['PreRegistrations.user_id NOT IN' => $excludedUserIds]);
-        }
-        // Só residentes de Primavera do Leste/Poxoréu são elegíveis pra serem sorteados.
+        // Pool: servos que não têm vaga garantida em lugar nenhum e moram na área.
         $cidadesElegiveis = $this->getEligibleCityUserIds();
         $pool = array_values(array_filter(
-            $poolQuery->all()->toArray(),
+            $this->candidatosServos($activityId, $indicatedUserIds, $acsIds),
             fn($pr) => isset($cidadesElegiveis[$pr->user_id])
         ));
         shuffle($pool);
@@ -399,6 +456,59 @@ class SorteioService
         $this->marcarFeitoEm($activityId, 'Servo', date('Y-m-d H:i:s'));
 
         return $this->buildServosResult($activityId);
+    }
+
+    /**
+     * Servos que entrariam no sorteio agora, antes do filtro da cidade: fora os
+     * indicados, quem já está numa equipe (colocado à mão ou líder) e o servo
+     * geral. Depois de um sorteio, os sorteados e suplentes também têm linha na
+     * equipe — esta lista só serve antes do sorteio e no próprio sorteio (que
+     * apaga o resultado antes de chamar).
+     *
+     * @param array<int> $indicatedUserIds
+     * @param array<int> $acsIds
+     * @return array<object>
+     */
+    private function candidatosServos(int $activityId, array $indicatedUserIds, array $acsIds): array
+    {
+        $placedUserIds = [];
+        if (!empty($acsIds)) {
+            $placedUserIds = $this->AcsSectorsUsers->find()
+                ->where([
+                    'activities_categories_sector_id IN' => $acsIds,
+                    'OR' => ['is_indicated' => true, 'is_coordinator' => true],
+                ])
+                ->all()
+                ->map(fn($r) => $r->user_id)
+                ->toArray();
+        }
+        // Servo geral da atividade não entra no sorteio de equipe — os dois papéis
+        // são mutuamente exclusivos (mesma regra de ActivitiesController::addSectorMember).
+        $generalServantUserIds = $this->ActivitiesGeneralServants->find()
+            ->where(['activity_id' => $activityId])
+            ->all()
+            ->map(fn($g) => $g->user_id)
+            ->toArray();
+
+        $excludedUserIds = array_unique(array_merge($indicatedUserIds, $placedUserIds, $generalServantUserIds));
+
+        $query = $this->PreRegistrations->find()
+            ->contain(['Users'])
+            ->where([
+                'PreRegistrations.activity_id'       => $activityId,
+                'PreRegistrations.subscription_type' => 'Servo',
+                'PreRegistrations.deleted IS'         => null,
+                'PreRegistrations.is_quitter'         => false,
+                'PreRegistrations.removed_from_raffle_at IS' => null,
+                // Cancelado pela organização ou recusado: não concorre de novo.
+                'PreRegistrations.disqualified_at IS'        => null,
+                'Users.deleted IS'                    => null,
+            ]);
+        if (!empty($excludedUserIds)) {
+            $query = $query->where(['PreRegistrations.user_id NOT IN' => $excludedUserIds]);
+        }
+
+        return $query->all()->toArray();
     }
 
     private function criarResultadoSorteioServo(
@@ -656,8 +766,29 @@ class SorteioService
 
         usort($desclassificados, fn($a, $b) => strcmp($a['nome'], $b['nome']));
 
+        // Antes do sorteio: quem concorre (por grupo) e quem não concorre pela cidade.
+        $candidatos = $this->candidatosCampistas($activityId);
+        $daArea = $this->getEligibleCityUserIds();
+        $concorrem = ['Homem' => 0, 'Mulher' => 0, 'Casado' => 0];
+        foreach ($candidatos as $pr) {
+            if (isset($daArea[$pr->user_id])) $concorrem[$grupoDe($pr)]++;
+        }
+        $camping = $this->acampamentoDa($activityId);
+
         $result = [
             'realizado'               => $raffleRealizado,
+            'feito_em'                => $raffleRealizado ? $this->dataDoSorteio($camping, 'Campista') : null,
+            'previsto'                => $camping?->raffle_camper_date?->format('Y-m-d\TH:i'),
+            // Vagas do cadastro do acampamento (Casado = número de casais).
+            'vagas'                   => [
+                'Homem'  => (int)($camping->raffle_man_vacancies ?? 0),
+                'Mulher' => (int)($camping->raffle_woman_vacancies ?? 0),
+                'Casado' => (int)($camping->raffle_couple_vacancies ?? 0),
+            ],
+            'casais'                  => $ehCasais,
+            'concorrem'               => $concorrem,
+            'nao_concorrem'           => $this->naoConcorrem($candidatos, $grupoDe),
+            'bloqueio'                => $this->bloqueioDoSorteio($activityId, 'Campista'),
             'inscritos_por_categoria' => $counts,
             'indicados'               => $indicados,
             'sorteados'               => $sorteados,
@@ -778,8 +909,22 @@ class SorteioService
         }
         usort($servoGeral, fn($a, $b) => strcmp($a['nome'], $b['nome']));
 
+        // O que a tela mostra antes e depois do sorteio, nos dois casos.
+        $acsIdsTodos = array_column($acsRecords, 'id');
+        $candidatos = $this->candidatosServos($activityId, array_keys($indicatedUserIds), $acsIdsTodos);
+        $daArea = $this->getEligibleCityUserIds();
+        $camping = $this->acampamentoDa($activityId);
+        $feito = $this->servosJaRealizado($activityId);
+        $extras = [
+            'feito_em'      => $feito ? $this->dataDoSorteio($camping, 'Servo') : null,
+            'previsto'      => $camping?->raffle_servant_date?->format('Y-m-d\TH:i'),
+            'concorrem'     => count(array_filter($candidatos, fn($pr) => isset($daArea[$pr->user_id]))),
+            'nao_concorrem' => $this->naoConcorrem($candidatos, fn($pr) => 'Servo'),
+            'bloqueio'      => $this->bloqueioDoSorteio($activityId, 'Servo'),
+        ];
+
         if (empty($acsRecords)) {
-            return [
+            return $extras + [
                 'realizado'            => false,
                 'setores'              => [],
                 'indicados'            => $indicados,
@@ -872,7 +1017,10 @@ class SorteioService
             $setores[] = [
                 'id'           => (int)$acs->id,
                 'sector_name'  => $name,
+                // Vagas do sorteio = do setor menos quem já está na equipe.
                 'vacancies'    => $n,
+                'vagas_total'  => (int)$acs->actual_vacancies,
+                'na_equipe'    => $jaIndicadosNoSetor,
                 'sorteados'    => $sorteados,
                 'suplentes'    => $suplentes,
                 // Vagas do setor sem ninguém (quem perdeu o prazo saiu da equipe).
@@ -880,8 +1028,8 @@ class SorteioService
             ];
         }
 
-        if (!$anyDrawn && !$this->servosJaRealizado($activityId)) {
-            return [
+        if (!$anyDrawn && !$feito) {
+            return $extras + [
                 'realizado'            => false,
                 'setores'              => $setores,
                 'indicados'            => $indicados,
@@ -945,7 +1093,7 @@ class SorteioService
             $desclassificados[] = $item;
         }
 
-        return [
+        return $extras + [
             'realizado'            => true,
             'setores'              => $setores,
             'indicados'            => $indicados,

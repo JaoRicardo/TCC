@@ -1,1426 +1,869 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	/**
+	 * Inscritos e sorteio (handoff `Desing/design_handoff_inscritos_sorteio`).
+	 * Acampamento: abas "Inscritos", "Sorteio de campistas" e "Sorteio de
+	 * servos". Evento: só a lista. Todo confirm()/alert() virou janela do painel.
+	 */
+	import { onDestroy, onMount } from 'svelte';
 	import { page } from '$app/stores';
 	import { apiFetch } from '$lib/api';
+	import '$lib/styles/formularios.css';
+	import '$lib/styles/inscritos.css';
+	import logoAsas from '$lib/imgs/logo-asas.png';
+	import Janela from '$lib/components/painel/Janela.svelte';
+	import SeloFase from '$lib/components/SeloFase.svelte';
 	import PagamentosAtividade from '$lib/components/painel/PagamentosAtividade.svelte';
-	import { linhaCurta, SITUACAO } from '$lib/pagamentos';
+	import AbaInscritos from '$lib/components/painel/inscritos/AbaInscritos.svelte';
+	import SorteioCampistas from '$lib/components/painel/inscritos/SorteioCampistas.svelte';
+	import SorteioServos from '$lib/components/painel/inscritos/SorteioServos.svelte';
+	import JanelaIndicar from '$lib/components/painel/inscritos/JanelaIndicar.svelte';
+	import { datasDaAtividade, faseDaAtividade } from '$lib/faseAtividade';
+	import { dm, dma, naFolga } from '$lib/pagamentos';
+	import {
+		COM_VAGA,
+		SAIU,
+		ehIndicado,
+		naoPago,
+		plural,
+		situacaoDe,
+		textoDasVagas,
+		unidades,
+		type Inscricao,
+		type SorteioCampistas as TSorteioCampistas,
+		type SorteioServos as TSorteioServos,
+		type UnidadeChamada
+	} from '$lib/inscritos';
 
-	const activityId = $page.params.activityId;
-
-	let subscriptions: any[] = $state([]);
-	let activity: any = $state(null);
-	let sorteio: { campistas: any; servos: any } | null = $state(null);
-	let selectionMethods: any[] = $state([]);
-	let loading = $state(true);
-	let error = $state('');
-
-	let activeTab = $state('inscritos'); // 'inscritos' | 'sorteio'
-	let isBusy = $state(false);
-
-	let showIndicateModal = $state(false);
-	/** Janela lateral "Pagamentos" (registro à mão de quem pagou direto com a organização). */
-	let pagamentosAberto = $state(false);
+	const atividadeId = Number($page.params.activityId as string);
 	const agora = new Date();
-	/** Atividade paga: aparecem o botão "Pagamentos" e a coluna "Pagamento". */
-	let cobra = $derived(Number(activity?.taxaParticipante ?? 0) > 0 || Number(activity?.taxaServo ?? 0) > 0);
-	let naoPagos = $derived(subscriptions.filter((s) => s.pagamento?.situacao === 'nao_pago').length);
-	let selectedSubToIndicate = $state<any>(null);
-	let selectedMethodId = $state<number | null>(null);
 
-	// Draw-form state for campistas (prefilled once the activity loads)
-	let vagasHomem = $state(0);
-	let vagasMulher = $state(0);
-	let vagasCasal = $state(0);
+	let atividade: any = $state(null);
+	let inscricoes: Inscricao[] = $state([]);
+	let sorteio = $state<{ campistas: TSorteioCampistas; servos: TSorteioServos } | null>(null);
+	let metodos: { id: number; method: string; description: string }[] = $state([]);
+	let estado: 'carregando' | 'erro' | 'pronto' = $state('carregando');
 
-	async function loadActivity() {
-		const res = await apiFetch(`/activities/${activityId}`);
-		const data = await res.json();
-		if (res.ok) {
-			activity = data.data;
-			vagasHomem = activity.vagasSorteioHomem ?? 0;
-			vagasMulher = activity.vagasSorteioMulher ?? 0;
-			vagasCasal = activity.vagasSorteioCasal ?? 0;
-		} else {
-			error = data.error || 'Não foi possível carregar a atividade.';
-		}
+	type Aba = 'inscritos' | 'campistas' | 'servos';
+	let aba: Aba = $state('inscritos');
+
+	// ─── Carregar ─────────────────────────────────────────────────────────
+
+	async function lerJson(caminho: string) {
+		const res = await apiFetch(caminho);
+		if (!res.ok) throw new Error(caminho);
+		return res.json();
 	}
 
-	async function loadSubscriptions() {
-		const res = await apiFetch(`/activities/${activityId}/subscriptions`);
-		const data = await res.json();
-		if (res.ok) {
-			subscriptions = data.subscriptions || [];
-		} else {
-			error = data.error || 'Erro ao carregar os inscritos.';
-		}
+	async function carregarInscricoes() {
+		const [lista, resultado] = await Promise.all([
+			lerJson(`/activities/${atividadeId}/subscriptions`),
+			atividade?.tipo === 'Acampamento' ? lerJson(`/activities/${atividadeId}/sorteio`) : Promise.resolve(null)
+		]);
+		inscricoes = lista.subscriptions ?? [];
+		sorteio = resultado ? { campistas: resultado.campistas, servos: resultado.servos } : null;
 	}
 
-	async function loadSorteio() {
-		if (!activity || activity.tipo !== 'Acampamento') return;
-		const res = await apiFetch(`/activities/${activityId}/sorteio`);
-		const data = await res.json();
-		if (res.ok) {
-			sorteio = { campistas: data.campistas, servos: data.servos };
-		}
-	}
-
-	async function loadSelectionMethods() {
-		const res = await apiFetch('/admin/selection-methods?type=Acampamento');
-		const data = await res.json();
-		if (res.ok) {
-			selectionMethods = (data.data || []).filter((m: any) => m.method !== 'Sorteio');
-		}
-	}
-
-	onMount(async () => {
+	/** Depois de uma ação: a atividade também muda (o selo sai de "Aguardando sorteio"). */
+	async function recarregar() {
 		try {
-			await loadActivity();
-			await Promise.all([loadSubscriptions(), loadSorteio(), loadSelectionMethods()]);
-		} catch (e) {
-			error = 'Falha de comunicação com o servidor.';
-		} finally {
-			loading = false;
+			atividade = (await lerJson(`/activities/${atividadeId}`)).data;
+			await carregarInscricoes();
+		} catch {
+			// Fica com o que já estava na tela; o aviso de sucesso continua valendo.
 		}
+	}
+
+	async function carregar() {
+		estado = 'carregando';
+		try {
+			const dados = await lerJson(`/activities/${atividadeId}`);
+			atividade = dados.data;
+			const [, m] = await Promise.all([
+				carregarInscricoes(),
+				atividade.tipo === 'Acampamento' ? lerJson('/admin/selection-methods?type=Acampamento') : Promise.resolve({ data: [] })
+			]);
+			metodos = (m.data ?? []).filter((x: { method: string }) => x.method !== 'Sorteio');
+			estado = 'pronto';
+		} catch {
+			estado = 'erro';
+		}
+	}
+
+	onMount(carregar);
+
+	// ─── Dados derivados ──────────────────────────────────────────────────
+
+	const evento = $derived(atividade?.tipo !== 'Acampamento');
+	const casais = $derived(!!sorteio?.campistas.casais);
+	const feito = $derived({ Campista: !!sorteio?.campistas.realizado, Servo: !!sorteio?.servos.realizado });
+	const cobra = $derived(Number(atividade?.taxaParticipante ?? 0) > 0 || Number(atividade?.taxaServo ?? 0) > 0);
+	const fase = $derived(atividade ? faseDaAtividade(datasDaAtividade(atividade), agora) : null);
+	const campistas = $derived(inscricoes.filter((i) => i.subscription_type === 'Campista'));
+	const servos = $derived(inscricoes.filter((i) => i.subscription_type === 'Servo'));
+	const sitDe = (i: Inscricao) => situacaoDe(i, evento, feito);
+
+	const naoPagos = $derived(inscricoes.filter(naoPago));
+	const vencidos = $derived(naoPagos.filter((i) => naFolga(i.pagamento, agora)));
+
+	const p2 = (n: number) => String(n).padStart(2, '0');
+	const quando = $derived.by(() => {
+		if (!atividade?.inicioEvento) return 'Data a definir';
+		const ini = new Date(atividade.inicioEvento);
+		const fim = atividade.fimEvento ? new Date(atividade.fimEvento) : ini;
+		const d = (x: Date) => `${p2(x.getDate())}/${p2(x.getMonth() + 1)}`;
+		if (d(ini) === d(fim)) return `${d(ini)}/${ini.getFullYear()}`;
+		if (ini.getMonth() === fim.getMonth()) return `${p2(ini.getDate())} a ${d(fim)}/${fim.getFullYear()}`;
+		return `${d(ini)} a ${d(fim)}/${fim.getFullYear()}`;
 	});
 
-	async function refreshAfterAction() {
-		await Promise.all([loadSubscriptions(), loadSorteio()]);
-	}
+	const conjugeDe = (userId: number) => inscricoes.find((i) => i.user.id === userId)?.conjuge?.user_id ?? null;
+	const ehHomem = (userId: number) => inscricoes.find((i) => i.user.id === userId)?.user.sex === 'M';
+	/** Quantas unidades (casais contam um) numa lista do sorteio. */
+	const contarUnidades = (lista: { user_id: number; nome: string }[]) => unidades(lista, casais, conjugeDe, ehHomem).length;
 
-	async function removeIndication(preRegId: number, nome: string) {
-		if (!confirm(`Remover a indicação de ${nome}? A vaga garantida dela será desfeita (e a do cônjuge, se houver).`)) return;
-		isBusy = true;
-		try {
-			const res = await apiFetch(`/inscricoes/${preRegId}/indicacao`, { method: 'DELETE' });
-			const data = await res.json();
-			if (res.ok) {
-				await refreshAfterAction();
-			} else {
-				alert(data.error || 'Erro ao remover indicação.');
-			}
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	function calculateAge(birthdayString: string) {
-		if (!birthdayString) return '-';
-		const parts = birthdayString.split('/');
-		if (parts.length !== 3) return '-';
-		const birthDate = new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-		const today = new Date();
-		let age = today.getFullYear() - birthDate.getFullYear();
-		const m = today.getMonth() - birthDate.getMonth();
-		if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) age--;
-		return age + ' anos';
-	}
-
-	/** Data prevista do sorteio: o acampamento não tem hora, e o sorteio é feito à mão aqui. */
-	function soData(dateString?: string | null) {
-		if (!dateString) return 'A definir';
-		return new Date(dateString).toLocaleDateString('pt-BR');
-	}
-
-	function formatDate(dateString?: string | null) {
-		if (!dateString) return 'A definir';
-		return new Date(dateString).toLocaleString('pt-BR', {
-			day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
-		}).replace(',', ' às');
-	}
-
-	function statusBadgeClass(status: string) {
-		if (status === 'Sorteado' || status === 'Indicado') return 'badge-drawn';
-		if (status === 'Formulário Enviado') return 'badge-form';
-		if (status === 'Suplente') return 'badge-reserve';
-		// Perdeu o prazo do formulário ou do pagamento, ou saiu do sorteio ao ter a ficha corrigida.
-		// Ou a organização cancelou / recusou (correção não feita) pela aba Respostas.
-		if (['Desistência', 'Prazo Perdido', 'Retirado do sorteio', 'Cancelada pela organização', 'Recusada'].includes(status))
-			return 'badge-cancelled';
-		if (status === 'Correção pedida') return 'badge-reserve';
-		return 'badge-waiting';
-	}
-
-	async function performRaffleCampistas() {
-		if (!confirm('Atenção! Isso vai (re)sortear os campistas com as vagas informadas. Continuar?')) return;
-		isBusy = true;
-		try {
-			const res = await apiFetch(`/activities/${activityId}/sorteio/campistas`, {
-				method: 'POST',
-				body: JSON.stringify({ homem: vagasHomem, mulher: vagasMulher, casado: vagasCasal })
-			});
-			const data = await res.json();
-			if (res.ok) {
-				await refreshAfterAction();
-			} else {
-				alert(data.error || 'Erro ao realizar o sorteio.');
-			}
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	async function resetRaffleCampistas() {
-		if (!confirm('Isso vai apagar o resultado atual do sorteio de campistas. Continuar?')) return;
-		isBusy = true;
-		try {
-			await apiFetch(`/activities/${activityId}/sorteio/campistas`, { method: 'DELETE' });
-			await refreshAfterAction();
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	async function performRaffleServos() {
-		if (!confirm('Atenção! Isso vai (re)sortear os servos por setor. Continuar?')) return;
-		isBusy = true;
-		try {
-			const res = await apiFetch(`/activities/${activityId}/sorteio/servos`, { method: 'POST' });
-			const data = await res.json();
-			if (res.ok) {
-				await refreshAfterAction();
-			} else {
-				alert(data.error || 'Erro ao realizar o sorteio.');
-			}
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	async function resetRaffleServos() {
-		if (!confirm('Isso vai apagar o resultado atual do sorteio de servos. Continuar?')) return;
-		isBusy = true;
-		try {
-			await apiFetch(`/activities/${activityId}/sorteio/servos`, { method: 'DELETE' });
-			await refreshAfterAction();
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	// Vaga aberta (alguém perdeu o prazo do formulário ou do pagamento): chama o
-	// próximo suplente da fila — sempre o próximo na ordem, nunca um escolhido.
-	async function chamarProximo(dados: Record<string, unknown>, quem: string) {
-		if (!confirm(`Chamar ${quem} para a vaga aberta?`)) return;
-		isBusy = true;
-		try {
-			const res = await apiFetch(`/activities/${activityId}/sorteio/chamar-proximo`, {
-				method: 'POST',
-				body: JSON.stringify(dados)
-			});
-			const data = await res.json();
-			if (res.ok) {
-				await refreshAfterAction();
-			} else {
-				alert(data.error || 'Não foi possível chamar o próximo suplente.');
-			}
-		} catch (e) {
-			alert('Erro de comunicação.');
-		} finally {
-			isBusy = false;
-		}
-	}
-
-	const GRUPOS_CAMPISTA = ['Homem', 'Mulher', 'Casado'];
-	const NOME_GRUPO: Record<string, string> = { Homem: 'Homens', Mulher: 'Mulheres', Casado: 'Casais' };
-
-	// Próximo da fila de um grupo — para casal, os dois que dividem a posição.
-	function proximosDoGrupo(grupo: string): any[] {
-		const fila = (sorteio?.campistas.suplentes ?? []).filter((p: any) => p.categoria === grupo);
-		if (fila.length === 0) return [];
-		return fila.filter((p: any) => p.posicao === fila[0].posicao);
-	}
-
-	let gruposComVagaAberta = $derived(
-		GRUPOS_CAMPISTA.filter((g) => (sorteio?.campistas.vagas_abertas?.[g] ?? 0) > 0)
+	const abertasCampistas = $derived(
+		sorteio?.campistas.realizado ? Object.values(sorteio.campistas.vagas_abertas ?? {}).reduce((t: number, n: number) => t + n, 0) : 0
 	);
+	const abertasServos = $derived(sorteio?.servos.realizado ? sorteio.servos.setores.reduce((t, x) => t + x.vagas_abertas, 0) : 0);
 
-	// Quem tinha vaga e saiu: por prazo (formulário ou pagamento), cancelado pela
-	// organização ou recusado (correção não feita) — cada um no seu grupo.
-	const GRUPOS_SAIDA = [
-		{ chave: 'prazo', titulo: '⏳ Perderam a vaga por prazo' },
-		{ chave: 'cancelada_organizacao', titulo: '🚫 Canceladas pela organização' },
-		{ chave: 'correcao_nao_feita', titulo: '✖️ Recusadas: correção não feita no prazo' }
-	];
+	type Cartao = { rot: string; val: string; sub: string; alerta?: boolean };
+	const cartoes = $derived.by((): Cartao[] => {
+		if (!atividade) return [];
+		if (evento) {
+			const inscritos = inscricoes.filter((i) => ['evInsc', 'andam'].includes(sitDe(i))).length;
+			const prazo = atividade.prazoPagamentoParticipante;
+			return [
+				{ rot: 'Inscritos', val: `${inscritos}`, sub: atividade.vagasTotais ? `de ${atividade.vagasTotais} vagas` : 'sem limite de vagas' },
+				{ rot: 'Inscrição em andamento', val: `${inscricoes.filter((i) => sitDe(i) === 'andam').length}`, sub: 'falta enviar o formulário' },
+				...(cobra
+					? [
+							{
+								rot: 'Não pagos',
+								val: `${naoPagos.length}`,
+								sub: vencidos.length ? `${vencidos.length} com prazo vencido` : prazo ? `prazo ${dm(prazo)}` : 'quem já precisa pagar',
+								alerta: naoPagos.length > 0
+							}
+						]
+					: []),
+				{ rot: 'Saíram', val: `${inscricoes.filter((i) => SAIU.includes(sitDe(i))).length}`, sub: 'desistências e cancelamentos' }
+			];
+		}
+		const s = sorteio?.campistas;
+		const comVaga = campistas.filter((i) => COM_VAGA.includes(sitDe(i)));
+		const indicados = comVaga.filter(ehIndicado).length;
+		const sorteados = comVaga.length - indicados;
+		const vagas = s ? s.vagas.Homem + s.vagas.Mulher + 2 * s.vagas.Casado : 0;
+		const supCamp = s?.realizado ? contarUnidades(s.suplentes) : 0;
+		const supServ = sorteio?.servos.realizado ? sorteio.servos.setores.reduce((t, x) => t + x.suplentes.length, 0) : 0;
+		const abertas = abertasCampistas + abertasServos;
+		return [
+			{ rot: 'Inscritos', val: `${inscricoes.length}`, sub: `${plural(campistas.length, 'campista', 'campistas')} · ${plural(servos.length, 'servo', 'servos')}` },
+			{
+				rot: 'Campistas com vaga',
+				val: `${s?.realizado ? comVaga.length : indicados}`,
+				sub: s?.realizado
+					? `${sorteados} de ${vagas} vagas + ${plural(indicados, 'indicado', 'indicados')}`
+					: `${plural(indicados, 'indicado', 'indicados')} · sorteio não feito`
+			},
+			{
+				rot: 'Suplentes na fila',
+				val: s?.realizado ? `${supCamp + supServ}` : '—',
+				sub: s?.realizado
+					? `${casais ? plural(supCamp, 'casal', 'casais') : plural(supCamp, 'campista', 'campistas')} · ${plural(supServ, 'servo', 'servos')}`
+					: 'depois do sorteio'
+			},
+			{ rot: 'Vagas abertas', val: `${abertas}`, sub: abertas ? 'use “Chamar próximo”' : 'nenhuma agora', alerta: abertas > 0 },
+			...(cobra
+				? [
+						{
+							rot: 'Não pagos',
+							val: `${naoPagos.length}`,
+							sub: vencidos.length ? `${vencidos.length} com prazo vencido` : 'quem já precisa pagar',
+							alerta: vencidos.length > 0
+						}
+					]
+				: [])
+		];
+	});
 
-	function grupoDaSaida(motivo: string) {
-		return motivo === 'cancelada_organizacao' || motivo === 'correcao_nao_feita' ? motivo : 'prazo';
+	const abas = $derived.by(() => {
+		const selo = (realizado: boolean, abertas: number) =>
+			!realizado ? { texto: 'não feito', tom: 'azul' } : abertas ? { texto: plural(abertas, 'vaga aberta', 'vagas abertas'), tom: 'ambar' } : null;
+		return [
+			{ k: 'inscritos' as Aba, nome: 'Inscritos', selo: null },
+			{ k: 'campistas' as Aba, nome: 'Sorteio de campistas', selo: selo(feito.Campista, abertasCampistas) },
+			{ k: 'servos' as Aba, nome: 'Sorteio de servos', selo: selo(feito.Servo, abertasServos) }
+		];
+	});
+
+	// ─── Janelas ──────────────────────────────────────────────────────────
+
+	type Janela =
+		| { tipo: 'indicar'; inicial: Inscricao | null }
+		| { tipo: 'realizar'; sorteio: 'Campista' | 'Servo' }
+		| { tipo: 'refazer'; sorteio: 'Campista' | 'Servo' }
+		| { tipo: 'apagar'; sorteio: 'Campista' | 'Servo' }
+		| { tipo: 'chamar'; alvo: UnidadeChamada }
+		| { tipo: 'desfazer'; inscricao: Inscricao };
+
+	let janela = $state<Janela | null>(null);
+	let enviando = $state(false);
+	let erroJanela = $state('');
+	let entendo = $state(false);
+
+	function abrir(j: Janela) {
+		janela = j;
+		erroJanela = '';
+		entendo = false;
+		enviando = false;
+	}
+	function fechar() {
+		if (!enviando) janela = null;
 	}
 
-	function explicacaoSaida(grupo: string, servo: boolean) {
-		const vaga = servo
-			? 'a vaga do setor fica aberta até alguém chamar o próximo suplente.'
-			: 'a vaga fica aberta até alguém chamar o próximo suplente.';
-		if (grupo === 'cancelada_organizacao') return `A organização cancelou a inscrição na aba Respostas; ${vaga}`;
-		if (grupo === 'correcao_nao_feita') return `Não corrigiram o formulário até o prazo da correção; ${vaga}`;
-		return servo
-			? `Quem não enviou o formulário ou não pagou até o prazo saiu da equipe; ${vaga} Suplente sem formulário saiu da fila.`
-			: `Quem não enviou o formulário ou não pagou até o prazo saiu sozinho; ${vaga} Suplente sem formulário saiu da fila.`;
-	}
-
-	function textoMotivo(motivo: string) {
-		if (motivo === 'prazo_pagamento') return 'não pagou';
-		return 'sem formulário';
-	}
-
-	async function submitIndication() {
-		if (!selectedSubToIndicate) return alert('Selecione um inscrito!');
-		if (!selectedMethodId) return alert('Selecione o motivo da indicação!');
-		isBusy = true;
+	/** Faz a ação da janela; sucesso fecha, recarrega e mostra o aviso verde. */
+	async function executar(acao: () => Promise<Response>, acaoTexto: string, sucesso: (dados: any) => string) {
+		enviando = true;
+		erroJanela = '';
 		try {
-			const res = await apiFetch(`/activities/${activityId}/indicate`, {
-				method: 'POST',
-				body: JSON.stringify({
-					pre_registration_id: selectedSubToIndicate.id,
-					selection_method_id: selectedMethodId
-				})
-			});
-			const data = await res.json();
-			if (res.ok) {
-				showIndicateModal = false;
-				selectedSubToIndicate = null;
-				selectedMethodId = null;
-				await refreshAfterAction();
-				if (data.conjuge_indicado) {
-					alert('Indicação salva! O(a) cônjuge vinculado(a) também foi indicado(a) automaticamente.');
-				}
-			} else {
-				alert(data.error || 'Erro ao indicar.');
+			const res = await acao();
+			const dados = await res.json().catch(() => ({}));
+			if (!res.ok) {
+				erroJanela = dados.error ? `Não foi possível ${acaoTexto}: ${dados.error}` : `Não foi possível ${acaoTexto}. Nada mudou: tente de novo.`;
+				return;
 			}
-		} catch (e) {
-			alert('Erro de comunicação.');
+			const msg = sucesso(dados);
+			janela = null;
+			await recarregar();
+			mostrarAviso(msg);
+		} catch {
+			erroJanela = `Não foi possível ${acaoTexto}. Nada mudou: tente de novo.`;
 		} finally {
-			isBusy = false;
+			enviando = false;
 		}
 	}
 
-	let pendingSubscriptions = $derived(subscriptions.filter((s) => s.status === 'Inscrito'));
-	// Quem ainda pode ser indicado: pendentes e suplentes (indicar "resgata" um
-	// suplente para vaga garantida). Sorteados/Indicados/Desistências ficam de fora.
-	let indicatableSubscriptions = $derived(
-		subscriptions.filter((s) => s.status === 'Inscrito' || s.status === 'Suplente'),
-	);
+	const caminhoDoSorteio = (t: 'Campista' | 'Servo') => `/activities/${atividadeId}/sorteio/${t === 'Servo' ? 'servos' : 'campistas'}`;
 
-	function openIndicateModalFor(sub: any | null) {
-		selectedSubToIndicate = sub;
-		selectedMethodId = null;
-		showIndicateModal = true;
+	function realizar(t: 'Campista' | 'Servo', refazendo: boolean) {
+		executar(
+			() => apiFetch(caminhoDoSorteio(t), { method: 'POST' }),
+			refazendo ? 'sortear de novo' : 'realizar o sorteio',
+			(dados) => {
+				if (refazendo) return 'Sorteio refeito. O resultado anterior foi substituído.';
+				if (t === 'Servo') return 'Sorteio de servos realizado.';
+				const comVaga = contarUnidades(dados.sorteados ?? []);
+				const fila = contarUnidades(dados.suplentes ?? []);
+				const un = (n: number) => (casais ? plural(n, 'casal', 'casais') : plural(n, 'pessoa', 'pessoas'));
+				return `Sorteio realizado: ${un(comVaga)} com vaga e ${un(fila)} na fila de suplentes.`;
+			}
+		);
 	}
+
+	function apagar(t: 'Campista' | 'Servo') {
+		executar(
+			() => apiFetch(caminhoDoSorteio(t), { method: 'DELETE' }),
+			'apagar o resultado',
+			() =>
+				t === 'Servo'
+					? 'Resultado do sorteio de servos apagado.'
+					: 'Resultado do sorteio apagado. O acampamento voltou para “Aguardando sorteio”.'
+		);
+	}
+
+	function chamar(alvo: UnidadeChamada) {
+		executar(
+			() =>
+				apiFetch(`/activities/${atividadeId}/sorteio/chamar-proximo`, {
+					method: 'POST',
+					body: JSON.stringify(alvo.tipo === 'Servo' ? { tipo: 'Servo', setor: alvo.setor } : { tipo: 'Campista', grupo: alvo.grupo })
+				}),
+			'chamar',
+			(dados) => {
+				const verbo = alvo.pessoas > 1 ? 'foram chamados e têm' : 'foi chamado(a) e tem';
+				return dados.prazo
+					? `${alvo.nome} ${verbo} até ${dma(dados.prazo)} para enviar o formulário e pagar.`
+					: `${alvo.nome} ${alvo.pessoas > 1 ? 'foram chamados' : 'foi chamado(a)'}.`;
+			}
+		);
+	}
+
+	function desfazer(i: Inscricao) {
+		executar(
+			() => apiFetch(`/inscricoes/${i.id}/indicacao`, { method: 'DELETE' }),
+			'desfazer a indicação',
+			(dados) =>
+				dados.conjuge_removido && i.conjuge
+					? `Indicação de ${i.user.name} e ${i.conjuge.nome} desfeita.`
+					: `Indicação de ${i.user.name} desfeita.`
+		);
+	}
+
+	/** O mesmo cálculo do servidor: o maior entre o prazo da trilha e hoje + 3 dias, sem passar do primeiro dia. */
+	function novoPrazo(tipo: 'Campista' | 'Servo'): Date | null {
+		const base = tipo === 'Servo' ? atividade?.prazoPagamentoServo : atividade?.prazoPagamentoParticipante;
+		const tres = new Date(agora.getTime() + 3 * 86400000);
+		let prazo = base ? new Date(base) : null;
+		if (!prazo || tres > prazo) prazo = tres;
+		if (atividade?.inicioEvento) {
+			const i = new Date(atividade.inicioEvento);
+			const limite = new Date(i.getFullYear(), i.getMonth(), i.getDate(), 23, 59);
+			if (prazo > limite) prazo = limite;
+		}
+		return prazo;
+	}
+	/** "Mateus e Natália Santos" → "Mateus e Natália"; "Arthur Moreira" → "Arthur". */
+	const primeirosNomes = (nome: string) =>
+		nome
+			.split(' e ')
+			.map((parte) => parte.trim().split(' ')[0])
+			.join(' e ');
+	const dataLonga = (d: Date | null) => (d ? `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()}` : 'a definir');
+
+	// Resumo das janelas de sorteio.
+	const vagasTxt = $derived(sorteio ? textoDasVagas(sorteio.campistas.vagas, casais) : '');
+	const resumoRealizar = $derived.by(() => {
+		const s = sorteio?.campistas;
+		if (!s) return null;
+		const concorrem = casais
+			? `${plural(Math.ceil(s.concorrem.Casado / 2), 'casal', 'casais')} (${plural(s.concorrem.Casado, 'pessoa', 'pessoas')})`
+			: `${plural(s.concorrem.Homem, 'homem', 'homens')} e ${plural(s.concorrem.Mulher, 'mulher', 'mulheres')}`;
+		const nIndic = contarUnidades(s.indicados);
+		const nFora = contarUnidades(s.nao_concorrem);
+		return {
+			concorrem,
+			indicados: casais ? plural(nIndic, 'casal indicado', 'casais indicados') : plural(nIndic, 'indicado', 'indicados'),
+			naoConcorrem: nFora ? `${casais ? plural(nFora, 'casal', 'casais') : plural(nFora, 'pessoa', 'pessoas')} (mora fora da área)` : 'ninguém'
+		};
+	});
+	const prazoDoSorteio = $derived(atividade?.prazoFormularioCampista ?? atividade?.prazoPagamentoParticipante ?? null);
+	const resumoRefazer = $derived.by(() => {
+		if (!sorteio || !janela || janela.tipo !== 'refazer') return '';
+		if (janela.sorteio === 'Servo') {
+			const com = sorteio.servos.setores.reduce((t, x) => t + x.sorteados.length, 0);
+			const fila = sorteio.servos.setores.reduce((t, x) => t + x.suplentes.length, 0);
+			return `${plural(com, 'servo', 'servos')} com vaga e ${fila} na fila voltam a concorrer, e o sorteio é feito de novo com as vagas de cada setor.`;
+		}
+		const com = contarUnidades(sorteio.campistas.sorteados);
+		const fila = contarUnidades(sorteio.campistas.suplentes);
+		const un = casais ? plural(com, 'casal', 'casais') : plural(com, 'campista', 'campistas');
+		return `${un} com vaga e ${fila} na fila voltam a concorrer, e o sorteio é feito de novo com as vagas do cadastro (${vagasTxt}).`;
+	});
+
+	// ─── Avisos ───────────────────────────────────────────────────────────
+
+	let aviso = $state('');
+	let avisoTimer: ReturnType<typeof setTimeout>;
+	function mostrarAviso(texto: string) {
+		aviso = texto;
+		clearTimeout(avisoTimer);
+		avisoTimer = setTimeout(() => (aviso = ''), 7000);
+	}
+	onDestroy(() => clearTimeout(avisoTimer));
+
+	let pagamentosAberto = $state(false);
 </script>
 
-<div class="page-header">
-	<div>
-		<h2>Inscritos e Sorteios</h2>
-		{#if activity}
-			<p class="text-muted">Visualizando: <strong>{activity.nome}</strong></p>
-		{:else}
-			<p class="text-muted">Visualizando inscritos da atividade selecionada.</p>
-		{/if}
+<svelte:head>
+	<title>Inscritos e sorteio | Painel da Comunidade</title>
+</svelte:head>
+
+<div class="fm">
+	<div class="cabeca">
+		<div class="cabeca-textos">
+			<h1 class="fm-h1">Inscritos e sorteio</h1>
+			{#if atividade}
+				<div class="atividade">
+					<strong>{atividade.nome}</strong>
+					{#if fase}<SeloFase {fase} />{/if}
+					<span class="datas">{quando}</span>
+				</div>
+			{/if}
+		</div>
+		<div class="cabeca-acoes">
+			{#if atividade && !evento && estado === 'pronto'}
+				<button type="button" class="ins-acao" onclick={() => abrir({ tipo: 'indicar', inicial: null })}>
+					<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 3.1 6.3 6.9 1-5 4.9 1.2 6.8L12 17.8 5.8 21l1.2-6.8-5-4.9 6.9-1z" /></svg>
+					Indicar
+				</button>
+			{/if}
+			{#if cobra && estado === 'pronto'}
+				<button type="button" class="ins-acao" aria-haspopup="dialog" onclick={() => (pagamentosAberto = true)}>
+					<span class="rs" aria-hidden="true">R$</span>Pagamentos
+					{#if naoPagos.length}<span class="nao-pagos">{naoPagos.length} não {naoPagos.length === 1 ? 'pago' : 'pagos'}</span>{/if}
+				</button>
+			{/if}
+			<a href="/admin/atividades" class="ins-acao2">
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7" /></svg>
+				Gestão de Atividades
+			</a>
+		</div>
 	</div>
-	<div class="header-actions">
-		{#if activity?.tipo === 'Acampamento'}
-			<button class="btn-indicate" onclick={() => openIndicateModalFor(null)}>
-				⭐️ Indicar
-			</button>
-		{/if}
-		{#if cobra}
-			<button class="btn-pagamentos" aria-haspopup="dialog" onclick={() => (pagamentosAberto = true)}>
-				<span class="rs" aria-hidden="true">R$</span>Pagamentos
-				{#if naoPagos > 0}<span class="nao-pagos">{naoPagos} não {naoPagos === 1 ? 'pago' : 'pagos'}</span>{/if}
-			</button>
-		{/if}
-		<a href="/admin/atividades" class="btn-secondary">Voltar para Atividades</a>
-	</div>
+
+	{#if estado === 'carregando'}
+		<section class="fm-cartao carregando" aria-busy="true">
+			<div class="carregando-topo"><span class="fm-spinner"></span>Carregando os inscritos...</div>
+			{#each [1, 2, 3, 4, 5, 6] as _}
+				<div class="osso-linha"><span class="osso"></span><span class="osso claro"></span><span class="osso claro"></span><span class="osso claro"></span><span class="osso claro"></span></div>
+			{/each}
+		</section>
+	{:else if estado === 'erro'}
+		<section class="fm-cartao centro" role="alert">
+			<span class="icone-erro" aria-hidden="true">!</span>
+			<p class="centro-titulo">Não foi possível carregar os inscritos.</p>
+			<p class="centro-texto">Verifique sua conexão com a internet e tente novamente.</p>
+			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={carregar}>Tentar novamente</button>
+		</section>
+	{:else if inscricoes.length === 0}
+		<section class="fm-cartao centro">
+			<img src={logoAsas} alt="" class="brasao" />
+			<p class="centro-titulo">Ninguém se inscreveu ainda.</p>
+			<p class="centro-texto">As inscrições aparecem aqui assim que as pessoas se inscreverem pelo site.</p>
+		</section>
+	{:else}
+		<div class="cartoes">
+			{#each cartoes as c (c.rot)}
+				<div class="cartao-num" class:alerta={c.alerta}>
+					<span class="ins-rot">{c.rot}</span>
+					<span class="num">{c.val}</span>
+					<span class="num-sub">{c.sub}</span>
+				</div>
+			{/each}
+		</div>
+
+		<div class="painel">
+			{#if !evento}
+				<div class="abas" role="tablist" aria-label="Partes da tela">
+					{#each abas as t (t.k)}
+						<button
+							type="button"
+							role="tab"
+							id="aba-{t.k}"
+							aria-selected={aba === t.k}
+							aria-controls="painel-aba"
+							class="aba"
+							class:sel={aba === t.k}
+							onclick={() => (aba = t.k)}
+						>
+							{t.nome}
+							{#if t.selo}<span class="aba-selo {t.selo.tom}">{t.selo.texto}</span>{/if}
+						</button>
+					{/each}
+				</div>
+			{/if}
+			<section id="painel-aba" class="fm-cartao conteudo" class:com-abas={!evento} role={evento ? undefined : 'tabpanel'} aria-labelledby={evento ? undefined : `aba-${aba}`}>
+				{#if evento || aba === 'inscritos'}
+					<AbaInscritos
+						{inscricoes}
+						{evento}
+						{casais}
+						{feito}
+						{cobra}
+						{agora}
+						onindicar={(i) => abrir({ tipo: 'indicar', inicial: i })}
+						ondesfazer={(i) => abrir({ tipo: 'desfazer', inscricao: i })}
+					/>
+				{:else if aba === 'campistas' && sorteio}
+					<SorteioCampistas
+						s={sorteio.campistas}
+						inscricoes={campistas}
+						{atividadeId}
+						onchamar={(alvo) => abrir({ tipo: 'chamar', alvo })}
+						onindicar={() => abrir({ tipo: 'indicar', inicial: null })}
+						ondesfazer={(i) => abrir({ tipo: 'desfazer', inscricao: i })}
+						onrealizar={() => abrir({ tipo: 'realizar', sorteio: 'Campista' })}
+						onrefazer={() => abrir({ tipo: 'refazer', sorteio: 'Campista' })}
+						onapagar={() => abrir({ tipo: 'apagar', sorteio: 'Campista' })}
+					/>
+				{:else if aba === 'servos' && sorteio}
+					<SorteioServos
+						s={sorteio.servos}
+						inscricoes={servos}
+						{atividadeId}
+						onchamar={(alvo) => abrir({ tipo: 'chamar', alvo })}
+						onrealizar={() => abrir({ tipo: 'realizar', sorteio: 'Servo' })}
+						onrefazer={() => abrir({ tipo: 'refazer', sorteio: 'Servo' })}
+						onapagar={() => abrir({ tipo: 'apagar', sorteio: 'Servo' })}
+					/>
+				{/if}
+			</section>
+		</div>
+	{/if}
 </div>
 
-{#if error}
-	<div class="error-box"><p>{error}</p></div>
-{/if}
-
-{#if loading}
-	<div class="loading-state">
-		<div class="spinner"></div>
-		<p>Carregando inscritos...</p>
-	</div>
-{:else}
-	<!-- Stats -->
-	<div class="stats-row">
-		<div class="stat-card">
-			<span class="stat-title">Total de Inscritos</span>
-			<span class="stat-value">{subscriptions.length}</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-title">Campistas</span>
-			<span class="stat-value">{subscriptions.filter((s) => s.subscription_type === 'Campista').length}</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-title">Servos</span>
-			<span class="stat-value">{subscriptions.filter((s) => s.subscription_type === 'Servo').length}</span>
-		</div>
-		<div class="stat-card">
-			<span class="stat-title">Aguardando Decisão</span>
-			<span class="stat-value">{pendingSubscriptions.length}</span>
-		</div>
-	</div>
-
-	{#if activity?.tipo === 'Acampamento'}
-		<div class="tabs">
-			<button class="tab-btn {activeTab === 'inscritos' ? 'active' : ''}" onclick={() => (activeTab = 'inscritos')}>
-				Todos Inscritos
-			</button>
-			<button class="tab-btn {activeTab === 'sorteio' ? 'active' : ''}" onclick={() => (activeTab = 'sorteio')}>
-				Resultado do Sorteio
-			</button>
-		</div>
-	{/if}
-
-	{#if activeTab === 'inscritos' || activity?.tipo !== 'Acampamento'}
-		<div class="table-container">
-			<table class="data-table">
-				<thead>
-					<tr>
-						<th>Nome</th>
-						<th>Data Nasc. / Idade</th>
-						<th>CPF</th>
-						<th>Gênero</th>
-						<th>Estado Civil</th>
-						<th>Cônjuge (CPF)</th>
-						<th>Tipo</th>
-						<th>Inscrição</th>
-						<th class="center">Status</th>
-						{#if cobra}<th class="th-pagamento">Pagamento</th>{/if}
-					</tr>
-				</thead>
-				<tbody>
-					{#if subscriptions.length === 0}
-						<tr><td colspan={cobra ? 10 : 9} class="text-center py-4">Nenhuma inscrição encontrada.</td></tr>
-					{/if}
-					{#each subscriptions as sub}
-						<tr>
-							<td class="fw-bold">{sub.user.name}</td>
-							<td>
-								{sub.user.birthday || '-'} <br />
-								<small class="text-muted">({calculateAge(sub.user.birthday)})</small>
-							</td>
-							<td><span class="mono">{sub.user.cpf}</span></td>
-							<td>{sub.user.sex === 'M' ? 'Masculino' : sub.user.sex === 'F' ? 'Feminino' : 'Outro'}</td>
-							<td>{sub.user.marital_status}</td>
-							<td>
-								{#if sub.spouse_cpf}
-									<span class="mono badge-spouse">{sub.spouse_cpf}</span>
-								{:else}
-									<span class="text-muted">-</span>
-								{/if}
-							</td>
-							<td>{sub.subscription_type || '-'}</td>
-							<td>{sub.created ? new Date(sub.created).toLocaleDateString('pt-BR') : '-'}</td>
-							<td class="center">
-								<span class="badge {statusBadgeClass(sub.status)}">{sub.status}</span>
-								{#if sub.status === 'Indicado'}
-									<button class="btn-remove-ind" onclick={() => removeIndication(sub.id, sub.user.name)} disabled={isBusy} title="Remover indicação">✕</button>
-								{:else if activity?.tipo === 'Acampamento' && (sub.status === 'Inscrito' || sub.status === 'Suplente')}
-									<button class="btn-row-indicate" onclick={() => openIndicateModalFor(sub)} disabled={isBusy} title="Indicar {sub.user.name}">⭐️ Indicar</button>
-								{/if}
-							</td>
-							{#if cobra}
-								<td class="td-pagamento">
-									{#if sub.pagamento?.situacao}
-										{@const sit = SITUACAO[sub.pagamento.situacao as keyof typeof SITUACAO]}
-										<span class="pill-pag {sit.tom}"><i></i>{sit.texto}</span>
-										<span class="pag-curto">{linhaCurta(sub.pagamento, activity?.tipo === 'Evento', agora)}</span>
-									{:else}
-										<span class="text-muted">—</span>
-									{/if}
-								</td>
-							{/if}
-						</tr>
-					{/each}
-				</tbody>
-			</table>
-		</div>
-	{:else if activeTab === 'sorteio' && sorteio}
-		<!-- Campistas -->
-		<section class="raffle-card">
-			<div class="raffle-card-header">
-				<h3>🏕️ Sorteio de Campistas</h3>
-				{#if sorteio.campistas.realizado}
-					<button class="btn-danger-outline" onclick={resetRaffleCampistas} disabled={isBusy}>Resetar Sorteio</button>
-				{/if}
-			</div>
-
-			<div class="raffle-counts">
-				<span><strong>{sorteio.campistas.inscritos_por_categoria.Homem}</strong> homens inscritos</span>
-				<span><strong>{sorteio.campistas.inscritos_por_categoria.Mulher}</strong> mulheres inscritas</span>
-				<span><strong>{sorteio.campistas.inscritos_por_categoria.Casado}</strong> casais inscritos</span>
-				{#if activity.inicioSorteio}
-					<span class="raffle-date">📅 Sorteio previsto: {soData(activity.inicioSorteio)}</span>
-				{/if}
-			</div>
-
-			{#if sorteio.campistas.indicados.length > 0}
-				<div class="indicados-box">
-					<h4>⭐️ Indicados ({sorteio.campistas.indicados.length}) — vaga garantida, não entram no sorteio</h4>
-					<ul class="raffle-list">
-						{#each sorteio.campistas.indicados as p}
-							<li class="indicado-item">
-								<span>{p.nome} <span class="tag-mini">{p.categoria}</span> <span class="tag-mini tag-metodo">{p.metodo}</span></span>
-								<button class="btn-remove-ind" onclick={() => removeIndication(p.pre_registration_id, p.nome)} disabled={isBusy} title="Remover indicação">✕</button>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-
-			<div class="raffle-form">
-				<div class="raffle-form-field">
-					<label for="vagasHomem">Vagas — Homens</label>
-					<input type="number" id="vagasHomem" min="0" bind:value={vagasHomem} />
-				</div>
-				<div class="raffle-form-field">
-					<label for="vagasMulher">Vagas — Mulheres</label>
-					<input type="number" id="vagasMulher" min="0" bind:value={vagasMulher} />
-				</div>
-				<div class="raffle-form-field">
-					<label for="vagasCasal">Vagas — Casais</label>
-					<input type="number" id="vagasCasal" min="0" bind:value={vagasCasal} />
-				</div>
-				<button class="btn-primary" onclick={performRaffleCampistas} disabled={isBusy}>
-					{sorteio.campistas.realizado ? '🎲 Re-sortear' : '🎲 Realizar Sorteio'}
-				</button>
-			</div>
-
-			{#if sorteio.campistas.realizado}
-				<div class="raffle-results-grid">
-					<div class="raffle-result-col">
-						<h4>✅ Sorteados ({sorteio.campistas.sorteados.length})</h4>
-						{#if sorteio.campistas.sorteados.length === 0}
-							<p class="text-muted">Ninguém sorteado nesta categoria.</p>
-						{/if}
-						<ul class="raffle-list">
-							{#each sorteio.campistas.sorteados as p}
-								<li>
-									<span class="raffle-pos">#{p.posicao}</span> {p.nome}
-									<span class="tag-mini">{p.categoria}</span>
-									{#if p.promovido}<span class="tag-form">↑ da suplência</span>{/if}
-								</li>
-							{/each}
-						</ul>
-					</div>
-					<div class="raffle-result-col">
-						<h4>⏳ Suplentes ({sorteio.campistas.suplentes.length})</h4>
-						{#if sorteio.campistas.suplentes.length === 0}
-							<p class="text-muted">Sem suplentes.</p>
-						{:else}
-							<!-- Suplente que não entrega o formulário no prazo sai da fila;
-							     quem fica é chamado pelo botão quando uma vaga abre. -->
-							<p class="text-muted mini-empty">Quando uma vaga abrir, o próximo da fila é chamado pelo botão.</p>
-						{/if}
-						<ul class="raffle-list">
-							{#each sorteio.campistas.suplentes as p}
-								<li>
-									<span class="raffle-pos">#{p.posicao}</span> {p.nome}
-									<span class="tag-mini">{p.categoria}</span>
-									<span class="tag-form" class:tag-form--falta={!p.formularioEnviado}>
-										{p.formularioEnviado ? '✓ formulário' : 'sem formulário'}
-									</span>
-								</li>
-							{/each}
-						</ul>
-					</div>
-					<div class="raffle-result-col">
-						<h4>❌ Não Sorteados ({sorteio.campistas.nao_sorteados.length})</h4>
-						{#if sorteio.campistas.nao_sorteados.length === 0}
-							<p class="text-muted">Todos foram contemplados.</p>
-						{/if}
-						<ul class="raffle-list muted-list">
-							{#each sorteio.campistas.nao_sorteados as p}
-								<li>
-									{p.nome} <span class="tag-mini">{p.categoria}</span>
-									{#if p.foraDaArea}<span class="tag-form tag-form--falta">não concorreu: não mora em Primavera do Leste ou Poxoréu</span>{/if}
-								</li>
-							{/each}
-						</ul>
-					</div>
-				</div>
-
-				{#if gruposComVagaAberta.length > 0}
-					<div class="vagas-abertas">
-						<h4>🔓 Vagas abertas</h4>
-						<p class="text-muted">
-							Alguém perdeu a vaga (prazo do formulário ou do pagamento, inscrição cancelada ou
-							recusada — veja abaixo). Chame o
-							próximo suplente da fila do mesmo grupo — ele terá 3 dias para pagar (nunca depois
-							do início do acampamento).
-						</p>
-						<ul class="raffle-list">
-							{#each gruposComVagaAberta as grupo}
-								{@const proximos = proximosDoGrupo(grupo)}
-								<li class="vaga-aberta-item">
-									<span>
-										<strong>{NOME_GRUPO[grupo]}</strong>: {sorteio.campistas.vagas_abertas[grupo]}
-										{sorteio.campistas.vagas_abertas[grupo] === 1 ? 'vaga aberta' : 'vagas abertas'}
-										{#if proximos.length > 0}
-											<span class="text-muted">— próximo da fila: #{proximos[0].posicao} {proximos.map((p) => p.nome).join(' e ')}</span>
-										{:else}
-											<span class="text-muted">— não há suplente na fila</span>
-										{/if}
-									</span>
-									{#if proximos.length > 0}
-										<button
-											class="btn-primary btn-sm"
-											onclick={() => chamarProximo({ tipo: 'Campista', grupo }, proximos.map((p) => p.nome).join(' e '))}
-											disabled={isBusy}
-										>Chamar próximo</button>
-									{/if}
-								</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
-
-				<!-- Quem tinha vaga e saiu (prazo, cancelamento ou recusa), e suplente
-				     que saiu da fila por não enviar o formulário. -->
-				{@render saidas(sorteio.campistas.desclassificados ?? [], false)}
-			{/if}
-		</section>
-
-		<!-- Servos -->
-		<section class="raffle-card">
-			<div class="raffle-card-header">
-				<h3>🛠️ Sorteio de Servos</h3>
-				{#if sorteio.servos.realizado}
-					<button class="btn-danger-outline" onclick={resetRaffleServos} disabled={isBusy}>Resetar Sorteio</button>
-				{/if}
-			</div>
-
-			<div class="raffle-counts">
-				<span><strong>{sorteio.servos.total_inscritos}</strong> servos inscritos ao todo</span>
-				{#if activity.inicioSorteioServo}
-					<span class="raffle-date">📅 Sorteio previsto: {soData(activity.inicioSorteioServo)}</span>
-				{/if}
-			</div>
-
-			{#if sorteio.servos.indicados.length > 0}
-				<div class="indicados-box">
-					<h4>⭐️ Indicados ({sorteio.servos.indicados.length}) — vaga garantida, não entram no sorteio</h4>
-					<ul class="raffle-list">
-						{#each sorteio.servos.indicados as p}
-							<li class="indicado-item">
-								<span>{p.nome} <span class="tag-mini tag-metodo">{p.metodo}</span></span>
-								<button class="btn-remove-ind" onclick={() => removeIndication(p.pre_registration_id, p.nome)} disabled={isBusy} title="Remover indicação">✕</button>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-
-			{#if sorteio.servos.alocados_manualmente?.length > 0}
-				<div class="indicados-box">
-					<h4>🧩 Já alocados numa equipe ({sorteio.servos.alocados_manualmente.length}) — vaga garantida, não entram no sorteio</h4>
-					<ul class="raffle-list">
-						{#each sorteio.servos.alocados_manualmente as p}
-							<li class="indicado-item">
-								<span>{p.nome} <span class="tag-mini tag-metodo">{p.lider ? `líder · ${p.setor}` : p.setor}</span></span>
-							</li>
-						{/each}
-					</ul>
-					<p class="text-muted" style="margin: 0.5rem 0 0;">Para mudar, use "Gerenciar Equipe de Servos" na lista de atividades.</p>
-				</div>
-			{/if}
-
-			{#if sorteio.servos.servo_geral?.length > 0}
-				<div class="indicados-box">
-					<h4>👑 Servo geral ({sorteio.servos.servo_geral.length}) — não entra no sorteio de equipe</h4>
-					<ul class="raffle-list">
-						{#each sorteio.servos.servo_geral as p}
-							<li class="indicado-item"><span>{p.nome}</span></li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-
-			{#if sorteio.servos.setores.length === 0}
-				<p class="text-muted">Nenhum setor com vagas de sorteio configurado para esta atividade.</p>
-			{:else}
-				<div class="raffle-form">
-					<button class="btn-primary" onclick={performRaffleServos} disabled={isBusy}>
-						{sorteio.servos.realizado ? '🎲 Re-sortear Servos' : '🎲 Realizar Sorteio de Servos'}
-					</button>
-				</div>
-
-				<div class="sector-grid">
-					{#each sorteio.servos.setores as setor}
-						<div class="sector-card">
-							<h4>{setor.sector_name} <span class="text-muted">({setor.vacancies} {setor.vacancies === 1 ? 'vaga' : 'vagas'})</span></h4>
-							<div class="raffle-result-col">
-								<strong class="mini-title">✅ Sorteados ({setor.sorteados.length})</strong>
-								{#if setor.sorteados.length === 0}
-									<p class="text-muted mini-empty">Ninguém sorteado ainda.</p>
-								{/if}
-								<ul class="raffle-list">
-									{#each setor.sorteados as p}
-										<li><span class="raffle-pos">#{p.posicao}</span> {p.nome}</li>
-									{/each}
-								</ul>
-							</div>
-							<div class="raffle-result-col">
-								<strong class="mini-title">⏳ Suplentes ({setor.suplentes.length})</strong>
-								{#if setor.suplentes.length === 0}
-									<p class="text-muted mini-empty">Sem suplentes.</p>
-								{/if}
-								<ul class="raffle-list">
-									{#each setor.suplentes as p}
-										<li>
-											<span class="raffle-pos">#{p.posicao}</span> {p.nome}
-											<span class="tag-form" class:tag-form--falta={!p.formularioEnviado}>
-												{p.formularioEnviado ? '✓ formulário' : 'sem formulário'}
-											</span>
-										</li>
-									{/each}
-								</ul>
-							</div>
-							{#if sorteio.servos.realizado && setor.vagas_abertas > 0}
-								<div class="vaga-aberta-setor">
-									<strong>🔓 {setor.vagas_abertas} {setor.vagas_abertas === 1 ? 'vaga aberta' : 'vagas abertas'}</strong>
-									{#if setor.suplentes.length > 0}
-										<button
-											class="btn-primary btn-sm"
-											onclick={() => chamarProximo({ tipo: 'Servo', setor: setor.id }, setor.suplentes[0].nome)}
-											disabled={isBusy}
-										>Chamar próximo: {setor.suplentes[0].nome}</button>
-									{:else}
-										<span class="text-muted">Não há suplente na fila deste setor.</span>
-									{/if}
-								</div>
-							{/if}
-						</div>
-					{/each}
-				</div>
-
-				{#if sorteio.servos.realizado && sorteio.servos.nao_sorteados.length > 0}
-					<div class="raffle-result-col mt-2">
-						<h4>❌ Não Sorteados ({sorteio.servos.nao_sorteados.length})</h4>
-						<ul class="raffle-list muted-list">
-							{#each sorteio.servos.nao_sorteados as p}
-								<li>
-									{p.nome}
-									{#if p.foraDaArea}<span class="tag-form tag-form--falta">não concorreu: não mora em Primavera do Leste ou Poxoréu</span>{/if}
-								</li>
-							{/each}
-						</ul>
-					</div>
-				{/if}
-			{/if}
-		
-			<!-- Servos que saíram (prazo, cancelamento ou recusa). -->
-			{@render saidas(sorteio.servos.desclassificados ?? [], true)}
-		</section>
-	{/if}
-{/if}
-
-{#snippet saidas(lista: any[], servo: boolean)}
-	{#each GRUPOS_SAIDA as g}
-		{@const deste = lista.filter((p) => grupoDaSaida(p.motivo) === g.chave)}
-		{#if deste.length > 0}
-			<div class="raffle-disqualified">
-				<h4>{g.titulo} ({deste.length})</h4>
-				<p class="text-muted">{explicacaoSaida(g.chave, servo)}</p>
-				<ul class="raffle-list muted-list">
-					{#each deste as p}
-						<li>
-							{p.nome}
-							{#if !servo}<span class="tag-mini">{p.categoria}</span>{/if}
-							{#if g.chave === 'prazo'}<span class="tag-form tag-form--falta">{textoMotivo(p.motivo)}</span>{/if}
-							<span class="text-muted">— {formatDate(p.desclassificado_em)}</span>
-							{#if g.chave !== 'prazo' && p.nota}<span class="saida-nota">Motivo: {p.nota}</span>{/if}
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
-	{/each}
-{/snippet}
-
-<!-- Modal de Indicação -->
-{#if showIndicateModal}
-	<div class="modal-backdrop">
-		<div class="modal-content">
-			<h3>Indicar Vaga</h3>
-			<p class="text-muted mb-2">Selecione um inscrito pendente ou suplente para garantir a vaga dele fora do sorteio.</p>
-
-			<div class="form-group">
-				<label for="indicate-sub">Inscrito</label>
-				<select id="indicate-sub" bind:value={selectedSubToIndicate} class="form-select">
-					<option value={null}>Selecione um inscrito...</option>
-					{#each indicatableSubscriptions as sub}
-						<option value={sub}>{sub.user.name} ({sub.subscription_type}{sub.status === 'Suplente' ? ', suplente' : ''}) — {sub.user.cpf}</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="form-group">
-				<label for="indicate-method">Motivo da Indicação</label>
-				<select id="indicate-method" bind:value={selectedMethodId} class="form-select">
-					<option value={null}>Selecione...</option>
-					{#each selectionMethods as method}
-						<option value={method.id}>{method.method} — {method.description}</option>
-					{/each}
-				</select>
-			</div>
-
-			<div class="modal-actions">
-				<button class="btn-secondary" onclick={() => { showIndicateModal = false; selectedMethodId = null; }}>Cancelar</button>
-				<button class="btn-primary" onclick={submitIndication} disabled={isBusy}>Confirmar Indicação</button>
-			</div>
-		</div>
-	</div>
-{/if}
-
-{#if pagamentosAberto && activity}
-	<PagamentosAtividade
-		atividade={activity}
-		inscricoes={subscriptions}
-		onfechar={() => (pagamentosAberto = false)}
-		onmudou={loadSubscriptions}
+<!-- ─── Janelas ─── -->
+{#if janela?.tipo === 'indicar'}
+	<JanelaIndicar
+		{atividadeId}
+		{inscricoes}
+		{metodos}
+		{feito}
+		inicial={janela.inicial}
+		onfechar={fechar}
+		onfeito={async (msg) => {
+			janela = null;
+			await recarregar();
+			mostrarAviso(msg);
+		}}
 	/>
+{:else if janela?.tipo === 'realizar' && janela.sorteio === 'Campista' && resumoRealizar}
+	<Janela idTitulo="t-realizar" largura={620} faixa="linear-gradient(90deg,#1B2F5E,#B69E55)" travada={enviando} onfechar={fechar}>
+		<h2 id="t-realizar" class="fm-janela-titulo">Realizar o sorteio de campistas?</h2>
+		<dl class="ins-resumo">
+			<dt>Vagas</dt><dd>{vagasTxt}</dd>
+			<dt>Concorrem</dt><dd>{resumoRealizar.concorrem}</dd>
+			<dt>Fora do sorteio</dt><dd>{resumoRealizar.indicados} (vaga garantida)</dd>
+			<dt>Não concorrem</dt><dd>{resumoRealizar.naoConcorrem}</dd>
+		</dl>
+		<p class="ins-janela-texto">
+			O sistema sorteia os titulares e o mesmo número de suplentes, em ordem. Quem tiver vaga vê o resultado no site e precisa enviar o
+			formulário e pagar até <strong>{prazoDoSorteio ? dma(prazoDoSorteio) : 'o prazo do acampamento'}</strong>. O acampamento passa de
+			“Aguardando sorteio” para “Inscrições encerradas”.
+		</p>
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" onclick={fechar} disabled={enviando}>Cancelar</button>
+			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={() => realizar('Campista', false)} disabled={enviando}>
+				{enviando ? 'Sorteando...' : 'Sortear agora'}
+			</button>
+		</div>
+	</Janela>
+{:else if janela?.tipo === 'realizar' && janela.sorteio === 'Servo' && sorteio}
+	{@const s = sorteio.servos}
+	<Janela idTitulo="t-realizar-s" largura={600} faixa="linear-gradient(90deg,#1B2F5E,#B69E55)" travada={enviando} onfechar={fechar}>
+		<h2 id="t-realizar-s" class="fm-janela-titulo">Realizar o sorteio de servos?</h2>
+		<p class="ins-janela-texto">
+			Concorrem <strong>{plural(s.concorrem, 'servo', 'servos')}</strong> para
+			<strong>{plural(s.setores.reduce((t, x) => t + x.vacancies, 0), 'vaga', 'vagas')}</strong> em {plural(s.setores.length, 'setor', 'setores')}.
+			Cada setor sorteia as vagas que faltam e o mesmo número de suplentes. Indicados, quem já está na equipe e o servo geral não entram.
+		</p>
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" onclick={fechar} disabled={enviando}>Cancelar</button>
+			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={() => realizar('Servo', false)} disabled={enviando}>
+				{enviando ? 'Sorteando...' : 'Sortear agora'}
+			</button>
+		</div>
+	</Janela>
+{:else if janela?.tipo === 'refazer'}
+	{@const t = janela.sorteio}
+	<Janela idTitulo="t-refazer" largura={620} faixa="#C08A1E" alerta travada={enviando} onfechar={fechar}>
+		<h2 id="t-refazer" class="fm-janela-titulo">Sortear de novo?</h2>
+		<p class="ins-janela-texto">O resultado atual é <strong>substituído</strong>: {resumoRefazer}</p>
+		<p class="ins-aviso azul"><span>Indicados, cancelados e recusados continuam como estão.</span></p>
+		<label class="ins-check"><input type="checkbox" bind:checked={entendo} disabled={enviando} />Entendo que o resultado atual será substituído</label>
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" data-foco-inicial onclick={fechar} disabled={enviando}>Cancelar</button>
+			<button type="button" class="fm-btn fm-btn--perigo-cheio fm-btn--grande" onclick={() => realizar(t, true)} disabled={!entendo || enviando}>
+				{enviando ? 'Sorteando...' : 'Sortear de novo'}
+			</button>
+		</div>
+	</Janela>
+{:else if janela?.tipo === 'apagar'}
+	{@const t = janela.sorteio}
+	<Janela idTitulo="t-apagar" largura={620} faixa="#9B2C2C" alerta travada={enviando} onfechar={fechar}>
+		<h2 id="t-apagar" class="fm-janela-titulo">Apagar o resultado do sorteio?</h2>
+		<p class="ins-janela-texto">
+			{#if t === 'Servo'}
+				Os servos sorteados e os suplentes saem das equipes e voltam a aguardar o sorteio. Quem foi colocado à mão na equipe continua.
+			{:else}
+				Sorteados, suplentes e não sorteados voltam para “Aguardando sorteio”, e o acampamento volta a mostrar “Aguardando sorteio” no
+				site.
+			{/if}
+			<strong>Não dá para desfazer.</strong>
+		</p>
+		<p class="ins-aviso azul"><span>Indicados, cancelados e recusados continuam como estão.</span></p>
+		<label class="ins-check"><input type="checkbox" bind:checked={entendo} disabled={enviando} />Entendo que não dá para desfazer</label>
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" data-foco-inicial onclick={fechar} disabled={enviando}>Cancelar</button>
+			<button type="button" class="fm-btn fm-btn--perigo-cheio fm-btn--grande" onclick={() => apagar(t)} disabled={!entendo || enviando}>
+				{enviando ? 'Apagando...' : 'Apagar resultado'}
+			</button>
+		</div>
+	</Janela>
+{:else if janela?.tipo === 'chamar'}
+	{@const alvo = janela.alvo}
+	<Janela idTitulo="t-chamar" largura={600} faixa="linear-gradient(90deg,#C08A1E,#B69E55)" travada={enviando} onfechar={fechar}>
+		<h2 id="t-chamar" class="fm-janela-titulo">Chamar o próximo da fila?</h2>
+		<p class="ins-janela-texto">
+			<strong>{alvo.nome}</strong> (1º da fila de {alvo.fila}) {alvo.pessoas > 1 ? 'passam' : 'passa'} a ter a vaga e
+			{alvo.pessoas > 1 ? 'veem' : 'vê'} o aviso no site.
+		</p>
+		<dl class="ins-resumo"><dt>Novo prazo</dt><dd>{dataLonga(novoPrazo(alvo.tipo))}, para enviar o formulário e pagar</dd></dl>
+		<p class="ins-ajuda">
+			São 3 dias a partir de hoje, sem passar do primeiro dia do acampamento. Se o prazo do acampamento for mais tarde, vale o do
+			acampamento.
+		</p>
+		{#if alvo.formulario}<p class="ins-aviso azul"><span>Já enviou o formulário enquanto estava na fila: falta só o pagamento.</span></p>{/if}
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" onclick={fechar} disabled={enviando}>Cancelar</button>
+			<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={() => chamar(alvo)} disabled={enviando}>
+				{enviando ? 'Chamando...' : `Chamar ${primeirosNomes(alvo.nome)}`}
+			</button>
+		</div>
+	</Janela>
+{:else if janela?.tipo === 'desfazer'}
+	{@const i = janela.inscricao}
+	{@const conjugeIndicado = i.conjuge ? inscricoes.find((x) => x.id === i.conjuge?.id && ehIndicado(x)) : undefined}
+	<Janela idTitulo="t-desfazer" largura={600} faixa="#9B2C2C" alerta travada={enviando} onfechar={fechar}>
+		<h2 id="t-desfazer" class="fm-janela-titulo">Desfazer a indicação?</h2>
+		<p class="ins-janela-texto">
+			<strong>{i.user.name}</strong> perde a vaga garantida e volta para “Aguardando sorteio”. Se o sorteio já foi feito, fica sem resultado
+			até o sorteio ser refeito.
+		</p>
+		{#if conjugeIndicado}<p class="ins-aviso amb"><span><strong>{conjugeIndicado.user.name}</strong> (cônjuge) também perde a indicação.</span></p>{/if}
+		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
+		<div class="fm-janela-acoes">
+			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" data-foco-inicial onclick={fechar} disabled={enviando}>Manter a indicação</button>
+			<button type="button" class="fm-btn fm-btn--perigo-cheio fm-btn--grande" onclick={() => desfazer(i)} disabled={enviando}>
+				{enviando ? 'Desfazendo...' : 'Desfazer indicação'}
+			</button>
+		</div>
+	</Janela>
+{/if}
+
+{#if pagamentosAberto && atividade}
+	<PagamentosAtividade atividade={atividade} {inscricoes} onfechar={() => (pagamentosAberto = false)} onmudou={carregarInscricoes} />
+{/if}
+
+{#if aviso}
+	<div class="ins-toast" role="status">
+		<span aria-hidden="true">✓</span><span>{aviso}</span>
+		<button type="button" aria-label="Fechar aviso" onclick={() => (aviso = '')}>✕</button>
+	</div>
 {/if}
 
 <style>
-	.page-header {
+	.cabeca {
 		display: flex;
+		align-items: flex-end;
 		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 2rem;
+		gap: 20px;
 		flex-wrap: wrap;
-		gap: 1rem;
 	}
-
-	/* Pagamentos (peças novas, já na identidade nova; o resto da tela será redesenhado depois). */
-	.btn-pagamentos {
-		display: inline-flex;
+	.cabeca-textos {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.atividade {
+		display: flex;
 		align-items: center;
 		gap: 10px;
-		height: 44px;
-		padding: 0 18px 0 8px;
-		font: 700 16px 'Source Sans 3', system-ui, sans-serif;
-		color: #1b2f5e;
-		background: #fffdf8;
-		border: 1.5px solid #1b2f5e;
-		border-radius: 999px;
-		box-shadow: 0 0 0 3px rgba(182, 158, 85, 0.35);
-		cursor: pointer;
+		flex-wrap: wrap;
+		font-size: 17px;
+		color: var(--tinta-2);
 	}
-	.btn-pagamentos:hover {
-		background: #eef1f7;
+	.atividade strong {
+		font-size: 19px;
+		color: var(--tinta);
 	}
-	.btn-pagamentos .rs {
+	.atividade :global(.selo) {
+		box-shadow: none;
+		font-size: 11px;
+		padding: 3px 9px;
+	}
+	.datas {
+		color: var(--tinta-3);
+	}
+	.cabeca-acoes {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+	.rs {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 30px;
-		height: 30px;
+		width: 26px;
+		height: 26px;
+		margin-left: -6px;
 		border-radius: 50%;
-		background: #1b2f5e;
-		color: #e2ce8a;
-		font: 700 12px 'Source Sans 3', sans-serif;
+		background: var(--azul);
+		color: var(--ouro-claro);
+		font: 700 11px 'Source Sans 3', sans-serif;
 	}
-	.btn-pagamentos .nao-pagos {
+	.nao-pagos {
+		padding: 1px 8px;
 		font-size: 13px;
 		font-weight: 700;
 		color: #6a480c;
 		background: #fbf0d6;
 		border: 1px solid #ebd39c;
 		border-radius: 999px;
-		padding: 1px 8px;
-	}
-	.data-table th.th-pagamento {
-		font: 700 13px 'Source Sans 3', sans-serif;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: #7a6528;
-		background: #fbf6e6;
-		border-left: 1px solid #e3d8bc;
-	}
-	.data-table td.td-pagamento {
-		background: #fffdf8;
-		border-left: 1px solid #e3d8bc;
-		font-family: 'Source Sans 3', sans-serif;
-		white-space: nowrap;
-	}
-	.pill-pag {
-		display: inline-flex;
-		align-items: center;
-		gap: 8px;
-		font-size: 14px;
-		font-weight: 600;
-		border: 1px solid;
-		border-radius: 8px;
-		padding: 2px 9px;
-	}
-	.pill-pag i {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-	}
-	.pill-pag.ok {
-		color: #1b5236;
-		background: #e4f1e8;
-		border-color: #b9d9c4;
-	}
-	.pill-pag.ok i {
-		background: #2e7d4f;
-	}
-	.pill-pag.esp {
-		color: #6a480c;
-		background: #fbf0d6;
-		border-color: #ebd39c;
-	}
-	.pill-pag.esp i {
-		background: #c08a1e;
-	}
-	.pill-pag.can {
-		color: #842424;
-		background: #f6e2df;
-		border-color: #e6bdb6;
-	}
-	.pill-pag.can i {
-		background: #b33a3a;
-	}
-	.pag-curto {
-		display: block;
-		margin-top: 3px;
-		font-size: 14px;
-		color: #4f5468;
 	}
 
-	.header-actions {
+	/* Estados */
+	.carregando {
+		overflow: hidden;
+	}
+	.carregando-topo {
 		display: flex;
-		gap: 1rem;
 		align-items: center;
+		gap: 12px;
+		padding: 18px 24px;
+		font-size: 17px;
+		color: var(--tinta-3);
+		border-bottom: 1px solid var(--linha);
 	}
-
-	.page-header h2 {
-		margin: 0 0 0.5rem 0;
-		font-size: 1.8rem;
-		color: #111827;
+	.osso-linha {
+		display: grid;
+		grid-template-columns: 2fr 1.4fr 1fr 1fr 1.4fr;
+		gap: 20px;
+		padding: 18px 24px;
+		border-bottom: 1px solid var(--linha);
 	}
-
-	.text-muted { color: #64748b; }
-	.mb-2 { margin-bottom: 0.5rem; display: inline-block; }
-	.mt-2 { margin-top: 1.5rem; }
-	.py-4 { padding: 2rem 0 !important; }
-	.text-center { text-align: center; }
-
-	/* Tabs */
-	.tabs {
-		display: flex;
-		gap: 1rem;
-		margin-bottom: 1.5rem;
-		border-bottom: 2px solid #e2e8f0;
+	.osso {
+		height: 20px;
+		border-radius: 4px;
+		background: #ede5d1;
 	}
-
-	.tab-btn {
-		background: none;
-		border: none;
-		padding: 0.75rem 1.5rem;
-		font-size: 1rem;
-		font-weight: 600;
-		color: #64748b;
-		cursor: pointer;
-		position: relative;
-		transition: all 0.2s;
+	.osso.claro {
+		height: 18px;
+		background: #f3eddf;
 	}
-
-	.tab-btn:hover { color: #0f172a; }
-	.tab-btn.active { color: #3b82f6; }
-	.tab-btn.active::after {
-		content: '';
-		position: absolute;
-		bottom: -2px; left: 0; right: 0;
-		height: 2px;
-		background: #3b82f6;
-	}
-
-	/* Buttons */
-	.btn-primary {
-		background: #3b82f6;
-		color: white;
-		border: none;
-		padding: 0.6rem 1.4rem;
-		border-radius: 8px;
-		font-weight: 600;
-		cursor: pointer;
-		transition: background 0.2s;
-	}
-	.btn-primary:hover:not(:disabled) { background: #2563eb; }
-	.btn-primary:disabled { background: #94a3b8; cursor: not-allowed; }
-
-	.btn-secondary {
-		padding: 0.5rem 1.25rem;
-		background: #f1f5f9;
-		color: #334155;
-		border: 1px solid #cbd5e1;
-		border-radius: 8px;
-		text-decoration: none;
-		font-weight: 600;
-		transition: all 0.2s;
-	}
-	.btn-secondary:hover { background: #e2e8f0; }
-
-	.btn-danger-outline {
-		background: #fff;
-		color: #dc2626;
-		border: 1px solid #fecaca;
-		padding: 0.5rem 1rem;
-		border-radius: 8px;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.2s;
-	}
-	.btn-danger-outline:hover:not(:disabled) { background: #fef2f2; }
-	.btn-danger-outline:disabled { opacity: 0.6; cursor: not-allowed; }
-
-	.btn-indicate {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.4rem;
-		background: #fffbeb;
-		color: #d97706;
-		border: 1px solid #fde68a;
-		padding: 0.5rem 1rem;
-		border-radius: 9999px;
-		font-size: 0.85rem;
-		font-weight: 600;
-		cursor: pointer;
-		transition: all 0.2s;
-		white-space: nowrap;
-	}
-	.btn-indicate:hover {
-		background: #fef3c7;
-		border-color: #fcd34d;
-		transform: translateY(-1px);
-	}
-
-	.stats-row {
-		display: flex;
-		gap: 1.5rem;
-		margin-bottom: 2rem;
-		flex-wrap: wrap;
-	}
-
-	.stat-card {
-		background: #fff;
-		flex: 1;
-		min-width: 160px;
-		padding: 1.5rem;
-		border-radius: 12px;
-		border: 1px solid #e5e7eb;
-		box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+	.centro {
 		display: flex;
 		flex-direction: column;
-	}
-
-	.stat-title {
-		font-size: 0.85rem;
-		color: #6b7280;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		font-weight: 600;
-		margin-bottom: 0.5rem;
-	}
-
-	.stat-value { font-size: 2rem; font-weight: 800; color: #111827; }
-
-	.table-container {
-		background: #fff;
-		border-radius: 12px;
-		box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-		border: 1px solid #e5e7eb;
-		overflow-x: auto;
-	}
-
-	.data-table { width: 100%; border-collapse: collapse; text-align: left; }
-
-	.data-table th {
-		background: #f9fafb;
-		padding: 1rem 1.5rem;
-		font-size: 0.75rem;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-		color: #6b7280;
-		font-weight: 600;
-		border-bottom: 1px solid #e5e7eb;
-		white-space: nowrap;
-	}
-
-	.data-table td {
-		padding: 1rem 1.5rem;
-		border-bottom: 1px solid #f3f4f6;
-		color: #374151;
-		font-size: 0.95rem;
-		vertical-align: middle;
-	}
-
-	.data-table tr:last-child td { border-bottom: none; }
-	.data-table tr:hover td { background-color: #f8fafc; }
-	.center { text-align: center; }
-
-	.fw-bold { font-weight: 600; color: #111827; }
-	.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-
-	.badge-spouse {
-		background: #e0e7ff;
-		color: #3730a3;
-		padding: 0.2rem 0.6rem;
-		border-radius: 9999px;
-		font-size: 0.85rem;
-		font-weight: 600;
-	}
-
-	.loading-state, .error-box {
-		background: #fff;
-		border-radius: 12px;
-		padding: 4rem 2rem;
+		align-items: center;
+		gap: 14px;
+		padding: 72px 24px;
 		text-align: center;
-		box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-		border: 1px solid #e5e7eb;
 	}
-	.error-box { color: #dc2626; padding: 1.5rem; }
-	.spinner {
-		width: 40px; height: 40px;
-		margin: 0 auto 1rem;
-		border: 4px solid rgba(28, 139, 107, 0.2);
-		border-top-color: #1c8b6b;
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-	}
-	@keyframes spin { to { transform: rotate(360deg); } }
-
-	/* Badges */
-	.badge {
-		padding: 0.3rem 0.65rem;
-		border-radius: 12px;
-		font-size: 0.75rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		white-space: nowrap;
-	}
-
-	.badge-waiting { background: #f1f5f9; color: #64748b; }
-	.badge-drawn { background: #dcfce7; color: #166534; }
-	.badge-reserve { background: #ffedd5; color: #9a3412; }
-	.badge-form { background: #cffafe; color: #155e75; }
-	.badge-cancelled { background: #fee2e2; color: #991b1b; }
-
-	.btn-remove-ind {
-		margin-left: 0.5rem;
-		width: 1.4rem;
-		height: 1.4rem;
-		border-radius: 50%;
-		border: 1px solid #fecaca;
-		background: #fff;
-		color: #dc2626;
-		font-size: 0.7rem;
-		line-height: 1;
-		cursor: pointer;
-		transition: all 0.15s;
-	}
-	.btn-remove-ind:hover:not(:disabled) { background: #fef2f2; border-color: #f87171; }
-	.btn-remove-ind:disabled { opacity: 0.5; cursor: not-allowed; }
-
-	.btn-row-indicate {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3rem;
-		background: #fffbeb;
-		color: #d97706;
-		border: 1px solid #fde68a;
-		padding: 0.25rem 0.65rem;
-		border-radius: 9999px;
-		font-size: 0.78rem;
-		font-weight: 600;
-		cursor: pointer;
-		white-space: nowrap;
-		transition: all 0.15s;
-	}
-	.btn-row-indicate:hover:not(:disabled) {
-		background: #fef3c7;
-		border-color: #fcd34d;
-	}
-	.btn-row-indicate:disabled { opacity: 0.5; cursor: not-allowed; }
-
-	/* Raffle cards */
-	.raffle-card {
-		background: #fff;
-		border-radius: 12px;
-		border: 1px solid #e5e7eb;
-		box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-		padding: 1.75rem;
-		margin-bottom: 1.75rem;
-	}
-
-	.raffle-card-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		margin-bottom: 1rem;
-	}
-
-	.raffle-card-header h3 { margin: 0; color: #0f172a; font-size: 1.2rem; }
-
-	.raffle-counts {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 1.25rem;
-		color: #475569;
-		font-size: 0.92rem;
-		margin-bottom: 1.25rem;
-		padding-bottom: 1.25rem;
-		border-bottom: 1px dashed #e2e8f0;
-	}
-
-	.raffle-date { margin-left: auto; color: #64748b; }
-
-	.raffle-form {
-		display: flex;
-		align-items: flex-end;
-		gap: 1.25rem;
-		flex-wrap: wrap;
-		margin-bottom: 1.5rem;
-	}
-
-	.raffle-form-field { display: flex; flex-direction: column; gap: 0.4rem; }
-	.raffle-form-field label { font-size: 0.8rem; font-weight: 600; color: #475569; }
-	.raffle-form-field input {
-		width: 100px;
-		padding: 0.55rem 0.75rem;
-		border: 1px solid #cbd5e1;
-		border-radius: 6px;
-		font-size: 0.95rem;
-	}
-
-	.raffle-results-grid {
-		display: grid;
-		grid-template-columns: repeat(3, 1fr);
-		gap: 1.5rem;
-	}
-
-	@media (max-width: 900px) {
-		.raffle-results-grid { grid-template-columns: 1fr; }
-	}
-
-	.raffle-result-col h4 { margin: 0 0 0.75rem 0; color: #0f172a; font-size: 1rem; }
-	.mini-title { display: block; margin-bottom: 0.5rem; color: #0f172a; font-size: 0.88rem; }
-	.mini-empty { font-size: 0.82rem; margin: 0 0 0.75rem 0; }
-
-	.tag-form {
-		font-size: 0.68rem;
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.03em;
-		padding: 0.1rem 0.45rem;
-		border-radius: 999px;
-		background: #ecfdf5;
-		color: #065f46;
-		border: 1px solid #a7f3d0;
-		white-space: nowrap;
-	}
-
-	.tag-form--falta {
-		background: #fff7ed;
-		color: #9a3412;
-		border-color: #fed7aa;
-	}
-
-	.raffle-disqualified {
-		margin-top: 1.2rem;
-		padding: 1rem 1.2rem;
-		border: 1px solid #fed7aa;
-		background: #fff7ed;
-		border-radius: 10px;
-	}
-
-	.raffle-disqualified h4 {
-		margin: 0 0 0.3rem;
-		color: #9a3412;
-	}
-
-	.saida-nota {
-		display: block;
-		margin-top: 0.25rem;
-		font-size: 0.85rem;
-		color: #475569;
-	}
-
-	.vagas-abertas {
-		margin-top: 1.2rem;
-		padding: 1rem 1.2rem;
-		border: 1px solid #bfdbfe;
-		background: #eff6ff;
-		border-radius: 10px;
-	}
-
-	.vagas-abertas h4 {
-		margin: 0 0 0.3rem;
-		color: #1e40af;
-	}
-
-	.vaga-aberta-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		gap: 0.75rem;
-		flex-wrap: wrap;
-		background: #fff !important;
-	}
-
-	.vaga-aberta-setor {
-		margin-top: 0.9rem;
-		padding-top: 0.8rem;
-		border-top: 1px dashed #bfdbfe;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.45rem;
-		font-size: 0.88rem;
-		color: #1e40af;
-	}
-
-	.btn-sm {
-		padding: 0.4rem 0.8rem;
-		font-size: 0.82rem;
-	}
-
-	.raffle-list {
-		list-style: none;
-		padding: 0;
+	.centro-titulo {
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		max-height: 300px;
-		overflow-y: auto;
+		font: 600 30px 'Cormorant Garamond', serif;
+		color: var(--azul);
 	}
-
-	.raffle-list li {
-		background: #f8fafc;
-		border: 1px solid #eef2f7;
-		border-radius: 8px;
-		padding: 0.55rem 0.75rem;
-		font-size: 0.88rem;
-		color: #334155;
+	.centro-texto {
+		margin: 0;
+		max-width: 560px;
+		font-size: 17px;
+		color: var(--tinta-3);
 	}
-
-	.raffle-list.muted-list li { background: #fff; border-style: dashed; color: #64748b; }
-
-	.raffle-pos {
-		display: inline-block;
-		background: #e0f2fe;
-		color: #0369a1;
-		font-weight: 700;
-		font-size: 0.75rem;
-		padding: 0.1rem 0.4rem;
-		border-radius: 6px;
-		margin-right: 0.4rem;
-	}
-
-	.tag-mini {
-		display: inline-block;
-		background: #f1f5f9;
-		color: #64748b;
-		font-size: 0.72rem;
-		padding: 0.1rem 0.4rem;
-		border-radius: 6px;
-		margin-left: 0.3rem;
-	}
-
-	.tag-metodo {
-		background: #fef3c7;
-		color: #92400e;
-		font-weight: 600;
-	}
-
-	.indicados-box {
-		background: #fffbeb;
-		border: 1px solid #fde68a;
-		border-radius: 10px;
-		padding: 1.25rem 1.5rem;
-		margin-bottom: 1.5rem;
-	}
-
-	.indicados-box h4 {
-		margin: 0 0 0.85rem 0;
-		color: #92400e;
-		font-size: 0.92rem;
-	}
-
-	.indicado-item {
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
-		background: #fff !important;
-	}
-
-	.sector-grid {
-		display: grid;
-		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-		gap: 1.25rem;
-	}
-
-	.sector-card {
-		background: #f8fafc;
-		border: 1px solid #e2e8f0;
-		border-radius: 10px;
-		padding: 1.25rem;
-	}
-
-	.sector-card h4 { margin: 0 0 1rem 0; color: #0f172a; font-size: 1rem; }
-
-	/* Modal */
-	.modal-backdrop {
-		position: fixed;
-		top: 0; left: 0; right: 0; bottom: 0;
-		background: rgba(0,0,0,0.5);
+	.icone-erro {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		z-index: 1000;
+		width: 56px;
+		height: 56px;
+		font-size: 28px;
+		font-weight: 700;
+		color: var(--vermelho);
+		background: #f6e2df;
+		border: 1px solid #e6bdb6;
+		border-radius: 50%;
+	}
+	.brasao {
+		width: 120px;
+		opacity: 0.55;
+		filter: sepia(1) saturate(0.6);
 	}
 
-	.modal-content {
-		background: white;
-		padding: 2rem;
-		border-radius: 12px;
-		width: 440px;
-		max-width: 90%;
-		box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+	/* Números */
+	.cartoes {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+		gap: 14px;
 	}
-
-	.modal-content h3 { margin-top: 0; color: #0f172a; }
-
-	.form-group { margin: 1.5rem 0; }
-	.form-group label { display: block; margin-bottom: 0.5rem; font-weight: 600; color: #334155; }
-	.form-select {
-		width: 100%;
-		padding: 0.6rem;
-		border: 1px solid #cbd5e1;
-		border-radius: 6px;
-		font-size: 0.95rem;
-	}
-
-	.modal-actions {
+	.cartao-num {
 		display: flex;
-		justify-content: flex-end;
-		gap: 1rem;
-		margin-top: 2rem;
+		flex-direction: column;
+		gap: 4px;
+		padding: 16px 20px;
+		background: var(--pergaminho);
+		border: 1px solid var(--borda-suave);
+		border-radius: 14px;
+		box-shadow: 0 14px 28px -24px rgba(15, 29, 61, 0.45);
+	}
+	.cartao-num.alerta {
+		background: #fbf0d6;
+		border-color: #ebd39c;
+	}
+	.num {
+		font: 600 38px/1 'Cormorant Garamond', serif;
+		color: var(--azul);
+		font-variant-numeric: tabular-nums;
+	}
+	.alerta .num {
+		color: #6a480c;
+	}
+	.num-sub {
+		font-size: 15px;
+		color: var(--tinta-3);
+	}
+
+	/* Abas */
+	.painel {
+		display: flex;
+		flex-direction: column;
+	}
+	.abas {
+		display: flex;
+		gap: 6px;
+	}
+	.aba {
+		position: relative;
+		z-index: 1;
+		flex: 1;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 10px;
+		height: 56px;
+		margin-bottom: -1px;
+		padding: 0 20px;
+		font: 600 17px 'Source Sans 3', sans-serif;
+		color: var(--tinta-3);
+		background: transparent;
+		border: 1px solid transparent;
+		border-bottom: none;
+		border-radius: 12px 12px 0 0;
+		cursor: pointer;
+	}
+	.aba.sel {
+		z-index: 2;
+		font-weight: 700;
+		color: var(--azul);
+		background: var(--pergaminho);
+		border-color: var(--borda-suave);
+	}
+	.aba.sel::before {
+		content: '';
+		position: absolute;
+		left: 14px;
+		right: 14px;
+		top: -1px;
+		height: 3px;
+		border-radius: 0 0 3px 3px;
+		background: var(--ouro);
+	}
+	.aba-selo {
+		padding: 2px 9px;
+		font-size: 13px;
+		font-weight: 700;
+		border-radius: 999px;
+	}
+	.aba-selo.azul {
+		color: #21376a;
+		background: #e6ebf5;
+	}
+	.aba-selo.ambar {
+		color: #6a480c;
+		background: #fbf0d6;
+	}
+	.conteudo {
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+		padding: 24px 28px 28px;
+	}
+	.conteudo.com-abas {
+		border-top-left-radius: 4px;
+		border-top-right-radius: 4px;
 	}
 </style>

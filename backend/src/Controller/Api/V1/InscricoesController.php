@@ -238,6 +238,8 @@ class InscricoesController extends ApiController
             ->where([
                 'PreRegistrations.activity_id' => $activityId,
                 'PreRegistrations.deleted IS'  => null,
+                // Conta apagada não aparece na lista da organização.
+                'Users.deleted IS'             => null,
             ])
             ->all()
             ->toArray();
@@ -252,12 +254,71 @@ class InscricoesController extends ApiController
             }
         }
 
+        // Cônjuge inscrito na mesma atividade (o vínculo pode estar gravado em
+        // qualquer um dos dois), setor do servo e cidade: a tela junta o casal,
+        // mostra o setor e explica quem não concorre ao sorteio.
+        $porUsuario = [];
+        foreach ($subs as $sub) {
+            $porUsuario[$sub->subscription_type][$sub->user_id] = $sub;
+        }
+        $conjugeDe = function (object $sub) use ($porUsuario) {
+            $mesmos = $porUsuario[$sub->subscription_type] ?? [];
+            if ($sub->spouse_id && isset($mesmos[$sub->spouse_id])) return $mesmos[$sub->spouse_id];
+            foreach ($mesmos as $outro) {
+                if ($outro->spouse_id === $sub->user_id && $outro->id !== $sub->id) return $outro;
+            }
+
+            return null;
+        };
+        $userIds = array_values(array_unique(array_map(fn($s) => $s->user_id, $subs)));
+        $cidades = [];
+        if ($userIds) {
+            foreach ($this->Addresses->find()->where(['user_id IN' => $userIds, 'deleted IS' => null])->all() as $end) {
+                $cidades[$end->user_id] = $end->city;
+            }
+        }
+        $setores = [];
+        foreach (
+            $this->fetchTable('ActivitiesCategoriesSectorsUsers')->find()
+                ->contain(['ActivitiesCategoriesSectors' => ['CategoriesSectors' => ['Sectors']]])
+                ->where([
+                    'ActivitiesCategoriesSectors.activity_id' => $activityId,
+                    'ActivitiesCategoriesSectors.deleted IS'  => null,
+                ])
+                ->all() as $linha
+        ) {
+            $setores[$linha->user_id] = [
+                'nome'     => $linha->activities_categories_sector->categories_sector->sector->name ?? '',
+                'lider'    => (bool)$linha->is_coordinator,
+                'suplente' => (bool)$linha->is_substitute,
+            ];
+        }
+        $geral = $this->fetchTable('ActivitiesGeneralServants')->find()
+            ->where(['activity_id' => $activityId])
+            ->all()
+            ->map(fn($g) => $g->user_id)
+            ->toArray();
+
         $result = [];
         foreach ($subs as $sub) {
             $user = $sub->user;
+            $conjuge = $conjugeDe($sub);
+            $cidade = $cidades[$sub->user_id] ?? null;
             $result[] = [
                 'id'                  => $sub->id,
                 'subscription_type'   => $sub->subscription_type,
+                'metodo'              => $sub->selection_method?->method,
+                'formularioEnviado'   => (bool)$sub->form_submitted,
+                // Chamado da fila de suplentes para uma vaga aberta.
+                'chamadoEm'           => $sub->promoted_at?->format('Y-m-d\TH:i'),
+                'saiuEm'              => $sub->disqualified_at?->format('Y-m-d\TH:i'),
+                'motivoSaida'         => $sub->disqualification_reason,
+                'conjuge'             => $conjuge ? ['id' => $conjuge->id, 'user_id' => $conjuge->user_id, 'nome' => $conjuge->user->name] : null,
+                'setor'               => $sub->subscription_type === 'Servo' ? ($setores[$sub->user_id] ?? null) : null,
+                'servoGeral'          => $sub->subscription_type === 'Servo' && in_array($sub->user_id, $geral, true),
+                'cidade'              => $cidade,
+                // Só quem mora em Primavera do Leste/Poxoréu concorre ao sorteio.
+                'daArea'              => SorteioService::moraNaArea($cidade),
                 'status'              => $this->calcularStatus($sub),
                 'motivo'              => $this->motivoDaSituacao($sub, $this->calcularStatus($sub)),
                 'spouse_cpf'          => $sub->spouse_id ? ($spousesMap[$sub->spouse_id] ?? null) : null,

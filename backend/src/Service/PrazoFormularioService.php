@@ -510,6 +510,15 @@ class PrazoFormularioService
      *
      * @return array{ok: bool, error?: string, chamados?: string[]}
      */
+    /** Novo prazo de quem acabou de ser chamado da fila (formulário e pagamento). */
+    private function prazoDoChamado(object $pr): ?string
+    {
+        $activity = $this->Activities->find()->where(['id' => $pr->activity_id])->first();
+        if (!$activity) return null;
+
+        return (new MercadoPagoService())->prazoPagamento($pr, $activity)?->format('Y-m-d\TH:i');
+    }
+
     public function chamarProximoCampista(int $activityId, string $grupo): array
     {
         if (!in_array($grupo, self::GRUPOS_CAMPISTA, true)) {
@@ -559,7 +568,7 @@ class PrazoFormularioService
             $nomes[] = $pr->user->name ?? "usuário #{$pr->user_id}";
         }
 
-        return ['ok' => true, 'chamados' => $nomes];
+        return ['ok' => true, 'chamados' => $nomes, 'prazo' => $this->prazoDoChamado($chamar[0])];
     }
 
     /**
@@ -611,7 +620,7 @@ class PrazoFormularioService
             $linha->is_substitute = false;
             $this->AcsSectorsUsers->save($linha);
 
-            return ['ok' => true, 'chamados' => [$pr->user->name ?? "usuário #{$pr->user_id}"]];
+            return ['ok' => true, 'chamados' => [$pr->user->name ?? "usuário #{$pr->user_id}"], 'prazo' => $this->prazoDoChamado($pr)];
         }
 
         return ['ok' => false, 'error' => 'Não há suplente na fila deste setor.'];
