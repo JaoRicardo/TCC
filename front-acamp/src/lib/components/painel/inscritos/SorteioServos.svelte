@@ -80,7 +80,7 @@
 		{/if}
 	</div>
 	{#if pode('equipes')}
-		<a href="/dashboard/equipes/{atividadeId}" class="ins-acao">
+		<a href="/admin/equipes?atividade={atividadeId}" class="ins-acao">
 			<svg viewBox="0 0 24 24" aria-hidden="true"
 				><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" /><circle cx="9" cy="7" r="4" /><path
 					d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"
@@ -94,8 +94,8 @@
 {#if s.setores.length === 0}
 	<div class="sem-setores">
 		<p class="sem-setores-tit">Nenhum setor com vagas de sorteio.</p>
-		<p class="ins-ajuda">Sem vagas nos setores, não há sorteio de servos. Configure as vagas deste acampamento em Setores de Servos.</p>
-		{#if pode('setores')}<a href="/admin/setores" class="fm-btn fm-btn--contorno">Ir para Setores de Servos</a>{/if}
+		<p class="ins-ajuda">Sem vagas nos setores, não há sorteio de servos. Ligue os setores e ajuste as vagas deste acampamento em Equipes de Servos.</p>
+		{#if pode('equipes')}<a href="/admin/equipes?atividade={atividadeId}" class="fm-btn fm-btn--contorno">Ir para Equipes de Servos</a>{/if}
 	</div>
 {:else}
 	<div class="ins-caixa">

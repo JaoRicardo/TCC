@@ -67,22 +67,50 @@ class SectorsController extends ApiController
         $identity = $this->requirePermissao('setores');
         if ($identity instanceof Response) return $identity;
 
-        $data   = $this->request->getData();
-        $sector = $this->Sectors->newEntity([
-            'name'  => $data['name']  ?? '',
-            'place' => $data['place'] ?? 'Interno',
-        ]);
+        $data = $this->request->getData();
+        $erro = $this->conferirNome((string)($data['name'] ?? ''), null);
+        if ($erro) return $this->apiResponse(['error' => $erro, 'codigo' => 'nome'], 422);
 
-        if (!$this->Sectors->save($sector)) {
-            return $this->apiResponse(['error' => 'Erro ao salvar setor', 'errors' => $sector->getErrors()], 422);
-        }
+        // "Vagas em cada categoria" da janela Novo setor: { category_id: vagas }; vazio ou 0 = não existe.
+        $vagas = array_filter(
+            array_map('intval', (array)($data['vagas'] ?? [])),
+            fn($n) => $n > 0
+        );
+
+        $sector = $this->Sectors->getConnection()->transactional(function () use ($data, $vagas) {
+            $sector = $this->Sectors->newEntity([
+                'name'  => trim((string)$data['name']),
+                'place' => ($data['place'] ?? 'Interno') === 'Externo' ? 'Externo' : 'Interno',
+            ]);
+            if (!$this->Sectors->save($sector)) return null;
+            foreach ($vagas as $categoryId => $n) {
+                $this->CategoriesSectors->saveOrFail($this->CategoriesSectors->newEntity([
+                    'sector_id'   => $sector->id,
+                    'category_id' => (int)$categoryId,
+                    'vacancies'   => $n,
+                ]));
+            }
+
+            return $sector;
+        });
+        if (!$sector) return $this->apiError('Erro ao salvar setor', 422);
 
         return $this->apiResponse(['data' => [
-            'id'         => $sector->id,
-            'name'       => $sector->name,
-            'place'      => $sector->place,
-            'categories' => [],
+            'id'    => $sector->id,
+            'name'  => $sector->name,
+            'place' => $sector->place,
         ]], 201);
+    }
+
+    /** Nome vazio ou repetido (sem diferenciar maiúsculas). */
+    private function conferirNome(string $nome, ?int $ignorarId): ?string
+    {
+        $nome = trim($nome);
+        if ($nome === '') return 'Informe o nome do setor.';
+        $q = $this->Sectors->find()->where(['LOWER(name)' => mb_strtolower($nome), 'deleted IS' => null]);
+        if ($ignorarId) $q->where(['id !=' => $ignorarId]);
+
+        return $q->count() ? 'Já existe um setor com esse nome.' : null;
     }
 
     // PATCH /admin/sectors/{id}
@@ -97,8 +125,12 @@ class SectorsController extends ApiController
 
         $data  = $this->request->getData();
         $patch = [];
-        if (isset($data['name']))  $patch['name']  = $data['name'];
-        if (isset($data['place'])) $patch['place'] = $data['place'];
+        if (isset($data['name'])) {
+            $erro = $this->conferirNome((string)$data['name'], $id);
+            if ($erro) return $this->apiResponse(['error' => $erro, 'codigo' => 'nome'], 422);
+            $patch['name'] = trim((string)$data['name']);
+        }
+        if (isset($data['place'])) $patch['place'] = $data['place'] === 'Externo' ? 'Externo' : 'Interno';
 
         $this->Sectors->patchEntity($sector, $patch);
         if (!$this->Sectors->save($sector)) {
@@ -180,7 +212,7 @@ class SectorsController extends ApiController
 
         $data  = $this->request->getData();
         $patch = [];
-        if (isset($data['vacancies'])) $patch['vacancies'] = intval($data['vacancies']);
+        if (isset($data['vacancies'])) $patch['vacancies'] = max(0, intval($data['vacancies']));
 
         $this->CategoriesSectors->patchEntity($cs, $patch);
         if (!$this->CategoriesSectors->save($cs)) {

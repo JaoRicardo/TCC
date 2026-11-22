@@ -106,11 +106,14 @@ return function (RouteBuilder $routes): void {
 
             // Activity Sectors
             $builder->get('/activities/{id}/sectors', ['controller' => 'Activities', 'action' => 'sectors'])->setPass(['id']);
+            $builder->post('/activities/{id}/sectors/aplicar-modelo', ['controller' => 'Activities', 'action' => 'aplicarModelo'])->setPass(['id']);
             $builder->post('/activities/{id}/sectors', ['controller' => 'Activities', 'action' => 'addSector'])->setPass(['id']);
             $builder->patch('/activities/{activityId}/sectors/{acsId}', ['controller' => 'Activities', 'action' => 'updateSector'])->setPass(['activityId', 'acsId']);
             $builder->delete('/activities/{activityId}/sectors/{acsId}', ['controller' => 'Activities', 'action' => 'deleteSector'])->setPass(['activityId', 'acsId']);
             $builder->post('/activities/{activityId}/sectors/{acsId}/members', ['controller' => 'Activities', 'action' => 'addSectorMember'])->setPass(['activityId', 'acsId']);
             $builder->delete('/activities/{activityId}/sectors/{acsId}/members/{userId}', ['controller' => 'Activities', 'action' => 'removeSectorMember'])->setPass(['activityId', 'acsId', 'userId']);
+            $builder->patch('/activities/{activityId}/sectors/{acsId}/members/{userId}', ['controller' => 'Activities', 'action' => 'updateSectorMember'])->setPass(['activityId', 'acsId', 'userId']);
+            $builder->post('/activities/{activityId}/sectors/{acsId}/members/{userId}/mover', ['controller' => 'Activities', 'action' => 'moverSectorMember'])->setPass(['activityId', 'acsId', 'userId']);
 
             // Servo geral da atividade
             $builder->post('/activities/{id}/general-servants', ['controller' => 'Activities', 'action' => 'addGeneralServant'])->setPass(['id']);

@@ -31,7 +31,8 @@ export const MENU_DO_PAINEL: { titulo: string; itens: ItemDoMenu[] }[] = [
 	{
 		titulo: 'Servos e formulários',
 		itens: [
-			{ chave: 'setores', caminho: '/admin/setores', nome: 'Setores de Servos' },
+			// A mesma tela: equipes dos acampamentos ("equipes") e modelo por categoria ("setores").
+			{ chave: ['equipes', 'setores'], caminho: '/admin/equipes', nome: 'Equipes de Servos' },
 			// Quem só vê as respostas também entra: o editor abre só para leitura.
 			{ chave: ['formularios', 'respostas_formularios'], caminho: '/admin/formularios', nome: 'Formulários' }
 		]
@@ -60,6 +61,7 @@ const TELA_POR_CAMINHO: [string | RegExp, string | string[]][] = [
 	['/admin/acampamentos', 'acampamentos'],
 	['/admin/atividades', 'atividades'],
 	['/admin/inscricoes', 'inscricoes'],
+	['/admin/equipes', ['equipes', 'setores']],
 	['/admin/setores', 'setores'],
 	['/admin/formularios', ['formularios', 'respostas_formularios']]
 ];

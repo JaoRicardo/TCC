@@ -388,32 +388,17 @@ class ActivitiesController extends ApiController
             $activityPatch['event_form_id'] = $this->formularioDeEvento($ad);
         }
 
+        $categoriaAntes = $activity->category_id;
         $this->Activities->patchEntity($activity, $activityPatch);
         if (!$this->Activities->save($activity)) {
             return $this->apiResponse(['error' => 'Erro ao atualizar atividade', 'errors' => $activity->getErrors()], 422);
         }
 
-        // Sync sectors: add any categories_sectors for this category that aren't in activities_categories_sectors yet.
-        // Evento sem categoria não tem setores (antes, editar um evento assim dava erro 500).
-        $csLinks = $activity->category_id === null ? [] : $this->CategoriesSectors->find()
-            ->where(['category_id' => $activity->category_id, 'deleted IS' => null])
-            ->all();
-        foreach ($csLinks as $cs) {
-            $exists = $this->ActivitiesCategoriesSectors->find()
-                ->where([
-                    'categories_sectors_id' => $cs->id,
-                    'activity_id'           => $activity->id,
-                    'deleted IS'            => null,
-                ])
-                ->count();
-            if (!$exists) {
-                $acs = $this->ActivitiesCategoriesSectors->newEntity([
-                    'categories_sectors_id' => $cs->id,
-                    'activity_id'           => $activity->id,
-                    'actual_vacancies'      => $cs->vacancies,
-                ]);
-                $this->ActivitiesCategoriesSectors->save($acs);
-            }
+        // Os setores do modelo só entram quando a categoria muda (handoff
+        // design_handoff_equipes_servos): um setor tirado do acampamento não
+        // volta sozinho a cada edição.
+        if ($activity->camping_id !== null && $activity->category_id !== null && $activity->category_id !== $categoriaAntes) {
+            $this->ligarSetoresDoModelo($activity->id, (int)$activity->category_id);
         }
 
         $camping = null;
@@ -604,7 +589,17 @@ class ActivitiesController extends ApiController
 
     // ─── Activity Sectors ──────────────────────────────────────────────────
 
-    // GET /activities/{id}/sectors
+    /**
+     * GET /activities/{id}/sectors — a equipe de servos de um acampamento
+     * (handoff design_handoff_equipes_servos). Serve o painel (permissão
+     * "Equipes de Servos") e a área do participante (servo geral, líder, servo):
+     *  - quem tem a permissão, o servo geral e os líderes veem todos os setores;
+     *  - o servo comum vê só o próprio setor, sem banco;
+     *  - quem não está na equipe nem tem a permissão não vê nada.
+     * O "banco" são os inscritos como servo que não estão em setor nenhum nem
+     * são servo geral (fora recusados, cancelados e desistentes). O CPF
+     * mascarado só vai para quem tem a permissão.
+     */
     public function sectors(int $id): Response
     {
         $this->request->allowMethod(['get']);
@@ -612,11 +607,12 @@ class ActivitiesController extends ApiController
         if ($identity instanceof Response) return $identity;
 
         $activity = $this->Activities->find()
+            ->contain(['Categories'])
             ->where(['Activities.id' => $id, 'Activities.deleted IS' => null])
             ->first();
         if (!$activity) return $this->apiError('Atividade não encontrada', 404);
 
-        // Sectors already linked to this activity
+        // ─── Setores ligados ao acampamento ───
         $linked = $this->ActivitiesCategoriesSectors->find()
             ->contain(['CategoriesSectors' => ['Sectors', 'Categories']])
             ->where([
@@ -625,133 +621,242 @@ class ActivitiesController extends ApiController
             ])
             ->all();
 
-        $linkedCsIds = [];
-        $result = [];
+        // Modelo da categoria atual, por setor (as vagas que o acampamento "deveria" ter).
+        $modelo = [];
+        if ($activity->category_id !== null) {
+            $doModelo = $this->CategoriesSectors->find()
+                ->contain(['Sectors', 'Categories'])
+                ->where([
+                    'CategoriesSectors.category_id' => $activity->category_id,
+                    'CategoriesSectors.deleted IS'  => null,
+                    'Sectors.deleted IS'            => null,
+                ])
+                ->all();
+            foreach ($doModelo as $cs) $modelo[(int)$cs->sector_id] = $cs;
+        }
+
+        $setores = [];
+        $setoresLigados = [];
         foreach ($linked as $acs) {
             $cs = $acs->categories_sector;
-            $linkedCsIds[] = $acs->categories_sectors_id;
-            $result[] = [
+            $sectorId = (int)($cs->sector_id ?? 0);
+            $setoresLigados[$sectorId] = true;
+            $doModeloAtual = $modelo[$sectorId] ?? null;
+            $setores[] = [
                 'id'                    => $acs->id,
                 'categories_sectors_id' => $acs->categories_sectors_id,
-                'sector_id'             => $cs->sector_id,
+                'sector_id'             => $sectorId,
                 'sector_name'           => $cs->sector->name  ?? '',
                 'sector_place'          => $cs->sector->place ?? '',
                 'category_id'           => $cs->category_id,
                 'category_name'         => $cs->category->name ?? '',
-                'default_vacancies'     => $cs->vacancies,
-                'actual_vacancies'      => $acs->actual_vacancies,
+                // Vagas do modelo da categoria atual (null = o setor não está no modelo).
+                'default_vacancies'     => $doModeloAtual ? (int)$doModeloAtual->vacancies : null,
+                'actual_vacancies'      => (int)$acs->actual_vacancies,
                 'linked'                => true,
             ];
         }
+        usort($setores, fn($a, $b) => strcoll($a['sector_name'], $b['sector_name']));
 
-        // Sectors available (in categories_sectors for this activity's category) but not yet linked
-        $available = $this->CategoriesSectors->find()
-            ->contain(['Sectors', 'Categories'])
-            ->where([
-                'CategoriesSectors.category_id' => $activity->category_id,
-                'CategoriesSectors.deleted IS'  => null,
-            ])
-            ->all();
-
-        foreach ($available as $cs) {
-            if (in_array($cs->id, $linkedCsIds, true)) continue;
-            $result[] = [
+        // Setores do modelo fora do acampamento (só a organização liga).
+        $fora = [];
+        foreach ($modelo as $sectorId => $cs) {
+            if (isset($setoresLigados[$sectorId])) continue;
+            $fora[] = [
                 'id'                    => null,
                 'categories_sectors_id' => $cs->id,
-                'sector_id'             => $cs->sector_id,
+                'sector_id'             => $sectorId,
                 'sector_name'           => $cs->sector->name  ?? '',
                 'sector_place'          => $cs->sector->place ?? '',
                 'category_id'           => $cs->category_id,
                 'category_name'         => $cs->category->name ?? '',
-                'default_vacancies'     => $cs->vacancies,
-                'actual_vacancies'      => $cs->vacancies,
+                'default_vacancies'     => (int)$cs->vacancies,
+                'actual_vacancies'      => (int)$cs->vacancies,
                 'linked'                => false,
+                'coordenadores'         => [],
+                'membros'               => [],
+                'vagas_faltando'        => 0,
             ];
         }
+        usort($fora, fn($a, $b) => strcoll($a['sector_name'], $b['sector_name']));
 
-        // Fetch coordinators + regular members for all linked sectors in one query
-        $linkedIds = array_values(array_filter(array_column($result, 'id')));
-        $coordMap  = [];
-        $memberMap = [];
-        $myAcsCoordIds = [];
-        if (!empty($linkedIds)) {
-            $members = $this->AcsSectorsUsers->find()
-                ->contain(['Users'])
-                ->where(['activities_categories_sector_id IN' => $linkedIds])
-                ->all();
-            foreach ($members as $m) {
-                // Suplentes do sorteio (ainda não convocados) não contam como membro
-                // confirmado da equipe — só aparecem na tela de resultado do sorteio.
-                if ((int)$m->is_substitute === 1) continue;
-
-                $row = [
-                    'user_id' => $m->user_id,
-                    'nome'    => $m->user->name ?? '',
-                    'cpf'     => $this->maskCpf((string)($m->user->cpf ?? '')),
-                ];
-                if ($m->is_coordinator) {
-                    $coordMap[$m->activities_categories_sector_id][] = $row;
-                    if ($m->user_id === $identity->id) $myAcsCoordIds[] = $m->activities_categories_sector_id;
-                } else {
-                    $memberMap[$m->activities_categories_sector_id][] = $row;
-                }
-            }
-        }
-
-        foreach ($result as &$r) {
-            $r['coordenadores'] = ($r['linked'] && isset($coordMap[$r['id']])) ? $coordMap[$r['id']] : [];
-            $r['membros']       = ($r['linked'] && isset($memberMap[$r['id']])) ? $memberMap[$r['id']] : [];
-            $ocupadas           = count($r['coordenadores']) + count($r['membros']);
-            $r['vagas_faltando'] = max(0, $r['actual_vacancies'] - $ocupadas);
-        }
-        unset($r);
-
-        // Servos gerais desta atividade
-        $servoGeral = $this->ActivitiesGeneralServants->find()
-            ->contain(['Users'])
-            ->where(['activity_id' => $id])
-            ->all();
-        $servoGeralData = [];
-        $souGeral = false;
-        foreach ($servoGeral as $sg) {
-            $servoGeralData[] = [
-                'user_id' => $sg->user_id,
-                'nome'    => $sg->user->name ?? '',
-                'cpf'     => $this->maskCpf((string)($sg->user->cpf ?? '')),
-            ];
-            if ($sg->user_id === $identity->id) $souGeral = true;
-        }
-
-        // Servos inscritos nesta atividade (pool elegível para compor equipes)
-        $inscritosServo = $this->PreRegistrations->find()
-            ->contain(['Users'])
+        // ─── Inscrições de servo (situação de cada um) ───
+        $inscricoes = $this->PreRegistrations->find()
+            ->contain(['Users', 'SelectionMethods'])
             ->where([
                 'PreRegistrations.activity_id'       => $id,
                 'PreRegistrations.subscription_type' => 'Servo',
-                'PreRegistrations.deleted IS'         => null,
-                'Users.deleted IS'                    => null,
+                'PreRegistrations.deleted IS'        => null,
+                'Users.deleted IS'                   => null,
             ])
             ->all();
-        $servosInscritos = [];
-        foreach ($inscritosServo as $insc) {
-            $servosInscritos[] = [
-                'user_id' => $insc->user_id,
-                'nome'    => $insc->user->name ?? '',
-                'cpf'     => $this->maskCpf((string)($insc->user->cpf ?? '')),
-            ];
+        $inscricaoDe = [];
+        foreach ($inscricoes as $pr) $inscricaoDe[(int)$pr->user_id] = $pr;
+        $sorteado = fn(int $userId) => ($inscricaoDe[$userId]->selection_method->method ?? '') === 'Sorteio'
+            && $inscricaoDe[$userId]->substitute_position === null;
+
+        // ─── Quem está em cada setor (suplentes à parte) ───
+        $acsIds = array_column($setores, 'id');
+        $coordMap = $memberMap = [];
+        $naEquipe = [];
+        $suplenteDe = [];
+        $lideraIds = [];
+        $meusSetores = [];
+        if ($acsIds) {
+            $linhas = $this->AcsSectorsUsers->find()
+                ->contain(['Users'])
+                ->where(['ActivitiesCategoriesSectorsUsers.activities_categories_sector_id IN' => $acsIds, 'Users.deleted IS' => null])
+                ->orderBy(['ActivitiesCategoriesSectorsUsers.raffle_position' => 'ASC', 'ActivitiesCategoriesSectorsUsers.id' => 'ASC'])
+                ->all();
+            $nomeDoSetor = array_column($setores, 'sector_name', 'id');
+            $posicaoNaFila = [];
+            foreach ($linhas as $m) {
+                $acsId = (int)$m->activities_categories_sector_id;
+                $userId = (int)$m->user_id;
+                if ((int)$m->is_substitute === 1) {
+                    // Suplente: fica no banco, com o setor e a posição na fila do setor.
+                    $posicaoNaFila[$acsId] = ($posicaoNaFila[$acsId] ?? 0) + 1;
+                    $suplenteDe[$userId] = ['setor' => $nomeDoSetor[$acsId] ?? '', 'pos' => $posicaoNaFila[$acsId]];
+                    continue;
+                }
+                $naEquipe[$userId] = true;
+                $row = [
+                    'user_id'  => $userId,
+                    'nome'     => $m->user->name ?? '',
+                    'lider'    => (bool)$m->is_coordinator,
+                    'sorteado' => $sorteado($userId),
+                ];
+                if ($m->is_coordinator) {
+                    $coordMap[$acsId][] = $row;
+                    if ($userId === $identity->id) $lideraIds[] = $acsId;
+                } else {
+                    $memberMap[$acsId][] = $row;
+                }
+                if ($userId === $identity->id) $meusSetores[] = $acsId;
+            }
+        }
+        $porNome = fn($a, $b) => strcoll($a['nome'], $b['nome']);
+        foreach ($setores as &$s) {
+            $s['coordenadores'] = $coordMap[$s['id']] ?? [];
+            $s['membros']       = $memberMap[$s['id']] ?? [];
+            usort($s['coordenadores'], $porNome);
+            usort($s['membros'], $porNome);
+            $s['vagas_faltando'] = max(0, $s['actual_vacancies'] - count($s['coordenadores']) - count($s['membros']));
+        }
+        unset($s);
+
+        // ─── Servo geral ───
+        $servoGeral = [];
+        $ehGeral = [];
+        $gerais = $this->ActivitiesGeneralServants->find()
+            ->contain(['Users'])
+            ->where(['ActivitiesGeneralServants.activity_id' => $id, 'Users.deleted IS' => null])
+            ->all();
+        foreach ($gerais as $sg) {
+            $ehGeral[(int)$sg->user_id] = true;
+            $servoGeral[] = ['user_id' => (int)$sg->user_id, 'nome' => $sg->user->name ?? '', 'lider' => false, 'sorteado' => false];
+        }
+        usort($servoGeral, $porNome);
+
+        // ─── Papel de quem pede ───
+        $podeTudo = $this->temPermissao($identity, 'equipes');
+        $souGeral = isset($ehGeral[$identity->id]);
+        $souLider = !empty($lideraIds);
+        $vejoTudo = $podeTudo || $souGeral || $souLider;
+        if (!$vejoTudo && empty($meusSetores)) {
+            return $this->apiError('Acesso restrito à equipe deste acampamento', 403);
+        }
+
+        // ─── Sorteio de servos ───
+        $camping = $activity->camping_id ? $this->Campings->find()->where(['id' => $activity->camping_id])->first() : null;
+        $feitoEm = $this->sorteioService->sorteioFeitoEm($id, 'Servo');
+        $sorteio = [
+            'feito'    => $feitoEm !== null,
+            'feito_em' => $feitoEm instanceof \DateTimeInterface ? $feitoEm->format('Y-m-d\TH:i') : null,
+            'previsto' => $camping?->raffle_servant_date?->format('Y-m-d\TH:i'),
+        ];
+
+        // ─── Banco de servos ───
+        $banco = null;
+        if ($vejoTudo) {
+            $semLugar = array_filter(
+                $inscricaoDe,
+                fn($pr, $userId) => !$pr->is_quitter && $pr->disqualified_at === null
+                    && !isset($naEquipe[$userId]) && !isset($ehGeral[$userId]),
+                ARRAY_FILTER_USE_BOTH
+            );
+            $cidades = [];
+            if ($semLugar) {
+                $enderecos = $this->fetchTable('Addresses')->find()
+                    ->where(['user_id IN' => array_keys($semLugar), 'deleted IS' => null])
+                    ->all();
+                foreach ($enderecos as $end) $cidades[(int)$end->user_id] = $end->city;
+            }
+            $banco = [];
+            foreach ($semLugar as $userId => $pr) {
+                $metodo = $pr->selection_method->method ?? null;
+                $sup = $suplenteDe[$userId] ?? null;
+                if ($sup || $pr->substitute_position !== null) {
+                    $situacao = 'sup';
+                } elseif ($metodo === 'Sorteio') {
+                    $situacao = 'sort';
+                } elseif ($metodo !== null) {
+                    $situacao = 'ind';
+                } elseif ($pr->removed_from_raffle_at !== null) {
+                    $situacao = 'retirado';
+                } else {
+                    $situacao = $sorteio['feito'] ? 'nao' : 'insc';
+                }
+                $item = [
+                    'user_id'        => $userId,
+                    'nome'           => $pr->user->name ?? '',
+                    'idade'          => $pr->user->birthday ? (int)$pr->user->birthday->diffInYears(\Cake\I18n\Date::today()) : null,
+                    'cidade'         => $cidades[$userId] ?? null,
+                    'situacao'       => $situacao,
+                    'metodo'         => $situacao === 'ind' ? $metodo : null,
+                    'suplente_setor' => $sup['setor'] ?? null,
+                    'suplente_pos'   => $sup['pos'] ?? null,
+                ];
+                if ($podeTudo) $item['cpf'] = $this->cpfMascarado((string)($pr->user->cpf ?? ''));
+                $banco[] = $item;
+            }
+            usort($banco, $porNome);
+        }
+
+        // O servo comum vê só o próprio setor.
+        if (!$vejoTudo) {
+            $setores = array_values(array_filter($setores, fn($s) => in_array($s['id'], $meusSetores, true)));
         }
 
         return $this->apiResponse(['data' => [
-            'setores'      => $result,
-            'servo_geral'  => $servoGeralData,
-            'servos_inscritos' => $servosInscritos,
-            'meu_papel'    => [
+            'atividade'   => [
+                'id'          => $activity->id,
+                'nome'        => $activity->name,
+                'category_id' => $activity->category_id,
+                'categoria'   => $activity->category->name ?? '',
+            ],
+            'sorteio'     => $sorteio,
+            'setores'     => $podeTudo ? array_merge($setores, $fora) : $setores,
+            'servo_geral' => $servoGeral,
+            'banco'       => $banco,
+            'meu_papel'   => [
                 // "Admin" desta tela = quem tem a permissão Equipes de Servos no painel.
-                'is_admin'           => $this->temPermissao($identity, 'equipes'),
+                'is_admin'           => $podeTudo,
                 'is_servo_geral'     => $souGeral,
-                'lidera_setores_ids' => $myAcsCoordIds,
+                'lidera_setores_ids' => $lideraIds,
+                'meus_setores_ids'   => $meusSetores,
+                'so_minha_equipe'    => !$vejoTudo,
             ],
         ]]);
+    }
+
+    /** CPF só com os dígitos do meio: ***.445.123-** (para separar homônimos sem expor o documento). */
+    private function cpfMascarado(string $cpf): string
+    {
+        $d = preg_replace('/\D/', '', $cpf);
+        if (strlen($d) !== 11) return '';
+
+        return '***.' . substr($d, 3, 3) . '.' . substr($d, 6, 3) . '-**';
     }
 
     // POST /activities/{id}/sectors
@@ -778,7 +883,7 @@ class ActivitiesController extends ApiController
         $acs = $this->ActivitiesCategoriesSectors->newEntity([
             'categories_sectors_id' => $csId,
             'activity_id'           => $id,
-            'actual_vacancies'      => intval($data['actual_vacancies'] ?? 0),
+            'actual_vacancies'      => max(0, intval($data['actual_vacancies'] ?? 0)),
         ]);
 
         if (!$this->ActivitiesCategoriesSectors->save($acs)) {
@@ -818,7 +923,7 @@ class ActivitiesController extends ApiController
 
         $data  = $this->request->getData();
         $patch = [];
-        if (isset($data['actual_vacancies'])) $patch['actual_vacancies'] = intval($data['actual_vacancies']);
+        if (isset($data['actual_vacancies'])) $patch['actual_vacancies'] = max(0, intval($data['actual_vacancies']));
 
         $this->ActivitiesCategoriesSectors->patchEntity($acs, $patch);
         if (!$this->ActivitiesCategoriesSectors->save($acs)) {
@@ -938,6 +1043,12 @@ class ActivitiesController extends ApiController
             ->first();
         if (!$acs) return $this->apiError('Setor não encontrado', 404);
 
+        // O líder tira só servos do próprio setor: outro líder, só a organização ou o servo geral.
+        $podeLideres = $this->temPermissao($identity, 'equipes') || $this->isGeneralServant($activityId, $identity->id);
+        if (!$podeLideres && $this->isSectorCoordinator($acsId, $userId)) {
+            return $this->apiError('Só a organização ou o servo geral tiram um líder da equipe.', 403);
+        }
+
         $removidas = $this->AcsSectorsUsers->deleteAll([
             'activities_categories_sector_id' => $acsId,
             'user_id'                         => $userId,
@@ -947,6 +1058,117 @@ class ActivitiesController extends ApiController
         }
 
         return $this->apiResponse(['deleted' => true]);
+    }
+
+    // PATCH /activities/{activityId}/sectors/{acsId}/members/{userId}  body: { is_coordinator }
+    // Tornar líder / deixar de ser líder: organização ou servo geral.
+    public function updateSectorMember(int $activityId, int $acsId, int $userId): Response
+    {
+        $this->request->allowMethod(['patch']);
+        $identity = $this->requireAdminOrGeneral($activityId);
+        if ($identity instanceof Response) return $identity;
+
+        $linha = $this->AcsSectorsUsers->find()
+            ->innerJoinWith('ActivitiesCategoriesSectors', fn($q) => $q->where([
+                'ActivitiesCategoriesSectors.activity_id' => $activityId,
+                'ActivitiesCategoriesSectors.deleted IS'  => null,
+            ]))
+            ->where([
+                'ActivitiesCategoriesSectorsUsers.activities_categories_sector_id' => $acsId,
+                'ActivitiesCategoriesSectorsUsers.user_id'                         => $userId,
+                'OR' => ['ActivitiesCategoriesSectorsUsers.is_substitute IS' => null, 'ActivitiesCategoriesSectorsUsers.is_substitute' => 0],
+            ])
+            ->first();
+        if (!$linha) return $this->apiError('Esta pessoa não está neste setor', 404);
+
+        $linha->is_coordinator = (bool)$this->request->getData('is_coordinator');
+        if (!$this->AcsSectorsUsers->save($linha)) return $this->apiError('Erro ao salvar', 422);
+
+        return $this->apiResponse(['data' => ['user_id' => $userId, 'is_coordinator' => (bool)$linha->is_coordinator]]);
+    }
+
+    // POST /activities/{activityId}/sectors/{acsId}/members/{userId}/mover  body: { para }
+    // Mover de setor numa ação só (para a pessoa): tira do setor atual e põe no
+    // novo como servo, numa transação. Mesmo efeito de "tirar" + "pôr".
+    public function moverSectorMember(int $activityId, int $acsId, int $userId): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requireAdminOrGeneral($activityId);
+        if ($identity instanceof Response) return $identity;
+
+        $para = intval($this->request->getData('para') ?? 0);
+        if (!$para || $para === $acsId) return $this->apiError('Escolha o novo setor', 422);
+
+        $setores = $this->ActivitiesCategoriesSectors->find()
+            ->where(['id IN' => [$acsId, $para], 'activity_id' => $activityId, 'deleted IS' => null])
+            ->count();
+        if ($setores !== 2) return $this->apiError('Setor não encontrado', 404);
+
+        $estaNoSetor = $this->AcsSectorsUsers->exists([
+            'activities_categories_sector_id' => $acsId,
+            'user_id'                         => $userId,
+            'OR' => ['is_substitute IS' => null, 'is_substitute' => 0],
+        ]);
+        if (!$estaNoSetor) return $this->apiError('Esta pessoa não está neste setor', 404);
+
+        $this->AcsSectorsUsers->getConnection()->transactional(function () use ($activityId, $acsId, $para, $userId) {
+            $this->AcsSectorsUsers->deleteAll(['activities_categories_sector_id' => $acsId, 'user_id' => $userId]);
+            $this->desfazerResultadoDoSorteio($activityId, [$userId]);
+            $this->tirarDaFilaDeSuplentes($activityId, $userId);
+            $this->AcsSectorsUsers->saveOrFail($this->AcsSectorsUsers->newEntity([
+                'activities_categories_sector_id' => $para,
+                'user_id'                         => $userId,
+                'is_coordinator'                  => false,
+                'is_indicated'                    => true,
+            ]));
+        });
+
+        return $this->apiResponse(['data' => ['user_id' => $userId, 'para' => $para]]);
+    }
+
+    // POST /activities/{id}/sectors/aplicar-modelo — só antes do sorteio de servos:
+    // as vagas voltam para as do modelo da categoria e entram os setores que
+    // faltam. Ninguém sai da equipe e nenhum setor é tirado.
+    public function aplicarModelo(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('equipes');
+        if ($identity instanceof Response) return $identity;
+
+        $activity = $this->Activities->find()
+            ->where(['Activities.id' => $id, 'Activities.deleted IS' => null, 'Activities.camping_id IS NOT' => null])
+            ->first();
+        if (!$activity || $activity->category_id === null) return $this->apiError('Acampamento não encontrado', 404);
+
+        if ($this->sorteioService->servosJaRealizado($id)) {
+            return $this->apiResponse([
+                'error'  => 'O sorteio de servos já foi feito: o modelo não pode mais ser aplicado.',
+                'codigo' => 'sorteio_feito',
+            ], 409);
+        }
+
+        $vagasDoModelo = [];
+        $modelo = $this->CategoriesSectors->find()
+            ->where(['category_id' => $activity->category_id, 'deleted IS' => null])
+            ->all();
+        foreach ($modelo as $cs) $vagasDoModelo[(int)$cs->sector_id] = (int)$cs->vacancies;
+
+        $entraram = $this->ActivitiesCategoriesSectors->getConnection()->transactional(function () use ($id, $activity, $vagasDoModelo) {
+            $ligados = $this->ActivitiesCategoriesSectors->find()
+                ->contain(['CategoriesSectors'])
+                ->where(['ActivitiesCategoriesSectors.activity_id' => $id, 'ActivitiesCategoriesSectors.deleted IS' => null])
+                ->all();
+            foreach ($ligados as $acs) {
+                $sectorId = (int)($acs->categories_sector->sector_id ?? 0);
+                if (!isset($vagasDoModelo[$sectorId]) || (int)$acs->actual_vacancies === $vagasDoModelo[$sectorId]) continue;
+                $acs->actual_vacancies = $vagasDoModelo[$sectorId];
+                $this->ActivitiesCategoriesSectors->saveOrFail($acs);
+            }
+
+            return $this->ligarSetoresDoModelo($id, (int)$activity->category_id);
+        });
+
+        return $this->apiResponse(['data' => ['entraram' => $entraram]]);
     }
 
     // ─── Servo geral da atividade ───────────────────────────────────────────
@@ -1010,52 +1232,79 @@ class ActivitiesController extends ApiController
         return $this->apiResponse(['deleted' => true]);
     }
 
-    // GET /me/equipes — em quais atividades o usuário logado tem papel de servo
+    // GET /me/equipes — os acampamentos em que a pessoa logada serve e o papel
+    // dela em cada um (servo geral, líder de setor ou servo), com um resumo da
+    // equipe. Suplente do sorteio ainda não está na equipe e não entra.
     public function minhasEquipes(): Response
     {
         $this->request->allowMethod(['get']);
         $identity = $this->requireIdentity();
         if ($identity instanceof Response) return $identity;
 
+        $itens = [];
         $geral = $this->ActivitiesGeneralServants->find()
             ->contain(['Activities'])
-            ->where(['user_id' => $identity->id, 'Activities.deleted IS' => null])
+            ->where(['ActivitiesGeneralServants.user_id' => $identity->id, 'Activities.deleted IS' => null])
             ->all();
-
-        $geralData = [];
         foreach ($geral as $g) {
-            $geralData[] = ['activity_id' => $g->activity_id, 'activity_name' => $g->activity->name ?? ''];
+            $itens[$g->activity_id] = [
+                'activity_id'   => $g->activity_id,
+                'activity_name' => $g->activity->name ?? '',
+                'papel'         => 'geral',
+                'setor'         => null,
+                'acs_id'        => null,
+            ];
         }
 
         $minhasLinhas = $this->AcsSectorsUsers->find()
             ->contain(['ActivitiesCategoriesSectors' => ['CategoriesSectors' => ['Sectors'], 'Activities']])
-            ->where(['ActivitiesCategoriesSectorsUsers.user_id' => $identity->id])
+            ->where([
+                'ActivitiesCategoriesSectorsUsers.user_id' => $identity->id,
+                'OR' => ['ActivitiesCategoriesSectorsUsers.is_substitute IS' => null, 'ActivitiesCategoriesSectorsUsers.is_substitute' => 0],
+            ])
             ->all();
-
-        $lideranca = [];
-        $equipes   = [];
         foreach ($minhasLinhas as $linha) {
             $acs = $linha->activities_categories_sector;
-            if (!$acs || ($acs->deleted ?? null) !== null) continue;
-            $item = [
-                'activities_categories_sector_id' => $acs->id,
-                'activity_id'                      => $acs->activity_id,
-                'activity_name'                    => $acs->activity->name ?? '',
-                'sector_id'                        => $acs->categories_sector->sector_id ?? null,
-                'sector_name'                       => $acs->categories_sector->sector->name ?? '',
+            if (!$acs || $acs->deleted !== null || ($acs->activity->deleted ?? null) !== null) continue;
+            if (isset($itens[$acs->activity_id])) continue;
+            $itens[$acs->activity_id] = [
+                'activity_id'   => $acs->activity_id,
+                'activity_name' => $acs->activity->name ?? '',
+                'papel'         => $linha->is_coordinator ? 'lider' : 'servo',
+                'setor'         => $acs->categories_sector->sector->name ?? '',
+                'acs_id'        => $acs->id,
             ];
-            if ($linha->is_coordinator) {
-                $lideranca[] = $item;
-            } else {
-                $equipes[] = $item;
-            }
         }
 
-        return $this->apiResponse(['data' => [
-            'servo_geral' => $geralData,
-            'lideranca'   => $lideranca,
-            'equipes'     => $equipes,
-        ]]);
+        // Resumo: a equipe toda (servo geral e líder) ou só o setor (servo).
+        foreach ($itens as &$item) {
+            $setores = $this->ActivitiesCategoriesSectors->find()
+                ->where(['activity_id' => $item['activity_id'], 'deleted IS' => null])
+                ->all();
+            $ocupadas = [];
+            $acsIds = $setores->extract('id')->toArray();
+            if ($acsIds) {
+                $linhas = $this->AcsSectorsUsers->find()
+                    ->innerJoinWith('Users', fn($q) => $q->where(['Users.deleted IS' => null]))
+                    ->where([
+                        'ActivitiesCategoriesSectorsUsers.activities_categories_sector_id IN' => $acsIds,
+                        'OR' => ['ActivitiesCategoriesSectorsUsers.is_substitute IS' => null, 'ActivitiesCategoriesSectorsUsers.is_substitute' => 0],
+                    ])
+                    ->all();
+                foreach ($linhas as $l) {
+                    $ocupadas[$l->activities_categories_sector_id] = ($ocupadas[$l->activities_categories_sector_id] ?? 0) + 1;
+                }
+            }
+            $item['resumo'] = [
+                'setores'     => count($acsIds),
+                'vagas'       => array_sum($setores->extract('actual_vacancies')->toArray()),
+                'preenchidas' => array_sum($ocupadas),
+                'meu_setor'   => $item['acs_id'] ? ($ocupadas[$item['acs_id']] ?? 0) : null,
+            ];
+        }
+        unset($item);
+
+        return $this->apiResponse(['data' => array_values($itens)]);
     }
 
     // ─── Autorização: equipes de servos ────────────────────────────────────
@@ -1087,6 +1336,9 @@ class ActivitiesController extends ApiController
             'PreRegistrations.user_id'           => $userId,
             'PreRegistrations.subscription_type' => 'Servo',
             'PreRegistrations.deleted IS'         => null,
+            // Desistiu, foi recusado ou cancelado: não entra em equipe (nem aparece no banco).
+            'PreRegistrations.is_quitter'         => false,
+            'PreRegistrations.disqualified_at IS' => null,
         ]);
     }
 
@@ -1171,6 +1423,43 @@ class ActivitiesController extends ApiController
                 $inscricoes + ['selection_method_id IN' => $metodoSorteio]
             );
         }
+    }
+
+    /**
+     * Liga ao acampamento os setores do modelo da categoria que ainda não estão
+     * nele (com as vagas do modelo). Um setor já ligado por outra categoria
+     * (mesmo setor, vínculo diferente) não entra de novo.
+     *
+     * @return array<string> nomes dos setores que entraram
+     */
+    private function ligarSetoresDoModelo(int $activityId, int $categoryId): array
+    {
+        $jaTem = [];
+        $ligados = $this->ActivitiesCategoriesSectors->find()
+            ->contain(['CategoriesSectors'])
+            ->where(['ActivitiesCategoriesSectors.activity_id' => $activityId, 'ActivitiesCategoriesSectors.deleted IS' => null])
+            ->all();
+        foreach ($ligados as $acs) {
+            $jaTem[(int)($acs->categories_sector->sector_id ?? 0)] = true;
+        }
+
+        $entraram = [];
+        $modelo = $this->CategoriesSectors->find()
+            ->contain(['Sectors'])
+            ->where(['CategoriesSectors.category_id' => $categoryId, 'CategoriesSectors.deleted IS' => null, 'Sectors.deleted IS' => null])
+            ->all();
+        foreach ($modelo as $cs) {
+            if (isset($jaTem[(int)$cs->sector_id])) continue;
+            $this->ActivitiesCategoriesSectors->save($this->ActivitiesCategoriesSectors->newEntity([
+                'categories_sectors_id' => $cs->id,
+                'activity_id'           => $activityId,
+                'actual_vacancies'      => $cs->vacancies,
+            ]));
+            $jaTem[(int)$cs->sector_id] = true;
+            $entraram[] = $cs->sector->name ?? '';
+        }
+
+        return $entraram;
     }
 
     private function acsIdsDaAtividade(int $activityId): array

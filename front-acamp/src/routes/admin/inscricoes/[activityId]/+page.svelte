@@ -44,7 +44,9 @@
 	let estado: 'carregando' | 'erro' | 'pronto' = $state('carregando');
 
 	type Aba = 'inscritos' | 'campistas' | 'servos';
-	let aba: Aba = $state('inscritos');
+	// `?aba=servos` / `?aba=campistas`: links de outras telas (ex.: Equipes de Servos) abrem direto no sorteio.
+	const abaPedida = $page.url.searchParams.get('aba');
+	let aba: Aba = $state(abaPedida === 'servos' || abaPedida === 'campistas' ? abaPedida : 'inscritos');
 
 	// ─── Carregar ─────────────────────────────────────────────────────────
 

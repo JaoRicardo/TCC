@@ -687,7 +687,7 @@
 				<div class="criado-corpo">
 					<span class="criado-ok" aria-hidden="true">✓</span>
 					<h1 class="criado-titulo">Acampamento criado!</h1>
-					<p class="criado-texto">“{f.nome}” já aparece no Início com o selo “{faseCriada}”. Lembre de conferir as vagas dos setores em Setores de Servos.</p>
+					<p class="criado-texto">“{f.nome}” já aparece no Início com o selo “{faseCriada}”. Lembre de conferir as vagas dos setores em Equipes de Servos.</p>
 					<div class="criado-acoes">
 						{#if idCriado}<a href="/dashboard/atividades/{idCriado}" class="btn b-ouro">Ver como o público vê</a>{/if}
 						<a href="/admin/atividades" class="btn b-azul b-grande">Ir para a Gestão de Atividades</a>
@@ -982,11 +982,11 @@
 				<p class="ajuda">
 					{editando
 						? 'As vagas por setor não são definidas aqui. Ajuste as deste acampamento na tela de equipes.'
-						: 'As vagas por setor não são definidas aqui. Depois de criar, ajuste as deste acampamento na tela de equipes; o modelo de cada categoria fica em Setores de Servos.'}
+						: 'As vagas por setor não são definidas aqui. Depois de criar, ajuste as deste acampamento na tela de equipes; o modelo de cada categoria fica em Equipes de Servos › Modelo por categoria.'}
 				</p>
 				<div class="links">
-					{#if editando && pode('equipes')}<a href="/dashboard/equipes/{activityId}" target="_blank" rel="noopener" class="link">Ajustar as equipes deste acampamento ↗</a>{/if}
-					{#if pode('setores')}<a href="/admin/setores" target="_blank" rel="noopener" class="link">Ver o modelo em Setores de Servos ↗</a>{/if}
+					{#if editando && pode('equipes')}<a href="/admin/equipes?atividade={activityId}" class="link">Ajustar a equipe deste acampamento</a>{/if}
+					{#if pode('setores')}<a href="/admin/equipes?aba=modelo" class="link">Ver o modelo por categoria</a>{/if}
 				</div>
 			{/if}
 		</div>
