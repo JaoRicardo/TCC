@@ -318,7 +318,7 @@ class UsersController extends ApiController
         foreach (array_keys(self::NOMES_DOS_DADOS) as $campo) {
             if ($campo === 'address') {
                 $enderecoMudou = $endereco !== null && ($endereco->isNew() || array_filter(
-                    ['cep', 'city', 'street', 'number', 'neighborhood'],
+                    ['cep', 'city'],
                     fn($c) => (string)$endereco->getOriginal($c) !== (string)$endereco->get($c)
                 ));
                 if ($enderecoMudou) $mudou[] = self::NOMES_DOS_DADOS['address'];
@@ -402,11 +402,8 @@ class UsersController extends ApiController
             'phone'             => $this->maskPhone((string)$user->phone),
             'email'             => $user->email,
             'address'           => $endereco ? [
-                'cep'          => $endereco->cep,
-                'city'         => $endereco->city,
-                'street'       => $endereco->street,
-                'number'       => $endereco->number,
-                'neighborhood' => $endereco->neighborhood,
+                'cep'  => $endereco->cep,
+                'city' => $endereco->city,
             ] : null,
             'created'           => $user->created?->format('Y-m-d H:i:s'),
             'versao'            => $this->versaoDaFicha($user, $endereco),
@@ -458,11 +455,8 @@ class UsersController extends ApiController
         ];
         $endereco = is_array($data['address'] ?? null) ? $data['address'] : [];
         $novoEndereco = [
-            'cep'          => $digitos($texto('cep', $endereco)),
-            'city'         => $texto('city', $endereco),
-            'street'       => $texto('street', $endereco),
-            'number'       => $texto('number', $endereco),
-            'neighborhood' => $texto('neighborhood', $endereco),
+            'cep'  => $digitos($texto('cep', $endereco)),
+            'city' => $texto('city', $endereco),
         ];
 
         $erros = [];
@@ -645,11 +639,11 @@ class UsersController extends ApiController
         ]);
         $erros = $user->getErrors();
 
-        // Endereço: os cinco campos juntos (a cidade decide quem entra no sorteio).
+        // Endereço: cidade e CEP juntos (a cidade decide quem entra no sorteio).
         $enderecoNovo = null;
         if (isset($data['address']) && is_array($data['address'])) {
             $enderecoNovo = [];
-            $nomes = ['street' => 'rua', 'number' => 'número', 'neighborhood' => 'bairro', 'city' => 'cidade', 'cep' => 'CEP'];
+            $nomes = ['city' => 'a cidade', 'cep' => 'o CEP'];
             foreach ($nomes as $campo => $nome) {
                 $valor = trim((string)($data['address'][$campo] ?? ''));
                 if ($campo === 'cep') $valor = preg_replace('/\D/', '', $valor);
@@ -769,11 +763,8 @@ class UsersController extends ApiController
                 ? ['id' => $user->marital_status->id, 'title' => $user->marital_status->title]
                 : null,
             'address' => $address ? [
-                'street'       => $address->street,
-                'number'       => $address->number,
-                'neighborhood' => $address->neighborhood,
-                'city'         => $address->city,
-                'cep'          => $address->cep,
+                'city' => $address->city,
+                'cep'  => $address->cep,
             ] : null,
             'created' => $user->created?->format('Y-m-d H:i:s'),
         ]);

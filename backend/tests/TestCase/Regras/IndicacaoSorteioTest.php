@@ -83,4 +83,32 @@ class IndicacaoSorteioTest extends RegrasTestCase
             $this->assertNull($agora->substitute_position);
         }
     }
+
+    public function testIndicaQuemMoraForaDaArea(): void
+    {
+        // Só o sorteio fica restrito a Primavera do Leste e Poxoréu.
+        $fac = $this->criarAcampamento('FAC');
+        $deFora = $this->inscrever($this->criarUsuario('Ana de Cuiabá', sexo: 'F', cidade: 'Cuiabá'), $fac);
+
+        $this->indicarPelaApi($fac, $deFora, 'Forania');
+        $this->assertSame($this->metodos['Forania'], $this->recarregar($deFora)->selection_method_id);
+    }
+
+    public function testInscricaoGuardaSoCidadeECep(): void
+    {
+        $fac = $this->criarAcampamento('FAC');
+        $pessoa = $this->criarUsuario('Bia', sexo: 'F');
+        $this->fetchTable('Addresses')->deleteAll(['user_id' => $pessoa->id]);
+
+        $this->autenticarComo($pessoa);
+        $this->post("/api/v1/activities/{$fac->id}/inscricoes", ['tipo' => 'Campista', 'city' => 'Cuiabá']);
+        $this->assertResponseCode(422);
+
+        $this->autenticarComo($pessoa);
+        $this->post("/api/v1/activities/{$fac->id}/inscricoes", ['tipo' => 'Campista', 'city' => 'Cuiabá', 'cep' => '78000-000']);
+        $this->assertResponseSuccess();
+        $endereco = $this->fetchTable('Addresses')->find()->where(['user_id' => $pessoa->id])->firstOrFail();
+        $this->assertSame('Cuiabá', $endereco->city);
+        $this->assertSame('78000000', $endereco->cep);
+    }
 }

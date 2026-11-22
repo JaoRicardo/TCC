@@ -188,7 +188,7 @@ class RetiradaDoSorteioTest extends RegrasTestCase
         $dados = [
             'name' => 'Ana Souza', 'sex' => 'F', 'phone' => '(66) 99714-8315', 'email' => 'ana@exemplo.com',
             'marital_status_id' => $this->recarregarUsuario($ana)->marital_status_id,
-            'address' => ['cep' => '78850-000', 'street' => 'Rua Teste', 'number' => '1', 'neighborhood' => 'Centro', 'city' => 'Cuiabá'],
+            'address' => ['cep' => '78850-000', 'city' => 'Cuiabá'],
         ];
 
         // Sem confirmar: diz o que acontece e não grava nada.

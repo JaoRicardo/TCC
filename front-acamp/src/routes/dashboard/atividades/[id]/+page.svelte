@@ -819,7 +819,7 @@
 	let processando = $state(false);
 	let erroJanela = $state('');
 	let cpfConjuge = $state('');
-	let end = $state({ cep: '', cidade: '', rua: '', num: '', bairro: '' });
+	let end = $state({ cep: '', cidade: '' });
 	let janelaEl: HTMLDivElement | undefined = $state();
 	let quemAbriu: HTMLElement | null = null;
 	let toast = $state('');
@@ -833,11 +833,6 @@
 	let enderecoOk = $derived(Object.values(end).every((v) => v.trim() !== ''));
 	let invalido = $derived((pedeConjuge && !cpfOk) || (pedeEndereco && !enderecoOk));
 	let erroNoCpf = $derived(!!erroJanela && pedeConjuge && /cpf|cônjuge/i.test(erroJanela));
-	let foraDaArea = $derived.by(() => {
-		if (ehEvento || !pedeEndereco) return false;
-		const c = end.cidade.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
-		return c.length > 2 && !['primavera do leste', 'poxoreu'].includes(c);
-	});
 
 	let fraseJanela = $derived.by(() => {
 		if (ehEvento)
@@ -864,7 +859,7 @@
 		quemAbriu = document.activeElement as HTMLElement | null;
 		janelaTrilha = t;
 		cpfConjuge = '';
-		end = { cep: '', cidade: '', rua: '', num: '', bairro: '' };
+		end = { cep: '', cidade: '' };
 		erroJanela = '';
 		processando = false;
 		janelaAberta = true;
@@ -915,9 +910,6 @@
 			body.append('tipo', janelaTrilha === 'servo' ? 'Servo' : janelaTrilha === 'participante' ? 'Participante' : 'Campista');
 			if (pedeConjuge) body.append('spouse_cpf', cpfConjuge.replace(/\D/g, ''));
 			if (pedeEndereco) {
-				body.append('street', end.rua);
-				body.append('number', end.num);
-				body.append('neighborhood', end.bairro);
 				body.append('city', end.cidade);
 				body.append('cep', end.cep.replace(/\D/g, ''));
 			}
@@ -1283,11 +1275,8 @@
 
 					{#if pedeEndereco}
 						<fieldset class="endereco">
-							<legend>Seu endereço</legend>
-							<p class="ajuda">
-								A cidade decide se você concorre ao sorteio: só concorre quem mora em Primavera do Leste ou Poxoréu. O endereço fica salvo
-								no seu cadastro.
-							</p>
+							<legend>Onde você mora</legend>
+							<p class="ajuda">A cidade e o CEP ficam salvos no seu cadastro.</p>
 							<div class="endereco-grid">
 								<label class="lbl"
 									>CEP<input
@@ -1303,13 +1292,7 @@
 									/></label
 								>
 								<label class="lbl">Cidade<input class="campo" bind:value={end.cidade} required /></label>
-								<label class="lbl lbl-inteira">Rua<input class="campo" bind:value={end.rua} required /></label>
-								<label class="lbl">Número<input class="campo" bind:value={end.num} required /></label>
-								<label class="lbl">Bairro<input class="campo" bind:value={end.bairro} required /></label>
 							</div>
-							{#if foraDaArea}
-								<div class="aviso av-amb"><i></i><span>Com esta cidade, você não concorre ao sorteio deste acampamento.</span></div>
-							{/if}
 						</fieldset>
 					{/if}
 

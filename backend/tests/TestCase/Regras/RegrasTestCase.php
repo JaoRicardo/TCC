@@ -115,9 +115,6 @@ abstract class RegrasTestCase extends TestCase
 
         $this->salvar('Addresses', [
             'user_id' => $usuario->id,
-            'street' => 'Rua Teste',
-            'number' => '1',
-            'neighborhood' => 'Centro',
             'city' => $cidade,
             'cep' => '78850000',
         ]);

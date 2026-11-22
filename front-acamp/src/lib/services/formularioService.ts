@@ -34,7 +34,7 @@ export interface PerfilConfirmacao {
 	data_nascimento: string | null;
 	sexo: string;
 	estado_civil: string | null;
-	endereco: { rua: string; numero: string; bairro: string; cidade: string; cep: string } | null;
+	endereco: { cidade: string; cep: string } | null;
 }
 
 /** Arquivo enviado numa pergunta do tipo "arquivo" (sem o arquivo em si: ele só abre no painel). */

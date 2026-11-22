@@ -35,9 +35,6 @@
 		phone: '',
 		email: '',
 		cep: '',
-		street: '',
-		number: '',
-		neighborhood: '',
 		city: ''
 	});
 	/** Como os dados vieram do servidor, para saber se há algo a salvar. */
@@ -91,9 +88,6 @@
 			phone: mascaraTelefone(user.phone ?? ''),
 			email: user.email ?? '',
 			cep: mascaraCep(user.address?.cep ?? ''),
-			street: user.address?.street ?? '',
-			number: user.address?.number ?? '',
-			neighborhood: user.address?.neighborhood ?? '',
 			city: user.address?.city ?? ''
 		};
 		original = JSON.stringify(dados);
@@ -130,9 +124,6 @@
 					email: dados.email.trim(),
 					address: {
 						cep: dados.cep,
-						street: dados.street.trim(),
-						number: dados.number.trim(),
-						neighborhood: dados.neighborhood.trim(),
 						city: dados.city.trim()
 					}
 				},
@@ -349,42 +340,8 @@
 							{@render erro('address.city')}
 						</label>
 
-						<label class="campo-grupo largo">
-							<span class="rotulo">Rua</span>
-							<input
-								class="campo"
-								class:com-erro={erros['address.street']}
-								bind:value={dados.street}
-								autocomplete="address-line1"
-								aria-invalid={!!erros['address.street']}
-								aria-describedby={erros['address.street'] ? 'erro-address.street' : undefined}
-							/>
-							{@render erro('address.street')}
-						</label>
 
-						<label class="campo-grupo">
-							<span class="rotulo">Número</span>
-							<input
-								class="campo campo--curto"
-								class:com-erro={erros['address.number']}
-								bind:value={dados.number}
-								aria-invalid={!!erros['address.number']}
-								aria-describedby={erros['address.number'] ? 'erro-address.number' : undefined}
-							/>
-							{@render erro('address.number')}
-						</label>
 
-						<label class="campo-grupo">
-							<span class="rotulo">Bairro</span>
-							<input
-								class="campo"
-								class:com-erro={erros['address.neighborhood']}
-								bind:value={dados.neighborhood}
-								aria-invalid={!!erros['address.neighborhood']}
-								aria-describedby={erros['address.neighborhood'] ? 'erro-address.neighborhood' : undefined}
-							/>
-							{@render erro('address.neighborhood')}
-						</label>
 					</div>
 				</section>
 

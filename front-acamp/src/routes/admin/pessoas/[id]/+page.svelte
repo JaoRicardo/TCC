@@ -67,10 +67,7 @@
 		tel: 'Telefone',
 		email: 'E-mail',
 		cep: 'CEP',
-		cidade: 'Cidade',
-		rua: 'Rua',
-		num: 'Número',
-		bairro: 'Bairro'
+		cidade: 'Cidade'
 	};
 	type Campo = keyof typeof ROTULOS;
 	type Campos = Record<Campo, string>;
@@ -86,10 +83,7 @@
 		phone: 'tel',
 		email: 'email',
 		'address.cep': 'cep',
-		'address.city': 'cidade',
-		'address.street': 'rua',
-		'address.number': 'num',
-		'address.neighborhood': 'bairro'
+		'address.city': 'cidade'
 	};
 
 	const AREA_DOS_SORTEIOS = ['primavera do leste', 'poxoreu'];
@@ -109,14 +103,11 @@
 			tel: mascaraTelefoneOuFixo(ficha.phone ?? ''),
 			email: ficha.email ?? '',
 			cep: mascaraCep(ficha.address?.cep ?? ''),
-			cidade: ficha.address?.city ?? '',
-			rua: ficha.address?.street ?? '',
-			num: ficha.address?.number ?? '',
-			bairro: ficha.address?.neighborhood ?? ''
+			cidade: ficha.address?.city ?? ''
 		};
 	}
 
-	const VAZIO: Campos = { nome: '', cpf: '', nasc: '', sexo: '', civil: '', tel: '', email: '', cep: '', cidade: '', rua: '', num: '', bairro: '' };
+	const VAZIO: Campos = { nome: '', cpf: '', nasc: '', sexo: '', civil: '', tel: '', email: '', cep: '', cidade: '' };
 
 	// ─── Carregar ─────────────────────────────────────────────────────────
 	let estado: 'carregando' | 'erro' | 'naoEncontrada' | 'pronto' | 'desativada' = $state('carregando');
@@ -307,10 +298,7 @@
 			email: c.email.trim(),
 			address: {
 				cep: c.cep,
-				city: c.cidade.trim(),
-				street: c.rua.trim(),
-				number: c.num.trim(),
-				neighborhood: c.bairro.trim()
+				city: c.cidade.trim()
 			}
 		};
 	}
@@ -826,7 +814,7 @@
 					<div class="cartao-topo">
 						<div>
 							<h2 id="t-end" class="h2">Endereço</h2>
-							<p class="sub">Só quem mora em Primavera do Leste ou Poxoréu participa dos sorteios dos acampamentos.</p>
+							<p class="sub">Só quem mora em Primavera do Leste ou Poxoréu participa dos sorteios dos acampamentos. A indicação vale para qualquer cidade.</p>
 						</div>
 						{#if naArea(f.cidade)}
 							<span class="pill ok"><i></i>Participa dos sorteios</span>
@@ -866,51 +854,6 @@
 								aria-describedby={erros.cidade ? 'e-cidade' : undefined}
 							/>
 							{@render erroDo('cidade')}
-						</div>
-						<div class="fld cheio">
-							{@render rotulo('rua', 'f-rua')}
-							<input
-								id="f-rua"
-								class="campo"
-								class:erro={erros.rua}
-								class:mudou={alterado('rua') && !erros.rua}
-								value={f.rua}
-								oninput={digitar('rua')}
-								autocomplete="off"
-								aria-invalid={erros.rua ? 'true' : undefined}
-								aria-describedby={erros.rua ? 'e-rua' : undefined}
-							/>
-							{@render erroDo('rua')}
-						</div>
-						<div class="fld">
-							{@render rotulo('num', 'f-num')}
-							<input
-								id="f-num"
-								class="campo estreito"
-								class:erro={erros.num}
-								class:mudou={alterado('num') && !erros.num}
-								value={f.num}
-								oninput={digitar('num')}
-								autocomplete="off"
-								aria-invalid={erros.num ? 'true' : undefined}
-								aria-describedby={erros.num ? 'e-num' : undefined}
-							/>
-							{@render erroDo('num')}
-						</div>
-						<div class="fld">
-							{@render rotulo('bairro', 'f-bairro')}
-							<input
-								id="f-bairro"
-								class="campo"
-								class:erro={erros.bairro}
-								class:mudou={alterado('bairro') && !erros.bairro}
-								value={f.bairro}
-								oninput={digitar('bairro')}
-								autocomplete="off"
-								aria-invalid={erros.bairro ? 'true' : undefined}
-								aria-describedby={erros.bairro ? 'e-bairro' : undefined}
-							/>
-							{@render erroDo('bairro')}
 						</div>
 					</div>
 					{#if alterado('cidade') && naArea(orig.cidade) && !naArea(f.cidade)}

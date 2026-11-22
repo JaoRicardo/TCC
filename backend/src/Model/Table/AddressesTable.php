@@ -42,7 +42,7 @@ class AddressesTable extends Table
         parent::initialize($config);
 
         $this->setTable('addresses');
-        $this->setDisplayField('street');
+        $this->setDisplayField('city');
         $this->setPrimaryKey('id');
 
         $this->addBehavior('Timestamp');
@@ -61,23 +61,8 @@ class AddressesTable extends Table
      */
     public function validationDefault(Validator $validator): Validator
     {
-        $validator
-            ->scalar('street')
-            ->maxLength('street', 255)
-            ->requirePresence('street', 'create')
-            ->notEmptyString('street');
 
-        $validator
-            ->scalar('number')
-            ->maxLength('number', 50)
-            ->requirePresence('number', 'create')
-            ->notEmptyString('number');
 
-        $validator
-            ->scalar('neighborhood')
-            ->maxLength('neighborhood', 255)
-            ->requirePresence('neighborhood', 'create')
-            ->notEmptyString('neighborhood');
 
         $validator
             ->scalar('city')

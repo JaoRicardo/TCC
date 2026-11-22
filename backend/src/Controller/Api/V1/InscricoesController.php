@@ -54,23 +54,6 @@ class InscricoesController extends ApiController
     /** Cache de "categoria+tipo tem formulário montado?", usado na listagem. */
     private array $formulariosCache = [];
 
-    // Só residentes de Primavera do Leste/Poxoréu são elegíveis pra serem
-    // sorteados OU indicados (mesma regra, checada de dois lugares diferentes).
-    private function isEligibleCity(int $userId): bool
-    {
-        $address = $this->Addresses->find()
-            ->where(['user_id' => $userId, 'deleted IS' => null])
-            ->first();
-        if (!$address) return false;
-
-        $cidade = mb_strtolower(trim((string)$address->city));
-        $comAcento = ['á','à','â','ã','é','ê','í','ó','ô','õ','ú','ç'];
-        $semAcento = ['a','a','a','a','e','e','i','o','o','o','u','c'];
-        $cidade    = str_replace($comAcento, $semAcento, $cidade);
-
-        return in_array($cidade, ['primavera do leste', 'poxoreu'], true);
-    }
-
     /**
      * GET /activities/{id}/elegibilidade — para a pessoa logada: pode se
      * inscrever como campista e como servo? Quando não pode, vem o código do
@@ -206,15 +189,13 @@ class InscricoesController extends ApiController
             ->where(['user_id' => $identity->id, 'deleted IS' => null])
             ->first();
         if (!$existingAddress) {
+            // O cadastro guarda só cidade e CEP (rua, número e bairro saíram).
             $addrData = [
-                'street'       => trim((string)$this->request->getData('street')),
-                'number'       => trim((string)$this->request->getData('number')),
-                'neighborhood' => trim((string)$this->request->getData('neighborhood')),
-                'city'         => trim((string)$this->request->getData('city')),
-                'cep'          => trim((string)$this->request->getData('cep')),
+                'city' => trim((string)$this->request->getData('city')),
+                'cep'  => preg_replace('/\D/', '', (string)$this->request->getData('cep')),
             ];
             if (in_array('', $addrData, true)) {
-                return $this->apiError('Endereço completo (rua, número, bairro, cidade e CEP) é obrigatório para se inscrever.', 422);
+                return $this->apiError('Informe a cidade e o CEP para se inscrever.', 422);
             }
             $address = $addressesTable->newEntity(array_merge($addrData, ['user_id' => $identity->id]));
             if (!$addressesTable->save($address)) {
@@ -315,9 +296,8 @@ class InscricoesController extends ApiController
             ->first();
         if (!$preReg) return $this->apiError('Inscrição não encontrada', 404);
 
-        if (!$this->isEligibleCity($preReg->user_id)) {
-            return $this->apiError('Só é possível indicar residentes de Primavera do Leste ou Poxoréu.', 422);
-        }
+        // Indicação vale para qualquer cidade (decisão do usuário, 2026-11-22):
+        // só o sorteio fica restrito a Primavera do Leste e Poxoréu.
 
         $preReg->selection_method_id = $methodId;
         $preReg->substitute_position = null;
@@ -804,9 +784,6 @@ class InscricoesController extends ApiController
             'sexo'          => $user->sex,
             'estado_civil'  => $user->marital_status->title ?? null,
             'endereco'      => $address ? [
-                'rua'    => $address->street,
-                'numero' => $address->number,
-                'bairro' => $address->neighborhood,
                 'cidade' => $address->city,
                 'cep'    => $address->cep,
             ] : null,

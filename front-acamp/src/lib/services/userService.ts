@@ -80,9 +80,6 @@ export async function deactivateUser(userId: number): Promise<{ success: boolean
 // ─── Meu cadastro (a própria pessoa) ────────────────────────────────────
 
 export interface EnderecoCadastro {
-    street: string;
-    number: string;
-    neighborhood: string;
     city: string;
     cep: string;
 }

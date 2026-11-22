@@ -967,11 +967,8 @@
 								<div><dt>Estado civil</dt><dd>{form.perfil.estado_civil ?? '—'}</dd></div>
 								{#if form.perfil.endereco}
 									<div class="dados-largo">
-										<dt>Endereço</dt>
-										<dd>
-											{form.perfil.endereco.rua}, {form.perfil.endereco.numero} · {form.perfil.endereco.bairro} ·
-											{form.perfil.endereco.cidade}
-										</dd>
+										<dt>Cidade</dt>
+										<dd>{form.perfil.endereco.cidade}</dd>
 									</div>
 								{/if}
 							</dl>

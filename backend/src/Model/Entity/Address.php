@@ -9,9 +9,6 @@ use Cake\ORM\Entity;
  * Address Entity
  *
  * @property int $id
- * @property string $street
- * @property string $number
- * @property string $neighborhood
  * @property string $city
  * @property string $cep
  * @property int $user_id
@@ -33,9 +30,6 @@ class Address extends Entity
      * @var array<string, bool>
      */
     protected array $_accessible = [
-        'street' => true,
-        'number' => true,
-        'neighborhood' => true,
         'city' => true,
         'cep' => true,
         'user_id' => true,

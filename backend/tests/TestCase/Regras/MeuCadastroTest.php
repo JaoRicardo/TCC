@@ -39,7 +39,7 @@ class MeuCadastroTest extends RegrasTestCase
             'birthday' => '1990-03-15', // ignorado
             'marital_status_id' => $this->estadosCivis['Namorando'],
             'cpf' => '52998224725', // ignorado
-            'address' => ['street' => 'Rua Nova', 'number' => '45', 'neighborhood' => 'Jardim', 'city' => 'Poxoréu', 'cep' => '78800-000'],
+            'address' => ['city' => 'Poxoréu', 'cep' => '78800-000'],
         ]);
         $this->assertResponseOk();
         $this->assertSame('Ana Souza Lima', $resposta['user']['name']);
@@ -60,7 +60,7 @@ class MeuCadastroTest extends RegrasTestCase
         $resposta = $this->atualizar([
             'name' => 'Outro Nome',
             'email' => 'isto-nao-e-email',
-            'address' => ['street' => 'Rua Nova', 'number' => '45', 'neighborhood' => 'Jardim', 'city' => '', 'cep' => '123'],
+            'address' => ['city' => '', 'cep' => '123'],
         ]);
         $this->assertResponseCode(422);
         $this->assertArrayHasKey('email', $resposta['errors']);

@@ -121,7 +121,7 @@ class FichaPessoaTest extends RegrasTestCase
             'birthday' => '2099-01-01',
             'phone'    => '(66) 9999',
             'email'    => 'ana@gmail',
-            'address'  => ['cep' => '7880', 'street' => ''],
+            'address'  => ['cep' => '7880', 'city' => ''],
         ]));
         $this->assertResponseCode(422);
         $this->assertSame('Escreva o nome completo.', $resposta['errors']['name']['_']);
@@ -130,7 +130,7 @@ class FichaPessoaTest extends RegrasTestCase
         $this->assertArrayHasKey('phone', $resposta['errors']);
         $this->assertArrayHasKey('email', $resposta['errors']);
         $this->assertSame('CEP incompleto. São 8 números.', $resposta['errors']['address.cep']['_']);
-        $this->assertSame('Preencha este campo.', $resposta['errors']['address.street']['_']);
+        $this->assertSame('Preencha este campo.', $resposta['errors']['address.city']['_']);
 
         $this->assertSame('Ana Souza', $this->fetchTable('Users')->get($this->pessoa->id)->name);
     }
