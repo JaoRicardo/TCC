@@ -136,11 +136,9 @@
 	const dt = (s?: string | null) => (s ? new Date(s) : undefined);
 	const fData = (x: Date) => `${p2(x.getDate())}/${p2(x.getMonth() + 1)}/${x.getFullYear()}`;
 	const fCurta = (x: Date) => `${p2(x.getDate())}/${p2(x.getMonth() + 1)}`;
-	const fHora = (x: Date) =>
-		x.getHours() === 23 && x.getMinutes() === 59 ? '23h59' : `${x.getHours()}h${x.getMinutes() ? p2(x.getMinutes()) : ''}`;
-	const temHora = (x: Date) => x.getHours() !== 0 || x.getMinutes() !== 0;
-	// Evento: as datas não têm hora (o fechamento e o prazo valem até 23h59 do dia).
-	const fDH = (x: Date) => (temHora(x) && !ehEvento ? `${fData(x)}, às ${fHora(x)}` : fData(x));
+	// Evento e acampamento: as datas não têm hora (aberturas às 00h00; fechamentos
+	// e prazos valem até 23h59 do dia). Por isso só a data aparece.
+	const fDH = fData;
 	/** "2026-11-18" (só a data) → Date local, sem o deslocamento do UTC. */
 	const diaLocal = (s: string) => new Date(s.length <= 10 ? `${s}T00:00` : s);
 	const diaMes = (x: Date) => `${x.getDate()} ${MES[x.getMonth()]}`;
@@ -237,23 +235,27 @@
 								: 'Quem se inscreve concorre às vagas de campista.'
 						}
 					: null,
+				// O sorteio é feito à mão pela organização: a data é a prevista.
 				sorteio
 					? {
 							k: 'sorteio',
-							t: servo ? 'Sorteio de servos' : 'Sorteio',
+							t: servo ? 'Sorteio de servos (data prevista)' : 'Sorteio (data prevista)',
 							em: sorteio,
-							desc: servo ? 'Só acontece se houver mais inscritos do que vagas.' : 'O resultado aparece aqui e no Início.'
+							desc: 'Feito pela organização. O resultado aparece aqui e no Início.'
 						}
 					: null,
+				// Um prazo só por trilha: o do formulário é também o do pagamento.
 				form
 					? {
 							k: 'form',
-							t: 'Prazo do formulário',
+							t: taxa > 0 ? 'Prazo do formulário e do pagamento' : 'Prazo do formulário',
 							em: form,
-							desc: servo ? 'Quem não responde perde a vaga.' : 'Para sorteados, indicados e suplentes. Quem não responde perde a vaga.'
+							desc:
+								taxa > 0
+									? `Para quem tem vaga: envie o formulário e pague ${brl(taxa)} direto com a organização. Quem perde o prazo perde a vaga.`
+									: 'Para quem tem vaga: envie o formulário. Quem perde o prazo perde a vaga.'
 						}
 					: null,
-				pag && taxa > 0 ? { k: 'pag', t: 'Prazo do pagamento', em: pag, desc: `${brl(taxa)}. Quem não paga perde a vaga.` } : null,
 				inicio ? { k: 'ativ', t: 'Acampamento', de: inicio, ate: fimAtividade, desc: `${a.local || ''}.` } : null
 			);
 		}
@@ -416,6 +418,8 @@
 		const formAcao = (label: string, ouro = true): Acao[] => (m ? [{ label, ouro, href: linkForm(m) }] : []);
 		const inscCampista = inscricoesDe(ehEvento ? 'participante' : 'campista');
 		const inscServo = ehEvento ? undefined : inscricoesDe('servo');
+		// Acampamento: um prazo só por trilha, para o formulário e o pagamento.
+		const rotuloPrazo = !ehEvento && taxaDe(t) > 0 ? 'Prazo do formulário e do pagamento' : 'Prazo do formulário';
 
 		switch (sit) {
 			case 'abertas': {
@@ -469,7 +473,7 @@
 						inscCampista?.ate ? `Para campistas, terminaram em ${fDH(inscCampista.ate)}.` : '',
 						inscServo?.ate ? `Para servos, em ${fDH(inscServo.ate)}.` : '',
 						fase === 'aguardandoSorteio' && datasDaFase?.sorteio
-							? `O sorteio de campistas é em ${fDH(datasDaFase.sorteio)}.`
+							? `O sorteio de campistas está previsto para ${fDH(datasDaFase.sorteio)}.`
 							: ''
 					]
 						.filter(Boolean)
@@ -481,7 +485,7 @@
 					selo: 'Inscrito(a)',
 					titulo: 'Inscrição feita. Agora é aguardar o sorteio.',
 					texto: `Você concorre a uma das vagas de ${t === 'servo' ? 'servo' : 'campista'}. O resultado aparece aqui e no Início.`,
-					passo: passo(t === 'servo' ? 'Sorteio de servos' : 'Sorteio', sorteio)
+					passo: passo(t === 'servo' ? 'Sorteio de servos (previsto)' : 'Sorteio (previsto)', sorteio)
 				});
 				break;
 			case 'naoSorteado':
@@ -489,7 +493,7 @@
 					tom: 'cinza',
 					selo: 'Não sorteado(a)',
 					titulo: 'Desta vez você não foi sorteado(a).',
-					texto: sorteio ? `O sorteio foi em ${fDH(sorteio)}.` : '',
+					texto: 'O sorteio já foi feito pela organização.',
 					acoes: [{ label: 'Ver outros acampamentos e eventos', ouro: false, href: '/dashboard' }]
 				});
 				break;
@@ -505,7 +509,7 @@
 					texto: m?.temFormulario
 						? 'Responda as perguntas da organização para garantir a vaga.'
 						: 'A organização ainda está preparando o formulário. Ele aparece aqui assim que estiver pronto.',
-					passo: passo('Prazo do formulário', prazoForm, 'Quem não responde até o prazo perde a vaga.', true),
+					passo: passo(rotuloPrazo, prazoForm, 'Quem não responde até o prazo perde a vaga.', true),
 					acoes: m?.temFormulario ? formAcao('Responder formulário') : []
 				});
 				break;
@@ -530,7 +534,7 @@
 					titulo: 'Você está na lista de suplentes.',
 					texto:
 						'Se alguém desistir ou perder o prazo, você pode ser chamado(a) para a vaga. Para estar pronto(a), responda o formulário no mesmo prazo de quem foi sorteado.',
-					passo: passo('Prazo do formulário', prazoForm, '', true),
+					passo: passo(rotuloPrazo, prazoForm, '', true),
 					acoes: m?.temFormulario && !m.formularioEnviado ? formAcao('Responder formulário') : m?.temFormulario ? formAcao('Ver ou editar formulário', false) : []
 				});
 				break;
@@ -688,7 +692,7 @@
 					: x.de && x.ate && dia0(x.de) !== dia0(x.ate)
 						? `${diaMes(x.de)} – ${diaMes(x.ate)}`
 						: diaMes((x.de ?? x.ate) as Date);
-			const sub = x.em ? `${x.em.getFullYear()}${temHora(x.em) && !ehEvento ? ` · ${fHora(x.em)}` : ''}` : `${((x.ate ?? x.de) as Date).getFullYear()}`;
+			const sub = `${((x.em ?? x.ate ?? x.de) as Date).getFullYear()}`;
 			let desc = x.desc;
 			if (!x.em) {
 				if (x.k === 'ativ' && x.de && x.ate) desc = `${periodo(x.de, x.ate)}. ${x.desc}`.trim();
@@ -757,6 +761,32 @@
 		return lista;
 	});
 
+	/**
+	 * "Pagamento até …". Inscrito: o prazo da própria inscrição. Acampamento sem
+	 * inscrição: o de cada trilha paga — "20/11/2026 (campistas) e 15/11/2026 (servos)".
+	 */
+	let prazoDosValores = $derived.by(() => {
+		if (minhaInscricao || ehEvento) return !gratis && meuPrazoPag ? fDH(meuPrazoPag) : '';
+		const partes = (['campista', 'servo'] as Trilha[])
+			.filter((t) => taxaDe(t) > 0 && prazoPagDe(t))
+			.map((t) => `${fDH(prazoPagDe(t) as Date)} (${t === 'servo' ? 'servos' : 'campistas'})`);
+		return partes.join(' e ');
+	});
+
+	/** Vagas do sorteio de campistas (as indicações ficam fora e não têm limite). */
+	let textoDasVagas = $derived.by(() => {
+		if (!activity) return '';
+		if (ehEvento) return activity.vagasTotais ? String(activity.vagasTotais) : '';
+		const h = Number(activity.vagasSorteioHomem ?? 0);
+		const m = Number(activity.vagasSorteioMulher ?? 0);
+		const c = Number(activity.vagasSorteioCasal ?? 0);
+		const total = h + m + 2 * c;
+		if (!total) return '';
+		const n = (x: number, um: string, varios: string) => `${x} ${x === 1 ? um : varios}`;
+		const grupos = c ? [n(c, 'casal', 'casais')] : [h ? n(h, 'homem', 'homens') : '', m ? n(m, 'mulher', 'mulheres') : ''].filter(Boolean);
+		return `${total} no sorteio de campistas (${grupos.join(' e ')})`;
+	});
+
 	let notaValores = $derived.by(() => {
 		if (gratis) return 'Não há pagamento.';
 		if (pago) return '';
@@ -817,9 +847,9 @@
 		const sorteio = marcosDe(janelaTrilha).find((x) => x.k === 'sorteio')?.em;
 		if (janelaTrilha === 'servo')
 			return sorteio
-				? `Se houver mais inscritos do que vagas, haverá sorteio de servos em ${fDH(sorteio)}.`
+				? `O sorteio de servos está previsto para ${fDH(sorteio)}.`
 				: 'Se houver mais inscritos do que vagas, haverá sorteio de servos.';
-		return sorteio ? `Você vai concorrer ao sorteio de ${fDH(sorteio)}.` : 'Você vai concorrer ao sorteio das vagas.';
+		return sorteio ? `Você vai concorrer ao sorteio previsto para ${fDH(sorteio)}.` : 'Você vai concorrer ao sorteio das vagas.';
 	});
 
 	function mascaraCpf(s: string) {
@@ -967,8 +997,8 @@
 							{#if ehEvento && textoDaFaixa(activity.idadeMinima, activity.idadeMaxima)}
 								<div><dt>Idade</dt><dd>{textoDaFaixa(activity.idadeMinima, activity.idadeMaxima)}</dd></div>
 							{/if}
-							{#if activity.vagasTotais}
-								<div><dt>Vagas</dt><dd>{activity.vagasTotais}</dd></div>
+							{#if textoDasVagas}
+								<div><dt>Vagas</dt><dd>{textoDasVagas}</dd></div>
 							{/if}
 						</dl>
 					</div>
@@ -1071,10 +1101,10 @@
 						</div>
 					</section>
 
-					<!-- ===== Sobre o evento (texto livre da organização) ===== -->
-					{#if ehEvento && activity.sobre}
+					<!-- ===== Sobre o evento / acampamento (texto livre da organização) ===== -->
+					{#if activity.sobre}
 						<section class="card sobre" aria-labelledby="t-sobre">
-							<h2 id="t-sobre" class="h2">Sobre o evento</h2>
+							<h2 id="t-sobre" class="h2">{ehEvento ? 'Sobre o evento' : 'Sobre o acampamento'}</h2>
 							<p class="sobre-texto">{activity.sobre}</p>
 						</section>
 					{/if}
@@ -1159,8 +1189,8 @@
 								</div>
 							{/each}
 						</dl>
-						{#if !gratis && meuPrazoPag}
-							<p class="ajuda">Pagamento até <strong>{fDH(meuPrazoPag)}</strong>.</p>
+						{#if prazoDosValores}
+							<p class="ajuda">Pagamento até <strong>{prazoDosValores}</strong>.</p>
 						{/if}
 						{#if pago && !gratis}
 							<span class="pill t-ok pill-sozinha"><i></i>{pagoEm ? `Pago em ${pagoEm}` : 'Pago'}</span>

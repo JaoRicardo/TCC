@@ -133,7 +133,8 @@ class PrazoPagamentoTest extends RegrasTestCase
         $this->assertResponseOk();
 
         $prazo = (new MercadoPagoService())->prazoPagamento($this->recarregar($suplente), $fac);
-        $this->assertSame($inicio, $prazo->format('Y-m-d H:i:s'));
+        // As datas não têm hora: o limite é o fim (23h59) do primeiro dia.
+        $this->assertSame(substr($inicio, 0, 10) . ' 23:59:00', $prazo->format('Y-m-d H:i:s'));
     }
 
     public function testDepoisDoInicioNaoDaMaisParaChamarSuplente(): void

@@ -944,30 +944,36 @@
 
 	.card-etiquetas {
 		position: absolute;
-		left: 12px;
-		right: 12px;
+		left: 10px;
+		right: 10px;
 		bottom: 12px;
+		/* Sempre na mesma linha: tipo à esquerda, fase à direita. Os selos são um
+		   pouco menores que o padrão para "Acampamento" + "Inscrições encerradas"
+		   caberem lado a lado até no cartão mais estreito (300px). */
 		display: flex;
-		flex-wrap: wrap;
 		justify-content: space-between;
-		align-items: flex-end;
-		gap: 6px 8px;
+		align-items: center;
+		gap: 6px;
 	}
 
-	/* Se a linha quebrar, o selo de situação vai para baixo, à direita. */
 	.card-situacao {
-		margin-left: auto;
 		display: flex;
+	}
+
+	.card-situacao :global(.selo) {
+		font-size: 11px;
+		letter-spacing: 0.02em;
+		padding: 5px 8px;
 	}
 
 	.etiqueta {
-		font-size: 12px;
+		font-size: 11px;
 		font-weight: 700;
 		text-transform: uppercase;
 		border-radius: 999px;
-		padding: 5px 10px;
+		padding: 5px 8px;
 		white-space: nowrap;
-		letter-spacing: 0.08em;
+		letter-spacing: 0.02em;
 		color: var(--pergaminho);
 		box-shadow: 0 2px 8px rgba(15, 29, 61, 0.35);
 	}

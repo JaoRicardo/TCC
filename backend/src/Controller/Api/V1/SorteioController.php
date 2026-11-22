@@ -29,11 +29,8 @@ class SorteioController extends ApiController
         $identity = $this->requirePermissao('inscricoes');
         if ($identity instanceof Response) return $identity;
 
-        // Oportunista: se a data configurada na criação do acampamento já chegou
-        // e o sorteio ainda não foi feito, roda automaticamente antes de responder.
-        // Depois aplica os prazos vencidos (formulário e pagamento), para a tela já
-        // abrir mostrando as vagas abertas.
-        $this->sorteioService->executarSorteiosPendentes();
+        // Aplica os prazos vencidos (formulário e pagamento), para a tela já abrir
+        // mostrando as vagas abertas. O sorteio só é feito à mão (POST abaixo).
         $this->prazoFormularioService->executarPrazosVencidos();
 
         return $this->apiResponse($this->sorteioService->resultado($activityId));

@@ -117,6 +117,12 @@
 		return age + ' anos';
 	}
 
+	/** Data prevista do sorteio: o acampamento não tem hora, e o sorteio é feito à mão aqui. */
+	function soData(dateString?: string | null) {
+		if (!dateString) return 'A definir';
+		return new Date(dateString).toLocaleDateString('pt-BR');
+	}
+
 	function formatDate(dateString?: string | null) {
 		if (!dateString) return 'A definir';
 		return new Date(dateString).toLocaleString('pt-BR', {
@@ -456,7 +462,7 @@
 				<span><strong>{sorteio.campistas.inscritos_por_categoria.Mulher}</strong> mulheres inscritas</span>
 				<span><strong>{sorteio.campistas.inscritos_por_categoria.Casado}</strong> casais inscritos</span>
 				{#if activity.inicioSorteio}
-					<span class="raffle-date">📅 Sorteio oficial: {formatDate(activity.inicioSorteio)}</span>
+					<span class="raffle-date">📅 Sorteio previsto: {soData(activity.inicioSorteio)}</span>
 				{/if}
 			</div>
 
@@ -596,7 +602,7 @@
 			<div class="raffle-counts">
 				<span><strong>{sorteio.servos.total_inscritos}</strong> servos inscritos ao todo</span>
 				{#if activity.inicioSorteioServo}
-					<span class="raffle-date">📅 Sorteio oficial: {formatDate(activity.inicioSorteioServo)}</span>
+					<span class="raffle-date">📅 Sorteio previsto: {soData(activity.inicioSorteioServo)}</span>
 				{/if}
 			</div>
 

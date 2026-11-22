@@ -75,16 +75,18 @@ class PaginaAtividadeTest extends RegrasTestCase
 
     public function testInscritoDepoisDoSorteioFicaComoNaoSorteado(): void
     {
-        // O sorteio automático já foi marcado como feito: a pessoa ficou de fora.
-        $acampamento = $this->criarAcampamento('FAC', ['raffle_camper_date' => $this->ontem(), 'camper_raffle_auto_ran_at' => $this->ontem()]);
+        // O sorteio é só manual: a data prevista já passou, mas sem sorteio feito
+        // ninguém é "não sorteado".
+        $acampamento = $this->criarAcampamento('FAC', ['raffle_camper_date' => $this->ontem()]);
         $pessoa = $this->criarUsuario('Lia', sexo: 'F');
         $inscricao = $this->inscrever($pessoa, $acampamento);
+        $this->assertFalse($this->minhaInscricao($pessoa, $inscricao)['naoSorteado']);
+
+        // Feito o sorteio (outra pessoa sorteada), quem ficou só "Inscrito" ficou de fora.
+        $this->inscrever($this->criarUsuario('Bia', sexo: 'F'), $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
         $minha = $this->minhaInscricao($pessoa, $inscricao);
         $this->assertSame('Inscrito', $minha['status']);
         $this->assertTrue($minha['naoSorteado']);
-
-        $antes = $this->inscrever($this->criarUsuario('Ana', sexo: 'F'), $this->criarAcampamento('Juvenil'));
-        $this->assertFalse($this->minhaInscricao($this->fetchTable('Users')->get($antes->user_id), $antes)['naoSorteado']);
     }
 
     /**

@@ -40,8 +40,7 @@ use Cake\ORM\Locator\TableLocator;
  *   mesmo grupo (Homem/Mulher/Casado) ou, para servo, do mesmo setor.
  *
  * Roda pelo comando `bin/cake executar_prazos_formulario` e também de forma
- * oportunista nos endpoints mais acessados, no mesmo esquema já usado pelo
- * sorteio automático (SorteioService::executarSorteiosPendentes).
+ * oportunista nos endpoints mais acessados (protegido por TravaExecucao).
  */
 class PrazoFormularioService
 {
@@ -63,7 +62,6 @@ class PrazoFormularioService
     private $Campings;
     private $PreRegistrations;
     private $SelectionMethods;
-    private $MaritalStatuses;
     private $AcsSectors;
     private $AcsSectorsUsers;
     private $Questions;
@@ -79,7 +77,6 @@ class PrazoFormularioService
         $this->Campings         = $locator->get('Campings');
         $this->PreRegistrations = $locator->get('PreRegistrations');
         $this->SelectionMethods = $locator->get('SelectionMethods');
-        $this->MaritalStatuses  = $locator->get('MaritalStatuses');
         $this->AcsSectors       = $locator->get('ActivitiesCategoriesSectors');
         $this->AcsSectorsUsers  = $locator->get('ActivitiesCategoriesSectorsUsers');
         $this->Questions        = $locator->get('Questions');
@@ -662,18 +659,23 @@ class PrazoFormularioService
         return (bool)$this->PreRegistrations->save($preReg);
     }
 
-    /** Homem / Mulher / Casado — mesma classificação usada no sorteio de campistas. */
+    /**
+     * Homem / Mulher / Casado — mesma classificação do sorteio de campistas:
+     * casal só na categoria Casais; fora dela, quem é casado é homem ou mulher.
+     */
     private function grupoDoCampista(object $preReg): string
     {
-        $casadoId = $this->getCasadoMaritalStatusId();
-        $msId = $preReg->user->marital_status_id ?? 0;
-
-        if ($casadoId && (int)$msId === $casadoId) {
+        $id = (int)$preReg->activity_id;
+        $this->ehCasais[$id] ??= SorteioService::categoriaDeCasais($id);
+        if ($this->ehCasais[$id]) {
             return 'Casado';
         }
 
         return ($preReg->user->sex ?? '') === 'M' ? 'Homem' : 'Mulher';
     }
+
+    /** @var array<int, bool> atividade => é da categoria Casais */
+    private array $ehCasais = [];
 
     /** Quantas perguntas o formulário desta atividade tem para o tipo de inscrição. */
     private function contarPerguntas(object $activity, string $subscriptionType): int
@@ -719,15 +721,6 @@ class PrazoFormularioService
                 'OR'                           => $orConditions,
             ])
             ->first();
-    }
-
-    private function getCasadoMaritalStatusId(): int
-    {
-        $status = $this->MaritalStatuses->find()
-            ->where(['title' => 'Casado', 'deleted IS' => null])
-            ->first();
-
-        return $status ? (int)$status->id : 0;
     }
 
     private function getRaffleMethodId(): int

@@ -77,10 +77,12 @@ class CancelamentoInscricaoTest extends RegrasTestCase
 
     public function testCasalSaiJuntoESuplenteSaiDaFila(): void
     {
+        // Casal só existe no Casais: lá o casal sai junto.
+        $casais = $this->criarAcampamento('Casais', ['camper_form_deadline' => $this->amanha()]);
         $ele = $this->criarUsuario('Marcos', idade: 30, estadoCivil: 'Casado');
         $ela = $this->criarUsuario('Paula', idade: 30, sexo: 'F', estadoCivil: 'Casado');
-        $dele = $this->inscrever($ele, $this->acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio'], 'spouse_id' => $ela->id]);
-        $dela = $this->inscrever($ela, $this->acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
+        $dele = $this->inscrever($ele, $casais, 'Campista', ['selection_method_id' => $this->metodos['Sorteio'], 'spouse_id' => $ela->id]);
+        $dela = $this->inscrever($ela, $casais, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
         $this->cancelar($dele);
         $this->assertSame(['Marcos', 'Paula'], $this->respostaJson()['data']['canceladas']);
         $this->assertNotNull($this->recarregar($dela)->disqualified_at);
@@ -90,6 +92,15 @@ class CancelamentoInscricaoTest extends RegrasTestCase
         $this->assertResponseOk();
         $this->assertSame(0, (new PrazoFormularioService())->vagasAbertasCampistas((int)$this->acampamento->id)['Homem'], 'Suplente não tinha vaga.');
         $this->assertSame('Cancelada pela organização', $this->situacaoNoSite($this->fetchTable('Users')->get($suplente->user_id), $suplente)['status']);
+
+        // Fora do Casais, quem é casado concorre como homem ou mulher: sai sozinho.
+        $joao = $this->criarUsuario('João', idade: 30, estadoCivil: 'Casado');
+        $rita = $this->criarUsuario('Rita', idade: 30, sexo: 'F', estadoCivil: 'Casado');
+        $deJoao = $this->inscrever($joao, $this->acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio'], 'spouse_id' => $rita->id]);
+        $deRita = $this->inscrever($rita, $this->acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
+        $this->cancelar($deJoao);
+        $this->assertSame(['João'], $this->respostaJson()['data']['canceladas']);
+        $this->assertNull($this->recarregar($deRita)->disqualified_at);
     }
 
     public function testResorteioNaoDevolveQuemFoiCancelado(): void

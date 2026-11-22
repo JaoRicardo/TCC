@@ -12,6 +12,7 @@ use App\Service\MercadoPagoService;
 use App\Service\PagamentoService;
 use App\Service\PrazoFormularioService;
 use App\Service\RetiradaDoSorteioService;
+use App\Service\SorteioService;
 use Cake\Datasource\EntityInterface;
 use Cake\Http\Response;
 
@@ -160,7 +161,7 @@ class InscricoesController extends ApiController
             // formulário, a vaga só fica garantida quando a pessoa envia.
             $inicioDasInscricoes = $activity->participant_registration_start_date;
             if ($inicioDasInscricoes && $inicioDasInscricoes->getTimestamp() > time()) {
-                return $this->apiError('As inscrições deste evento abrem em ' . $this->dataEHora($inicioDasInscricoes) . '.', 422);
+                return $this->apiError('As inscrições deste evento abrem em ' . $this->dataDoDia($inicioDasInscricoes) . '.', 422);
             }
             $fimDasInscricoes = $activity->participant_registration_end_date ?? $activity->start_date;
             if ($fimDasInscricoes && $fimDasInscricoes->getTimestamp() < time()) {
@@ -1402,18 +1403,19 @@ class InscricoesController extends ApiController
             return "As inscrições de {$quem} ainda não foram abertas.";
         }
         if ($de !== null && $de->getTimestamp() > time()) {
-            return "As inscrições de {$quem} abrem em " . $this->dataEHora($de) . '.';
+            return "As inscrições de {$quem} abrem em " . $this->dataDoDia($de) . '.';
         }
         if ($ate->getTimestamp() < time()) {
-            return "As inscrições de {$quem} terminaram em " . $this->dataEHora($ate) . '.';
+            return "As inscrições de {$quem} terminaram em " . $this->dataDoDia($ate) . '.';
         }
 
         return null;
     }
 
-    private function dataEHora(\DateTimeInterface $data): string
+    /** As datas das inscrições não têm hora (abrem às 00h00, fecham às 23h59): só o dia. */
+    private function dataDoDia(\DateTimeInterface $data): string
     {
-        return $data->format('d/m/Y') . ' às ' . $data->format('H:i');
+        return $data->format('d/m/Y');
     }
 
     /**
@@ -1482,6 +1484,17 @@ class InscricoesController extends ApiController
                 ->first()?->title;
             if (in_array($maritalTitle, ['Casado', 'União estável'], true)) {
                 return $nao('casado_juvenil', 'Campistas casados(as) ou em união estável devem se inscrever na categoria Sênior, não no Juvenil.');
+            }
+        }
+
+        // O Casais só tem vagas de casais (o casal é sorteado junto): quem não é
+        // casado(a) nem vive em união estável nunca seria sorteado.
+        if ($categoryName === 'Casais') {
+            $maritalTitle = $this->fetchTable('MaritalStatuses')->find()
+                ->where(['id' => $identity->marital_status_id])
+                ->first()?->title;
+            if (!in_array($maritalTitle, ['Casado', 'União estável'], true)) {
+                return $nao('casais_so_casados', 'O acampamento de Casais é só para pessoas casadas ou em união estável. Se o seu estado civil mudou, atualize em Meu cadastro.');
             }
         }
 
@@ -1588,17 +1601,16 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * Acampamento: a data do sorteio do tipo da inscrição já passou? Quem
-     * continua só "Inscrito" depois dela não foi sorteado nem ficou de suplente.
+     * Acampamento: a organização já fez o sorteio do tipo da inscrição? Quem
+     * continua só "Inscrito" depois dele não foi sorteado nem ficou de suplente.
+     * O sorteio é só manual: a data cadastrada é a prevista e não conta.
      */
     private function sorteioJaPassou(object $preReg): bool
     {
         $activity = $preReg->activity ?? null;
         if (!$activity || $activity->camping_id === null) return false;
-        $camping = $this->fetchTable('Campings')->find()->where(['id' => $activity->camping_id])->first();
-        $data = $preReg->subscription_type === 'Servo' ? $camping?->raffle_servant_date : $camping?->raffle_camper_date;
 
-        return $data !== null && $data->getTimestamp() < time();
+        return (new SorteioService())->sorteioFeitoEm((int)$activity->id, (string)$preReg->subscription_type) !== null;
     }
 
     /**

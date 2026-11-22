@@ -423,13 +423,11 @@ class MercadoPagoService
             }
         }
 
-        // Evento: as datas não têm hora e o prazo vale até 23h59 do dia, então o
-        // limite é o fim do primeiro dia do evento.
+        // Evento e acampamento: as datas não têm hora e o prazo vale até 23h59
+        // do dia, então o limite é o fim do primeiro dia da atividade.
         $inicio = $activity->start_date ?? null;
         if ($inicio !== null) {
-            $limite = ($activity->camping_id ?? null) === null
-                ? new DateTime($inicio->format('Y-m-d') . ' 23:59:00')
-                : new DateTime($inicio->format('Y-m-d H:i:s'));
+            $limite = new DateTime($inicio->format('Y-m-d') . ' 23:59:00');
             if ($prazo->getTimestamp() > $limite->getTimestamp()) {
                 return $limite;
             }

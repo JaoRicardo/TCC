@@ -6,10 +6,12 @@ namespace App\Service;
 use Cake\ORM\Locator\TableLocator;
 
 /**
- * Toda a lógica de sorteio (campistas e servos) vive aqui, fora do controller,
- * para poder ser chamada tanto pela API (admin aciona manualmente) quanto pelo
- * executor automático (roda sozinho quando a data configurada na criação do
- * acampamento chega) sem duplicar código.
+ * Toda a lógica de sorteio (campistas e servos) vive aqui, fora do controller.
+ *
+ * O sorteio é só manual (decisão do usuário, handoff
+ * design_handoff_painel_acampamento): a organização sorteia em Inscritos e
+ * Sorteios. A data do sorteio no acampamento é só a data prevista; quando o
+ * sorteio é feito fica em campings.camper_raffle_done_at / servant_raffle_done_at.
  */
 class SorteioService
 {
@@ -20,7 +22,6 @@ class SorteioService
     private $AcsSectors;
     private $AcsSectorsUsers;
     private $CategoriesSectors;
-    private $MaritalStatuses;
     private $ActivitiesGeneralServants;
     private $Addresses;
 
@@ -38,7 +39,6 @@ class SorteioService
         $this->AcsSectors               = $locator->get('ActivitiesCategoriesSectors');
         $this->AcsSectorsUsers          = $locator->get('ActivitiesCategoriesSectorsUsers');
         $this->CategoriesSectors        = $locator->get('CategoriesSectors');
-        $this->MaritalStatuses          = $locator->get('MaritalStatuses');
         $this->ActivitiesGeneralServants = $locator->get('ActivitiesGeneralServants');
         $this->Addresses                 = $locator->get('Addresses');
     }
@@ -75,84 +75,43 @@ class SorteioService
         return $ids;
     }
 
-    // ─── Execução automática ────────────────────────────────────────────────
-
-    /**
-     * Varre todos os acampamentos e, para cada um, dispara o sorteio de campistas
-     * e/ou de servos se a data configurada na criação já chegou E ele ainda não
-     * foi realizado (manual ou automaticamente) — nunca resorteia sozinho por
-     * cima de um sorteio que o admin já fez. Usa as vagas cadastradas no
-     * acampamento (raffle_man/woman/couple_vacancies e actual_vacancies
-     * por setor), sem precisar de nenhuma entrada manual.
-     *
-     * Chamado tanto pelo comando de console (`bin/cake executar_sorteios_pendentes`,
-     * pensado para rodar num agendador do sistema operacional) quanto de forma
-     * oportunista a partir de endpoints públicos bastante acessados — assim o
-     * sorteio acontece na prática assim que alguém carrega o site após a data
-     * chegar, mesmo sem um agendador configurado.
-     *
-     * @return string[] Log de ações realizadas, para exibição/registro.
-     */
-    public function executarSorteiosPendentes(): array
+    /** O acampamento é da categoria Casais (a única com vagas de casais)? */
+    public static function categoriaDeCasais(int $activityId): bool
     {
-        return TravaExecucao::executar('sorteios_pendentes', fn() => $this->sorteiosPendentes(), []);
+        $activity = (new TableLocator())->get('Activities')->find()
+            ->contain(['Categories'])
+            ->where(['Activities.id' => $activityId])
+            ->first();
+
+        return ($activity?->category?->name ?? null) === 'Casais';
     }
 
-    private function sorteiosPendentes(): array
-    {
-        $log = [];
-        $now = time();
-
-        $activities = $this->Activities->find()
-            ->where(['camping_id IS NOT' => null, 'deleted IS' => null])
-            ->all();
-
-        foreach ($activities as $activity) {
-            $camping = $this->Campings->find()
-                ->where(['id' => $activity->camping_id])
-                ->first();
-            if (!$camping) continue;
-
-            // Cada data de sorteio é tratada uma vez só: depois de chegar, roda (se
-            // ninguém tiver sorteado à mão antes) e fica marcada. Assim um
-            // acampamento sem ninguém para sortear não "sorteia" a cada visita, e
-            // resetar o sorteio depois da data não faz ele disparar sozinho de novo.
-            if ($this->sorteioAutomaticoPendente($camping->raffle_camper_date, $camping->camper_raffle_auto_ran_at, $now)) {
-                if (!$this->campistasJaRealizado((int)$activity->id)) {
-                    $this->realizarCampistas(
-                        (int)$activity->id,
-                        (int)$camping->raffle_man_vacancies,
-                        (int)$camping->raffle_woman_vacancies,
-                        (int)$camping->raffle_couple_vacancies,
-                    );
-                    $log[] = "Sorteio de campistas realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
-                }
-                $this->Campings->updateAll(['camper_raffle_auto_ran_at' => date('Y-m-d H:i:s', $now)], ['id' => $camping->id]);
-            }
-
-            if ($this->sorteioAutomaticoPendente($camping->raffle_servant_date, $camping->servant_raffle_auto_ran_at, $now)) {
-                if (!$this->servosJaRealizado((int)$activity->id)) {
-                    $this->realizarServos((int)$activity->id);
-                    $log[] = "Sorteio de servos realizado automaticamente para a atividade #{$activity->id} ({$activity->name}).";
-                }
-                $this->Campings->updateAll(['servant_raffle_auto_ran_at' => date('Y-m-d H:i:s', $now)], ['id' => $camping->id]);
-            }
-        }
-
-        return $log;
-    }
+    // ─── Situação do sorteio ────────────────────────────────────────────────
 
     /**
-     * A data do sorteio já chegou e ainda não foi tratada. Se a data for mudada
-     * para depois da última vez que rodou, conta como pendente de novo.
+     * Quando a organização fez o sorteio deste tipo (Campista ou Servo), ou null
+     * se ainda não fez. Sorteio feito antes de a data ser guardada (migração
+     * AddSorteioFeitoEm) conta como feito, mas sem data: devolve `true`.
      */
-    private function sorteioAutomaticoPendente(mixed $dataSorteio, mixed $rodouEm, int $now): bool
+    public function sorteioFeitoEm(int $activityId, string $tipo): \Cake\I18n\DateTime|bool|null
     {
-        if ($dataSorteio === null || $dataSorteio->getTimestamp() > $now) {
-            return false;
-        }
+        $feito = $tipo === 'Servo' ? $this->servosJaRealizado($activityId) : $this->campistasJaRealizado($activityId);
+        if (!$feito) return null;
 
-        return $rodouEm === null || $rodouEm->getTimestamp() < $dataSorteio->getTimestamp();
+        $activity = $this->Activities->find()->select(['camping_id'])->where(['id' => $activityId])->first();
+        $camping  = $activity?->camping_id ? $this->Campings->find()->where(['id' => $activity->camping_id])->first() : null;
+        $em       = $tipo === 'Servo' ? $camping?->servant_raffle_done_at : $camping?->camper_raffle_done_at;
+
+        return $em ?? true;
+    }
+
+    /** Guarda (ou limpa, com null) quando o sorteio deste tipo foi feito. */
+    private function marcarFeitoEm(int $activityId, string $tipo, ?string $quando): void
+    {
+        $activity = $this->Activities->find()->select(['camping_id'])->where(['id' => $activityId])->first();
+        if (!$activity?->camping_id) return;
+        $coluna = $tipo === 'Servo' ? 'servant_raffle_done_at' : 'camper_raffle_done_at';
+        $this->Campings->updateAll([$coluna => $quando], ['id' => $activity->camping_id]);
     }
 
     public function campistasJaRealizado(int $activityId): bool
@@ -222,11 +181,12 @@ class SorteioService
             ->toArray();
         $campistas = array_values(array_filter($campistas, fn($pr) => isset($cidadesElegiveis[$pr->user_id])));
 
-        $casadoId = $this->getCasadoMaritalStatusId();
+        // Casais só existem na categoria Casais (que só tem casais): lá todo mundo
+        // concorre como casal. Nas outras, quem é casado concorre como homem ou mulher.
+        $ehCasais = self::categoriaDeCasais($activityId);
         $grupos = ['Homem' => [], 'Mulher' => [], 'Casado' => []];
         foreach ($campistas as $pr) {
-            $msId = $pr->user->marital_status_id ?? 0;
-            if ($msId == $casadoId) {
+            if ($ehCasais) {
                 $grupos['Casado'][] = $pr;
             } elseif ($pr->user->sex === 'M') {
                 $grupos['Homem'][] = $pr;
@@ -276,6 +236,8 @@ class SorteioService
             }
         }
 
+        $this->marcarFeitoEm($activityId, 'Campista', date('Y-m-d H:i:s'));
+
         return $this->buildCampistasResult($activityId, $homem, $mulher, $casado);
     }
 
@@ -285,6 +247,7 @@ class SorteioService
 
         // Só zera o resultado do sorteio — indicações permanecem intactas.
         $this->zerarResultado($activityId, 'Campista', $raffleMethodId);
+        $this->marcarFeitoEm($activityId, 'Campista', null);
     }
 
     // ─── Sorteio de Servos ──────────────────────────────────────────────────
@@ -417,6 +380,8 @@ class SorteioService
             }
         }
 
+        $this->marcarFeitoEm($activityId, 'Servo', date('Y-m-d H:i:s'));
+
         return $this->buildServosResult($activityId);
     }
 
@@ -464,6 +429,7 @@ class SorteioService
         }
 
         $this->zerarResultado($activityId, 'Servo', $raffleMethodId);
+        $this->marcarFeitoEm($activityId, 'Servo', null);
     }
 
     /**
@@ -579,17 +545,6 @@ class SorteioService
         return $pairs;
     }
 
-    // Busca o id de "Casado" pelo título, em vez de assumir um id fixo — o seed de
-    // marital_statuses já mudou de ordem uma vez (id 2 hoje é "Namorando", não "Casado").
-    private function getCasadoMaritalStatusId(): int
-    {
-        $status = $this->MaritalStatuses->find()
-            ->where(['title' => 'Casado', 'deleted IS' => null])
-            ->first();
-
-        return $status ? (int)$status->id : 0;
-    }
-
     private function buildCampistasResult(int $activityId, ?int $homem = null, ?int $mulher = null, ?int $casado = null): array
     {
         $allCampistas = $this->PreRegistrations->find()
@@ -603,14 +558,13 @@ class SorteioService
             ->all()
             ->toArray();
 
-        $casadoId = $this->getCasadoMaritalStatusId();
+        // Mesmo agrupamento do sorteio: casal só na categoria Casais.
+        $ehCasais = self::categoriaDeCasais($activityId);
+        $grupoDe  = fn($pr) => $ehCasais ? 'Casado' : ($pr->user->sex === 'M' ? 'Homem' : 'Mulher');
 
         $counts = ['Homem' => 0, 'Mulher' => 0, 'Casado' => 0];
         foreach ($allCampistas as $pr) {
-            $msId = $pr->user->marital_status_id ?? 0;
-            if ($msId == $casadoId) $counts['Casado']++;
-            elseif ($pr->user->sex === 'M') $counts['Homem']++;
-            else $counts['Mulher']++;
+            $counts[$grupoDe($pr)]++;
         }
 
         $sorteados = [];
@@ -626,8 +580,7 @@ class SorteioService
         foreach ($allCampistas as $pr) {
             if ($pr->selection_method_id === null && $pr->substitute_position === null) continue;
 
-            $msId = $pr->user->marital_status_id ?? 0;
-            $cat  = $msId == $casadoId ? 'Casado' : ($pr->user->sex === 'M' ? 'Homem' : 'Mulher');
+            $cat  = $grupoDe($pr);
             $item = $this->serializeCampistaItem($pr, $cat);
             $drawnIds[$pr->user_id] = true;
 
@@ -673,9 +626,7 @@ class SorteioService
         if ($raffleRealizado) {
             foreach ($allCampistas as $pr) {
                 if (!isset($drawnIds[$pr->user_id])) {
-                    $msId = $pr->user->marital_status_id ?? 0;
-                    $cat  = $msId == $casadoId ? 'Casado' : ($pr->user->sex === 'M' ? 'Homem' : 'Mulher');
-                    $item = $this->serializeCampistaItem($pr, $cat);
+                    $item = $this->serializeCampistaItem($pr, $grupoDe($pr));
                     $item['posicao'] = count($naoSorteados) + 1;
                     $naoSorteados[]  = $item;
                 }

@@ -32,9 +32,12 @@ export interface DatasDaAtividade {
 	inscricao: Periodo;
 	/** Inscrição de servo (só acampamento). */
 	inscricaoServo?: Periodo;
-	/** Data e hora do sorteio de campistas (só acampamento). */
+	/** Data prevista do sorteio de campistas (só acampamento). */
 	sorteio?: Date;
-	/** O sorteio de campistas já foi feito (inclusive à mão, antes da data). */
+	/**
+	 * O sorteio de campistas já foi feito. O sorteio é só manual: a data
+	 * prevista não muda a fase, só o sorteio feito tira o "Aguardando sorteio".
+	 */
 	sorteioRealizado: boolean;
 }
 
@@ -80,8 +83,7 @@ export function faseDaAtividade(d: DatasDaAtividade, agora: Date): Fase {
 	if (!c.ate || (c.de && agora < c.de)) return 'emBreve';
 	if (agora <= c.ate) return 'abertas';
 	if (d.acampamento) {
-		const sorteioFeito = d.sorteioRealizado || (!!d.sorteio && agora >= d.sorteio);
-		if (!sorteioFeito) return 'aguardandoSorteio';
+		if (!d.sorteioRealizado) return 'aguardandoSorteio';
 	}
 	return 'inscricoesEncerradas';
 }

@@ -120,6 +120,16 @@ class ElegibilidadeInscricaoTest extends RegrasTestCase
         $this->assertRecusada('devem se inscrever na categoria Sênior');
     }
 
+    public function testCasaisSoAceitaCampistaCasadoOuEmUniaoEstavel(): void
+    {
+        // No Casais só há vagas de casais: solteiro nunca seria sorteado.
+        $pessoa = $this->criarUsuario('Solteira', idade: 30, sexo: 'F');
+
+        $this->inscreverPelaApi($pessoa, $this->criarAcampamento('Casais'), 'Campista');
+
+        $this->assertRecusada('só para pessoas casadas ou em união estável');
+    }
+
     public function testDiscipuladosExigeTerSidoCampistaNoSenior(): void
     {
         $semSenior = $this->criarUsuario('Nunca fez Sênior', idade: 30);

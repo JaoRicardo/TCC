@@ -34,12 +34,9 @@ class ActivitiesController extends ApiController
         $this->request->allowMethod(['get']);
 
         // Oportunista: sem depender de um agendador do sistema operacional, a
-        // tela mais acessada do site (listagem de atividades) já dispara os
-        // sorteios cuja data configurada chegou, se ainda não tiverem sido feitos,
-        // e em seguida aplica os prazos de formulário já vencidos (desclassifica
-        // quem não respondeu e chama os suplentes). A ordem importa: o sorteio
-        // precisa existir antes de cobrar o prazo de quem foi sorteado.
-        $this->sorteioService->executarSorteiosPendentes();
+        // tela mais acessada do site (listagem de atividades) aplica os prazos
+        // de formulário e de pagamento já vencidos. O sorteio não roda sozinho:
+        // é feito à mão pela organização, em Inscritos e Sorteios.
         $this->prazoFormularioService->executarPrazosVencidos();
 
         $activities = $this->Activities->find()
@@ -124,6 +121,16 @@ class ActivitiesController extends ApiController
                 'pagamentos'    => $this->fetchTable('PreRegistrations')->find()
                     ->where(['activity_id' => $activity->id, 'deleted IS' => null, 'is_fee_paid' => true])
                     ->count(),
+                // Acampamento: avisos de cada aba ("já há n inscrições", "o sorteio já foi feito").
+                'inscricoesCampistas' => $camping ? $this->contarInscricoesDoTipo($activity, 'Campista') : 0,
+                'inscricoesServos'    => $camping ? $this->contarInscricoesDoTipo($activity, 'Servo') : 0,
+                'sorteioCampistas'    => $camping ? $this->situacaoDoSorteio((int)$activity->id, 'Campista') : null,
+                'sorteioServos'       => $camping ? $this->situacaoDoSorteio((int)$activity->id, 'Servo') : null,
+                // Tamanho em bytes do edital e do termo atuais (null sem arquivo).
+                'documentos'          => $camping ? [
+                    'notice' => $this->tamanhoDoArquivo($camping->notice),
+                    'term'   => $this->tamanhoDoArquivo($camping->term),
+                ] : null,
             ],
         ]]);
     }
@@ -167,6 +174,13 @@ class ActivitiesController extends ApiController
         if ($type === 'Event') {
             $erros = $this->validarEvento($data['activity'] ?? [], null);
             if ($erros) return $this->apiResponse(['error' => 'Confira os campos do evento.', 'errors' => $erros], 422);
+        }
+        if ($type === 'Camping') {
+            $ad = $data['activity'] ?? [];
+            $cd = $data['camping'] ?? [];
+            $erros = $this->validarAcampamento($ad, $cd, null, null);
+            if ($erros) return $this->apiResponse(['error' => 'Confira os campos do acampamento.', 'errors' => $erros], 422);
+            [$data['activity'], $data['camping']] = $this->normalizarAcampamento($ad, $cd, null, null);
         }
 
         $imageBase64 = $data['activity']['image_base64'] ?? null;
@@ -321,6 +335,12 @@ class ActivitiesController extends ApiController
         if ($activity->camping_id === null) {
             $erros = $this->validarEvento($ad, $activity);
             if ($erros) return $this->apiResponse(['error' => 'Confira os campos do evento.', 'errors' => $erros], 422);
+        } else {
+            $campingAtual = $this->Campings->find()->where(['id' => $activity->camping_id])->first();
+            $cd = $data['camping'] ?? [];
+            $erros = $this->validarAcampamento($ad, $cd, $activity, $campingAtual);
+            if ($erros) return $this->apiResponse(['error' => 'Confira os campos do acampamento.', 'errors' => $erros], 422);
+            [$ad, $data['camping']] = $this->normalizarAcampamento($ad, $cd, $activity, $campingAtual);
         }
 
         $imageBase64 = $ad['image_base64'] ?? null;
@@ -419,8 +439,11 @@ class ActivitiesController extends ApiController
                 $termPath = ($cd['term_base64'] ?? null)
                     ? $this->saveBase64File($cd['term_base64'], 'campings/terms')
                     : $this->saveFile($files['camping']['term'] ?? null, 'campings/terms');
+                // Sem arquivo, o banco guarda "#" (a coluna não aceita vazio).
                 if ($noticePath) $patch['notice'] = $noticePath;
-                if ($termPath)   $patch['term']   = $termPath;
+                elseif (!empty($cd['remove_notice'])) $patch['notice'] = '#';
+                if ($termPath) $patch['term'] = $termPath;
+                elseif (!empty($cd['remove_term'])) $patch['term'] = '#';
                 $this->Campings->patchEntity($camping, $patch);
                 $this->Campings->save($camping);
             }
@@ -1188,6 +1211,7 @@ class ActivitiesController extends ApiController
                 // O selo "Aguardando sorteio" do site: um sorteio feito à mão antes
                 // da data já conta como feito.
                 'sorteioCampistasRealizado' => $this->sorteioService->campistasJaRealizado((int)$activity->id),
+                'sorteioServosRealizado'    => $this->sorteioService->servosJaRealizado((int)$activity->id),
                 // Prazo para o selecionado responder o formulário; vencido, a vaga
                 // vai para o primeiro suplente da fila.
                 'prazoFormularioCampista' => $camping->camper_form_deadline?->format('Y-m-d\TH:i'),
@@ -1308,6 +1332,240 @@ class ActivitiesController extends ApiController
         }
 
         return $erros;
+    }
+
+    /**
+     * Regras da tela Criar / Editar Acampamento (handoff design_handoff_painel_acampamento).
+     * As datas do acampamento não têm hora: a tela manda o primeiro dia e as
+     * aberturas às 00h00, e os fechamentos e prazos às 23h59. Por isso as
+     * comparações são por dia. Campos que faltam no pedido vêm do que já está
+     * gravado (edição).
+     *
+     * @return array<string, array<string, string>> erros por coluna, no formato do Cake
+     */
+    private function validarAcampamento(array $ad, array $cd, ?object $atividade, ?object $camping): array
+    {
+        $valor = function (array $dados, ?object $atual, string $campo): mixed {
+            if (array_key_exists($campo, $dados)) return $dados[$campo];
+            $v = $atual?->get($campo);
+
+            return $v instanceof \DateTimeInterface ? $v->format('Y-m-d H:i:s') : $v;
+        };
+        $daAtividade = fn(string $campo) => $valor($ad, $atividade, $campo);
+        $doAcampamento = fn(string $campo) => $valor($cd, $camping, $campo);
+        $dia = function (mixed $v): ?string {
+            if (!is_string($v) || trim($v) === '') return null;
+            $t = strtotime($v);
+
+            return $t === false ? null : date('Y-m-d', $t);
+        };
+        $br = fn(string $ymd) => date('d/m/Y', strtotime($ymd));
+        $erros = [];
+        $erro = function (string $campo, string $msg) use (&$erros): void {
+            $erros[$campo] ??= ['regra' => $msg];
+        };
+
+        if (trim((string)$daAtividade('name')) === '') $erro('name', 'Informe o nome do acampamento.');
+        if (trim((string)$daAtividade('place')) === '') $erro('place', 'Informe o local.');
+        $categoria = $this->categoriaDeAcampamento($daAtividade('category_id'));
+        if ($categoria === null) $erro('category_id', 'Escolha a categoria.');
+
+        $inicio = $dia($daAtividade('start_date'));
+        if ($inicio === null) {
+            $erro('start_date', 'Informe o primeiro dia do acampamento.');
+        } elseif ($atividade === null && $inicio < date('Y-m-d')) {
+            $erro('start_date', 'O primeiro dia já passou. Escolha hoje ou uma data futura.');
+        }
+        if ((int)$daAtividade('duration_days') < 1) $erro('duration_days', 'O último dia não pode ser antes do primeiro.');
+
+        // Campista: período na atividade; servo: no acampamento. Sorteio e prazo
+        // ficam no acampamento; o valor, na atividade.
+        $trilhas = [
+            'campistas' => ['participant_fee', 'participant_registration_start_date', 'participant_registration_end_date', 'raffle_camper_date', 'camper_form_deadline'],
+            'servos'    => ['servant_fee', 'raffle_servant_subscription_start_date', 'raffle_servant_subscription_end_date', 'raffle_servant_date', 'servant_form_deadline'],
+        ];
+        foreach ($trilhas as $quem => [$colunaValor, $colAbre, $colFecha, $colSorteio, $colPrazo]) {
+            $abre = $dia($quem === 'campistas' ? $daAtividade($colAbre) : $doAcampamento($colAbre));
+            $fecha = $dia($quem === 'campistas' ? $daAtividade($colFecha) : $doAcampamento($colFecha));
+            $sorteio = $dia($doAcampamento($colSorteio));
+            $prazo = $dia($doAcampamento($colPrazo));
+            $taxa = $daAtividade($colunaValor);
+
+            if ($abre === null) $erro($colAbre, "Informe quando as inscrições de {$quem} abrem.");
+            if ($fecha === null) {
+                $erro($colFecha, "Informe quando as inscrições de {$quem} fecham.");
+            } elseif ($abre !== null && $fecha < $abre) {
+                $erro($colFecha, 'O fechamento não pode ser antes da abertura.');
+            }
+
+            if ($sorteio === null) {
+                $erro($colSorteio, 'Informe a data prevista do sorteio.');
+            } elseif ($fecha !== null && $sorteio <= $fecha) {
+                $erro($colSorteio, 'O sorteio precisa ser depois do fechamento das inscrições: a partir de ' . $br(date('Y-m-d', strtotime($fecha . ' +1 day'))) . '.');
+            } elseif ($inicio !== null && $sorteio >= $inicio) {
+                $erro($colSorteio, "O sorteio precisa ser antes do primeiro dia do acampamento ({$br($inicio)}).");
+            }
+
+            if ($prazo === null) {
+                $erro($colPrazo, (float)$taxa > 0 ? 'Informe o prazo do formulário e do pagamento.' : 'Informe o prazo do formulário.');
+            } elseif ($sorteio !== null && $prazo < $sorteio) {
+                $erro($colPrazo, "O prazo não pode ser antes do sorteio previsto ({$br($sorteio)}).");
+            } elseif ($inicio !== null && $prazo > $inicio) {
+                $erro($colPrazo, "O prazo precisa ser até o primeiro dia do acampamento ({$br($inicio)}).");
+            }
+
+            if ($taxa !== null && $taxa !== '' && (!is_numeric($taxa) || (float)$taxa < 0)) {
+                $erro($colunaValor, 'Informe o valor. Se não houver cobrança, escolha “Gratuito”.');
+            }
+        }
+
+        // Vagas do sorteio: no Casais só casais; nas outras, homens e mulheres.
+        // Indicações não contam: são ilimitadas, fora do sorteio.
+        $vagas = [];
+        foreach (['raffle_man_vacancies', 'raffle_woman_vacancies', 'raffle_couple_vacancies'] as $campo) {
+            $v = $doAcampamento($campo);
+            if ($v === null || $v === '') $v = 0;
+            if (!is_numeric($v) || (int)$v != $v || (int)$v < 0) {
+                $erro($campo, 'Use um número inteiro, 0 ou mais.');
+                $v = 0;
+            }
+            $vagas[$campo] = (int)$v;
+        }
+        if ($categoria === 'Casais') {
+            if ($vagas['raffle_couple_vacancies'] < 1 && !isset($erros['raffle_couple_vacancies'])) {
+                $erro('raffle_couple_vacancies', 'Informe quantos casais serão sorteados.');
+            }
+        } elseif ($categoria !== null && $vagas['raffle_man_vacancies'] + $vagas['raffle_woman_vacancies'] < 1
+            && !isset($erros['raffle_man_vacancies']) && !isset($erros['raffle_woman_vacancies'])) {
+            $erro('raffle_man_vacancies', 'Informe pelo menos uma vaga.');
+        }
+
+        return $erros;
+    }
+
+    /**
+     * Deixa os dados do acampamento coerentes com as regras da tela:
+     * - um prazo só por trilha: o prazo do pagamento é o mesmo do formulário;
+     * - vagas: no Casais só casais, nas outras só homens e mulheres; as
+     *   "planejadas" (antigas) acompanham as do sorteio e o total da atividade é
+     *   a soma, com o casal contando 2 pessoas;
+     * - sem link de pagamento (a pessoa paga direto com a organização).
+     *
+     * @return array{0: array, 1: array} [activity, camping]
+     */
+    private function normalizarAcampamento(array $ad, array $cd, ?object $atividade, ?object $camping): array
+    {
+        $atual = fn(?object $e, string $campo) => $e?->get($campo);
+        foreach (['camper_form_deadline' => 'participant_payment_date', 'servant_form_deadline' => 'servant_payment_date'] as $prazo => $pagamento) {
+            if (array_key_exists($prazo, $cd)) $ad[$pagamento] = $cd[$prazo];
+        }
+        $ad['participant_payment_link'] = '';
+        $ad['servant_payment_link'] = '';
+
+        $categoria = $this->categoriaDeAcampamento($ad['category_id'] ?? $atual($atividade, 'category_id'));
+        $vaga = fn(string $campo) => max(0, (int)($cd[$campo] ?? $atual($camping, $campo) ?? 0));
+        $homens = $categoria === 'Casais' ? 0 : $vaga('raffle_man_vacancies');
+        $mulheres = $categoria === 'Casais' ? 0 : $vaga('raffle_woman_vacancies');
+        $casais = $categoria === 'Casais' ? $vaga('raffle_couple_vacancies') : 0;
+        $cd['raffle_man_vacancies'] = $cd['planned_man_vacancies'] = $homens;
+        $cd['raffle_woman_vacancies'] = $cd['planned_woman_vacancies'] = $mulheres;
+        $cd['raffle_couple_vacancies'] = $cd['planned_couple_vacancies'] = $casais;
+        $ad['total_vacancies'] = $homens + $mulheres + 2 * $casais;
+
+        return [$ad, $cd];
+    }
+
+    /** Nome da categoria de acampamento com este id, ou null se não for uma. */
+    private function categoriaDeAcampamento(mixed $id): ?string
+    {
+        if (!is_numeric($id) || (int)$id <= 0) return null;
+        $categoria = $this->fetchTable('Categories')->find()
+            ->where(['id' => (int)$id, 'type' => 'Acampamento', 'deleted IS' => null])
+            ->first();
+
+        return $categoria?->name;
+    }
+
+    /** Inscrições ativas de um tipo (Campista ou Servo) num acampamento. */
+    private function contarInscricoesDoTipo(object $activity, string $tipo): int
+    {
+        return $this->fetchTable('PreRegistrations')->find()->where([
+            'activity_id' => $activity->id,
+            'subscription_type' => $tipo,
+            'deleted IS' => null,
+            'is_quitter' => false,
+            'disqualified_at IS' => null,
+        ])->count();
+    }
+
+    /** {feito, em}: o sorteio deste tipo já foi feito e quando ("Y-m-d", null se não se sabe). */
+    private function situacaoDoSorteio(int $activityId, string $tipo): array
+    {
+        $em = $this->sorteioService->sorteioFeitoEm($activityId, $tipo);
+
+        return ['feito' => $em !== null, 'em' => $em instanceof \DateTimeInterface ? $em->format('Y-m-d') : null];
+    }
+
+    /**
+     * GET /admin/acampamentos/apoio[?atividade={id}] — o que a tela Criar /
+     * Editar Acampamento mostra sem poder editar: para cada categoria de
+     * acampamento, se os formulários de campista e de servo já existem e os
+     * setores do modelo (tela Setores de Servos); na edição, também os setores
+     * deste acampamento.
+     */
+    public function apoioAcampamento(): Response
+    {
+        $this->request->allowMethod(['get']);
+        $identity = $this->requirePermissao('acampamentos');
+        if ($identity instanceof Response) return $identity;
+
+        $perguntas = $this->fetchTable('Questions');
+        $temFormulario = fn(int $categoriaId, string $tipo) => $perguntas->find()->where([
+            'category_id' => $categoriaId,
+            'subscription_type' => $tipo,
+            'event_form_id IS' => null,
+            'deleted IS' => null,
+        ])->count() > 0;
+
+        $categorias = [];
+        $lista = $this->fetchTable('Categories')->find()
+            ->where(['type' => 'Acampamento', 'deleted IS' => null])
+            ->orderBy(['id' => 'ASC'])
+            ->all();
+        foreach ($lista as $c) {
+            $setores = [];
+            $modelos = $this->CategoriesSectors->find()
+                ->contain(['Sectors'])
+                ->where(['CategoriesSectors.category_id' => $c->id, 'CategoriesSectors.deleted IS' => null, 'Sectors.deleted IS' => null])
+                ->orderBy(['Sectors.name' => 'ASC'])
+                ->all();
+            foreach ($modelos as $cs) {
+                $setores[] = ['nome' => $cs->sector->name, 'vagas' => (int)$cs->vacancies];
+            }
+            $categorias[] = [
+                'id' => $c->id,
+                'nome' => $c->name,
+                'formularioCampista' => $temFormulario((int)$c->id, 'Campista'),
+                'formularioServo' => $temFormulario((int)$c->id, 'Servo'),
+                'setores' => $setores,
+            ];
+        }
+
+        $setoresDaAtividade = null;
+        $atividadeId = (int)$this->request->getQuery('atividade');
+        if ($atividadeId > 0) {
+            $setoresDaAtividade = [];
+            $ligados = $this->ActivitiesCategoriesSectors->find()
+                ->contain(['CategoriesSectors' => ['Sectors']])
+                ->where(['ActivitiesCategoriesSectors.activity_id' => $atividadeId, 'ActivitiesCategoriesSectors.deleted IS' => null])
+                ->all();
+            foreach ($ligados as $acs) {
+                $setoresDaAtividade[] = ['nome' => $acs->categories_sector->sector->name ?? '', 'vagas' => (int)$acs->actual_vacancies];
+            }
+            usort($setoresDaAtividade, fn($a, $b) => strcmp($a['nome'], $b['nome']));
+        }
+
+        return $this->apiResponse(['data' => ['categorias' => $categorias, 'setoresDaAtividade' => $setoresDaAtividade]]);
     }
 
     private function tamanhoDoArquivo(?string $caminho): ?int

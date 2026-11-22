@@ -1440,29 +1440,34 @@
 	}
 	.card-etiquetas {
 		position: absolute;
-		left: 12px;
-		right: 12px;
+		left: 10px;
+		right: 10px;
 		bottom: 12px;
+		/* Igual ao cartão do Início: tipo à esquerda, fase à direita, na mesma linha. */
 		display: flex;
-		flex-wrap: wrap;
 		justify-content: space-between;
-		align-items: flex-end;
-		gap: 6px 8px;
+		align-items: center;
+		gap: 6px;
 	}
 	.card-situacao {
-		margin-left: auto;
 		display: flex;
 	}
+	.card-situacao :global(.selo) {
+		font-size: 11px;
+		letter-spacing: 0.02em;
+		padding: 5px 8px;
+	}
 	.etiqueta {
-		font-size: 12px;
+		font-size: 11px;
 		font-weight: 700;
-		letter-spacing: 0.08em;
+		letter-spacing: 0.02em;
 		text-transform: uppercase;
 		color: var(--pergaminho);
 		background: var(--vermelho);
 		border: 1px solid #d9a9a0;
 		border-radius: 999px;
-		padding: 5px 10px;
+		padding: 5px 8px;
+		white-space: nowrap;
 		box-shadow: 0 2px 8px rgba(15, 29, 61, 0.35);
 	}
 	.card-corpo {

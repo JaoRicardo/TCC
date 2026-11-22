@@ -34,13 +34,11 @@ class RetiradaDoSorteioService
     ];
 
     private $PreRegistrations;
-    private $MaritalStatuses;
 
     public function __construct()
     {
         $locator = new TableLocator();
         $this->PreRegistrations = $locator->get('PreRegistrations');
-        $this->MaritalStatuses = $locator->get('MaritalStatuses');
     }
 
     /**
@@ -61,7 +59,6 @@ class RetiradaDoSorteioService
         }
 
         $idade = self::idade($depois['birthday']);
-        $casado = $this->ehCasado($depois['marital_status_id'] ?? null);
         $hoje = (new \DateTimeImmutable('today'))->format('Y-m-d');
 
         $inscricoes = $this->PreRegistrations->find()
@@ -99,7 +96,9 @@ class RetiradaDoSorteioService
                 $faixa = self::FAIXAS_DE_IDADE[$atividade->category->name ?? ''] ?? null;
                 if ($mudouNascimento && $faixa !== null && $idade !== null && ($idade < $faixa[0] || $idade > $faixa[1])) {
                     $motivo = 'idade';
-                } elseif ($mudouSexo && !$casado && $this->semVagaParaOSexo($atividade->camping, (string)$depois['sex'])) {
+                } elseif ($mudouSexo && ($atividade->category->name ?? '') !== 'Casais' && $this->semVagaParaOSexo($atividade->camping, (string)$depois['sex'])) {
+                    // No Casais todos concorrem como casal; fora dele, quem é
+                    // casado concorre como homem ou mulher, então o sexo conta.
                     $motivo = 'sexo';
                 }
             }
@@ -131,16 +130,6 @@ class RetiradaDoSorteioService
         $vagas = $sexo === 'M' ? $acampamento->raffle_man_vacancies : $acampamento->raffle_woman_vacancies;
 
         return (int)$vagas <= 0;
-    }
-
-    private function ehCasado(mixed $estadoCivilId): bool
-    {
-        if (!$estadoCivilId) return false;
-
-        // Pelo título: os ids das tabelas de apoio já mudaram de ordem no seed.
-        return $this->MaritalStatuses->find()
-            ->where(['id' => (int)$estadoCivilId, 'title' => 'Casado', 'deleted IS' => null])
-            ->count() > 0;
     }
 
     /** Idade hoje, a partir de 'Y-m-d'. */
