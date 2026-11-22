@@ -909,18 +909,21 @@
 		flex-direction: column;
 		min-width: 0;
 	}
+	/* As três abas dividem a largura do formulário, cada uma numa linha só. */
 	.abas {
 		display: flex;
 		gap: 6px;
-		padding-left: 4px;
 	}
 	.aba {
 		position: relative;
+		flex: 1 1 auto;
 		display: flex;
 		align-items: center;
-		gap: 10px;
+		justify-content: center;
+		gap: 8px;
 		height: 56px;
-		padding: 0 20px;
+		padding: 0 12px;
+		white-space: nowrap;
 		font: 600 17px 'Source Sans 3', sans-serif;
 		color: var(--tinta-3);
 		background: transparent;
@@ -984,7 +987,8 @@
 		box-shadow: 0 14px 28px -22px rgba(15, 29, 61, 0.45);
 	}
 	.painel {
-		border-top-left-radius: 4px;
+		border-top-left-radius: 0;
+		border-top-right-radius: 0;
 	}
 	.cartao-corpo {
 		display: flex;
@@ -1111,7 +1115,12 @@
 		gap: 10px;
 	}
 	.radio {
-		display: flex;
+		/* Mesma largura para todos, conteúdo centralizado; nunca encolhe nem quebra. */
+		display: inline-flex;
+		flex: 0 0 auto;
+		min-width: 140px;
+		justify-content: center;
+		white-space: nowrap;
 		align-items: center;
 		gap: 10px;
 		height: 52px;
@@ -1554,6 +1563,18 @@
 		font-size: 15px;
 		line-height: 1.4;
 		color: var(--tinta-2);
+	}
+
+	/* Janela estreita: a prévia desce para baixo do formulário, que fica com a
+	   largura toda (assim as três abas cabem numa linha). */
+	@media (max-width: 1439px) {
+		.corpo {
+			grid-template-columns: minmax(0, 1fr);
+		}
+		.previa {
+			position: static;
+			max-width: 344px;
+		}
 	}
 
 	/* ─── Barra de baixo ─────────────────────────────────────────── */

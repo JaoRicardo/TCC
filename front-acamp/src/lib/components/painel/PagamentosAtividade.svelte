@@ -796,7 +796,12 @@
 		gap: 10px;
 	}
 	.radio {
-		display: flex;
+		/* Mesma largura para todos, conteúdo centralizado; nunca encolhe nem quebra. */
+		display: inline-flex;
+		flex: 0 0 auto;
+		min-width: 140px;
+		justify-content: center;
+		white-space: nowrap;
 		align-items: center;
 		gap: 10px;
 		height: 52px;
