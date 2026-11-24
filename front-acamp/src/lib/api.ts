@@ -1,6 +1,7 @@
 import { criarSenhaUrl, loginUrl, TELA_CRIAR_SENHA } from '$lib/redirect';
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL;
+// Padrão: mesmo endereço do front; o Vite repassa /api para o backend (vite.config.ts).
+export const API_BASE_URL: string = import.meta.env.VITE_API_URL || '/api/v1';
 export const API_HOST = API_BASE_URL.replace('/api/v1', '');
 
 type ApiFetchOptions = RequestInit & {

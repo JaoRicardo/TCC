@@ -1813,7 +1813,7 @@ class InscricoesController extends ApiController
                 'id'           => $activity->id,
                 'nome'         => $activity->name,
                 'tipo'         => $activity->camping_id ? 'Acampamento' : 'Evento',
-                'imagem'       => $activity->image ? 'http://localhost:8765/' . $activity->image : null,
+                'imagem'       => $activity->image ? '/' . $activity->image : null,
                 'categoria'    => $activity->category?->name ?? '',
                 'inicioEvento' => $activity->start_date?->format('Y-m-d\TH:i'),
                 'fimEvento'    => $activity->start_date

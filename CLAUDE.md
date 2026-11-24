@@ -19,7 +19,7 @@ Runs on Windows 11 (the app is only ever run locally for the TCC presentation â€
 Backend (run from `backend/`):
 
 ```sh
-php -S localhost:8765 -t webroot          # dev server (or: php bin/cake.php server -p 8765)
+composer servidor                          # dev server on localhost:8765 with 6 MB uploads (plain php -S has 2 MB)
 php vendor/bin/phpunit                     # full test suite
 php vendor/bin/phpunit tests/TestCase/Regras/SorteioServosTest.php          # one file
 php vendor/bin/phpunit --filter nomeDoTeste tests/TestCase/Regras/X.php     # one test
@@ -32,7 +32,8 @@ php bin/cake.php executar_prazos_formulario    # CAUTION: really disqualifies pe
 Frontend (run from `front-acamp/`):
 
 ```sh
-npm run dev -- --port 5173   # .env sets VITE_API_URL=http://localhost:8765/api/v1
+npm run dev                  # port 5173; Vite proxies /api and /uploads to localhost:8765 (vite.config.ts)
+npm run dev:rede             # same, open to other devices on the LAN (http://<this PC's IP>:5173)
 npm run check                # svelte-check (type checking) â€” the only static check; there is no linter or JS test suite
 npm run build
 ```

@@ -1557,7 +1557,7 @@ class ActivitiesController extends ApiController
             'tipo'        => $isCamping ? 'Acampamento' : 'Evento',
             'nome'        => $activity->name,
             'local'       => $activity->place,
-            'imagem'      => $activity->image ? 'http://localhost:8765/' . $activity->image : null,
+            'imagem'      => $activity->image ? '/' . $activity->image : null,
             'publicoAlvo' => $activity->category->name ?? '',
             'categoria'   => $activity->category
                 ? ['id' => $activity->category->id, 'nome' => $activity->category->name, 'tipo' => $activity->category->type]
@@ -1612,8 +1612,8 @@ class ActivitiesController extends ApiController
                 'fimInscricoesServos'   => $camping->raffle_servant_subscription_end_date?->format('Y-m-d\TH:i'),
                 'inicioFormulario'      => $camping->camper_registration_start_date?->format('Y-m-d\TH:i'),
                 'fimFormulario'         => $camping->camper_registration_end_date?->format('Y-m-d\TH:i'),
-                'editalEvento'          => $camping->notice ? 'http://localhost:8765/' . $camping->notice : null,
-                'termoAutorizacao'      => $camping->term   ? 'http://localhost:8765/' . $camping->term   : null,
+                'editalEvento'          => $camping->notice ? '/' . $camping->notice : null,
+                'termoAutorizacao'      => $camping->term   ? '/' . $camping->term   : null,
                 // Tamanho em bytes (null sem arquivo: o banco guarda "#").
                 'editalTamanho'         => $this->tamanhoDoArquivo($camping->notice),
                 'termoTamanho'          => $this->tamanhoDoArquivo($camping->term),
