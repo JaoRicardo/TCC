@@ -59,9 +59,12 @@
 		return qs ? `?${qs}` : '';
 	});
 
+	// Compara com window.location, não com $page: o replaceState não muda
+	// $page.url, mas avisa o store $page — ler $page aqui fazia o efeito rodar
+	// de novo a cada troca, em laço sem fim (a tela travava ao digitar).
 	$effect(() => {
-		const endereco = $page.url.pathname + filtrosDaLista;
-		if (endereco !== $page.url.pathname + $page.url.search) replaceState(endereco, {});
+		const endereco = location.pathname + filtrosDaLista;
+		if (endereco !== location.pathname + location.search) replaceState(endereco, {});
 	});
 
 	const linkDaFicha = (u: User) => `/admin/pessoas/${u.id}${filtrosDaLista}`;
