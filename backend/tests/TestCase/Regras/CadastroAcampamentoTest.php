@@ -84,7 +84,6 @@ class CadastroAcampamentoTest extends RegrasTestCase
         $this->assertSame(0, (int)$camping->raffle_couple_vacancies);
         $this->assertSame(40, (int)$atividade->total_vacancies);
         $this->assertSame(20, (int)$camping->planned_man_vacancies);
-        $this->assertSame('', (string)$atividade->participant_payment_link);
         $this->assertSame('Chegada às 17h da sexta.', $atividade->description);
         $this->assertSame((int)date('Y', strtotime('+30 days')), (int)$atividade->year);
     }
@@ -146,7 +145,7 @@ class CadastroAcampamentoTest extends RegrasTestCase
         $this->assertSame('Informe o prazo do formulário e do pagamento.', $this->erros()['servant_form_deadline']);
         // Ano, idade, matrícula, confirmação e link não aparecem entre os erros.
         $this->assertSame([], array_intersect(array_keys($this->erros()), [
-            'year', 'min_age', 'max_age', 'camper_registration_start_date', 'servant_registration_start_date', 'participant_payment_link',
+            'year', 'min_age', 'max_age', 'camper_registration_start_date', 'servant_registration_start_date',
         ]));
     }
 

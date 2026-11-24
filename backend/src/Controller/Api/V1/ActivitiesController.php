@@ -261,9 +261,7 @@ class ActivitiesController extends ApiController
                 'participant_fee'                     => floatval($ad['participant_fee'] ?? 0),
                 'servant_fee'                         => floatval($ad['servant_fee']     ?? 0),
                 'participant_payment_date'            => $ad['participant_payment_date'] ?? null,
-                'participant_payment_link'            => $ad['participant_payment_link'] ?? null,
                 'servant_payment_date'                => $ad['servant_payment_date']     ?? null,
-                'servant_payment_link'                => $ad['servant_payment_link']     ?? null,
                 'min_age'                             => isset($ad['min_age']) && $ad['min_age'] !== '' && $ad['min_age'] !== 'null' ? intval($ad['min_age']) : null,
                 'max_age'                             => isset($ad['max_age']) && $ad['max_age'] !== '' && $ad['max_age'] !== 'null' ? intval($ad['max_age']) : null,
                 'target_audience'                     => $ad['target_audience'] ?? 'Geral',
@@ -381,9 +379,7 @@ class ActivitiesController extends ApiController
         if (isset($ad['servant_registration_start_date']))     $activityPatch['servant_registration_start_date']     = $ad['servant_registration_start_date'];
         if (isset($ad['servant_registration_end_date']))       $activityPatch['servant_registration_end_date']       = $ad['servant_registration_end_date'];
         if (isset($ad['participant_payment_date']))            $activityPatch['participant_payment_date']            = $ad['participant_payment_date'];
-        if (isset($ad['participant_payment_link']))            $activityPatch['participant_payment_link']            = $ad['participant_payment_link'];
         if (isset($ad['servant_payment_date']))                $activityPatch['servant_payment_date']                = $ad['servant_payment_date'];
-        if (isset($ad['servant_payment_link']))                $activityPatch['servant_payment_link']                = $ad['servant_payment_link'];
         if (array_key_exists('event_form_id', $ad) && $activity->camping_id === null) {
             $activityPatch['event_form_id'] = $this->formularioDeEvento($ad);
         }
@@ -1580,8 +1576,6 @@ class ActivitiesController extends ApiController
             'fimInscricoes'         => $activity->participant_registration_end_date?->format('Y-m-d\TH:i'),
             'inicioInscricoesServo' => $activity->servant_registration_start_date?->format('Y-m-d\TH:i'),
             'fimInscricoesServo'    => $activity->servant_registration_end_date?->format('Y-m-d\TH:i'),
-            // O link de pagamento não é público: vem na inscrição de quem pode pagar
-            // (GET /me/inscricoes, "linkPagamento").
             'prazoPagamentoParticipante' => $activity->participant_payment_date?->format('Y-m-d\TH:i'),
             'prazoPagamentoServo'        => $activity->servant_payment_date?->format('Y-m-d\TH:i'),
             // Evento com formulário: a inscrição só conclui quando a pessoa envia.
@@ -1850,8 +1844,6 @@ class ActivitiesController extends ApiController
         foreach (['camper_form_deadline' => 'participant_payment_date', 'servant_form_deadline' => 'servant_payment_date'] as $prazo => $pagamento) {
             if (array_key_exists($prazo, $cd)) $ad[$pagamento] = $cd[$prazo];
         }
-        $ad['participant_payment_link'] = '';
-        $ad['servant_payment_link'] = '';
 
         $categoria = $this->categoriaDeAcampamento($ad['category_id'] ?? $atual($atividade, 'category_id'));
         $vaga = fn(string $campo) => max(0, (int)($cd[$campo] ?? $atual($camping, $campo) ?? 0));

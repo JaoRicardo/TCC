@@ -27,6 +27,9 @@ class PagamentoService
 {
     public const DIAS_DE_FOLGA = 2;
 
+    /** Dias que o suplente chamado para uma vaga tem para pagar (ver prazo()). */
+    public const DIAS_PARA_PAGAR_APOS_CHAMADO = 3;
+
     /** Formas aceitas (valor gravado => texto). */
     public const FORMAS = ['dinheiro' => 'Dinheiro', 'pix' => 'Pix'];
 
@@ -37,8 +40,6 @@ class PagamentoService
     private $PreRegistrations;
     private $Users;
     private $UserChangeLogs;
-    private $Payments;
-    private MercadoPagoService $mercadoPago;
 
     public function __construct()
     {
@@ -46,21 +47,53 @@ class PagamentoService
         $this->PreRegistrations = $locator->get('PreRegistrations');
         $this->Users            = $locator->get('Users');
         $this->UserChangeLogs   = $locator->get('UserChangeLogs');
-        $this->Payments         = $locator->get('Payments');
-        $this->mercadoPago      = new MercadoPagoService();
     }
 
+    /** Taxa da inscrição: a de servo ou a de participante, conforme o tipo. */
     public function valor(object $preReg, object $activity): float
     {
-        return $this->mercadoPago->valorDaTaxa($preReg, $activity);
+        return (float)($preReg->subscription_type === 'Servo'
+            ? ($activity->servant_fee ?? 0)
+            : ($activity->participant_fee ?? 0));
     }
 
-    /** Prazo desta inscrição (suplente chamado ganha dias; nunca passa do início). */
+    /**
+     * Prazo de pagamento desta inscrição: a data cadastrada na atividade. Suplente
+     * chamado para uma vaga tem pelo menos DIAS_PARA_PAGAR_APOS_CHAMADO dias a
+     * partir de quando foi chamado — senão quem é chamado depois da data já
+     * entraria com o prazo vencido.
+     *
+     * Nunca passa do fim do primeiro dia da atividade: se muita gente seguida
+     * deixar de pagar, os dias de cada chamado iriam empurrando o prazo.
+     */
     public function prazo(object $preReg, object $activity): ?DateTime
     {
-        $prazo = $this->mercadoPago->prazoPagamento($preReg, $activity);
+        $data = $preReg->subscription_type === 'Servo'
+            ? ($activity->servant_payment_date ?? null)
+            : ($activity->participant_payment_date ?? null);
+        if ($data === null) {
+            return null;
+        }
+        $prazo = new DateTime($data->format('Y-m-d H:i:s'));
 
-        return $prazo === null ? null : new DateTime($prazo->format('Y-m-d H:i:s'));
+        if (($preReg->promoted_at ?? null) !== null) {
+            $prazoDoChamado = (new DateTime($preReg->promoted_at->format('Y-m-d H:i:s')))
+                ->addDays(self::DIAS_PARA_PAGAR_APOS_CHAMADO);
+            if ($prazoDoChamado->getTimestamp() > $prazo->getTimestamp()) {
+                $prazo = $prazoDoChamado;
+            }
+        }
+
+        // As datas não têm hora e o prazo vale até 23h59 do dia.
+        $inicio = $activity->start_date ?? null;
+        if ($inicio !== null) {
+            $limite = new DateTime($inicio->format('Y-m-d') . ' 23:59:00');
+            if ($prazo->getTimestamp() > $limite->getTimestamp()) {
+                return $limite;
+            }
+        }
+
+        return $prazo;
     }
 
     /** Quando a vaga sai de quem não pagou: o prazo mais os dias de folga. */
@@ -133,21 +166,10 @@ class PagamentoService
         return $limite !== null && ($agora ?? DateTime::now())->getTimestamp() > $limite->getTimestamp();
     }
 
-    /** Data do pagamento: a registrada pela organização ou a do Mercado Pago (antigo). */
+    /** Data do pagamento registrada pela organização. */
     public function pagoEm(object $preReg): ?string
     {
-        if (!$preReg->is_fee_paid) {
-            return null;
-        }
-        if ($preReg->fee_paid_on !== null) {
-            return $preReg->fee_paid_on->format('Y-m-d');
-        }
-        $pagamento = $this->Payments->find()
-            ->where(['pre_registration_id' => $preReg->id, 'paid_at IS NOT' => null, 'deleted IS' => null])
-            ->orderBy(['paid_at' => 'DESC'])
-            ->first();
-
-        return $pagamento?->paid_at?->format('Y-m-d');
+        return $preReg->is_fee_paid ? $preReg->fee_paid_on?->format('Y-m-d') : null;
     }
 
     /**
@@ -247,7 +269,7 @@ class PagamentoService
             return 'Esta inscrição não tem pagamento registrado.';
         }
 
-        $forma = self::FORMAS[$preReg->fee_payment_method ?? ''] ?? 'pagamento online';
+        $forma = self::FORMAS[$preReg->fee_payment_method ?? ''] ?? 'pago';
         $em = $this->pagoEm($preReg);
         $preReg->is_fee_paid = false;
         $preReg->fee_paid_on = null;

@@ -72,11 +72,6 @@ class EventsTable extends Table
             ->allowEmptyDateTime('sale_start_date');
 
         $validator
-            ->scalar('payment_link')
-            ->maxLength('payment_link', 255)
-            ->allowEmptyString('payment_link');
-
-        $validator
             ->dateTime('servant_registration_start_date')
             ->allowEmptyDateTime('servant_registration_start_date');
 

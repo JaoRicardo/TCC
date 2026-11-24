@@ -467,29 +467,4 @@ return [
         'errorLevel' => null,
         'fixtureStrategy' => null,
     ],
-    /**
-     * Mercado Pago (Checkout Pro).
-     *
-     * Todos os valores vêm do config/.env — nenhuma credencial fica no código.
-     *
-     *  - `access_token`: token privado da aplicação (painel do Mercado Pago >
-     *    Suas integrações > Credenciais). Use as credenciais de TESTE enquanto
-     *    estiver desenvolvendo; elas começam com APP_USR.
-     *  - `public_key`: chave pública, só necessária se um dia a tela de pagamento
-     *    passar a ser embutida no site (Checkout Bricks).
-     *  - `webhook_secret`: segredo da assinatura, usado para conferir que a
-     *    notificação veio mesmo do Mercado Pago.
-     *  - `notification_url`: URL pública que o Mercado Pago chama quando o
-     *    pagamento muda de status. Em localhost não funciona — use um túnel
-     *    (ngrok/cloudflared) apontando para /api/v1/webhooks/mercadopago.
-     *  - `back_url_base`: endereço do front (ex.: http://localhost:5173), para
-     *    onde o campista volta depois de pagar.
-     */
-    'MercadoPago' => [
-        'access_token' => env('MERCADOPAGO_ACCESS_TOKEN', null),
-        'public_key' => env('MERCADOPAGO_PUBLIC_KEY', null),
-        'webhook_secret' => env('MERCADOPAGO_WEBHOOK_SECRET', null),
-        'notification_url' => env('MERCADOPAGO_NOTIFICATION_URL', null),
-        'back_url_base' => env('MERCADOPAGO_BACK_URL_BASE', 'http://localhost:5173'),
-    ],
 ];

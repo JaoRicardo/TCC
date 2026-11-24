@@ -96,7 +96,7 @@ class PaginaAtividadeTest extends RegrasTestCase
     public function testSemLinkDePagamentoEComOPrazoSoParaQuemJaPrecisaPagar(): void
     {
         $acampamento = $this->criarAcampamento('FAC', dadosAtividade: [
-            'participant_fee' => 120, 'participant_payment_link' => 'https://exemplo.com/pagar',
+            'participant_fee' => 120,
             'participant_payment_date' => date('Y-m-d 23:59:00', strtotime('+5 days')),
         ]);
 

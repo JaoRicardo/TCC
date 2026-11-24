@@ -24,7 +24,7 @@ use Cake\ORM\Locator\TableLocator;
  *   vaga só sai PagamentoService::DIAS_DE_FOLGA dias depois do prazo, para a
  *   equipe registrar quem pagou no último dia. Vale também para evento.
  *   Suplente chamado para uma vaga ganha alguns dias a partir de quando foi
- *   chamado (ver MercadoPagoService::prazoPagamento).
+ *   chamado (ver PagamentoService::prazo).
  * - Desclassificar não apaga o `selection_method_id`: ele continua registrando
  *   como a pessoa tinha sido escolhida, e é o `disqualified_at` que diz que a
  *   vaga não vale mais. Isso também evita que a pessoa volte pro pool e seja
@@ -516,7 +516,7 @@ class PrazoFormularioService
         $activity = $this->Activities->find()->where(['id' => $pr->activity_id])->first();
         if (!$activity) return null;
 
-        return (new MercadoPagoService())->prazoPagamento($pr, $activity)?->format('Y-m-d\TH:i');
+        return $this->pagamentos->prazo($pr, $activity)?->format('Y-m-d\TH:i');
     }
 
     public function chamarProximoCampista(int $activityId, string $grupo): array
@@ -650,7 +650,7 @@ class PrazoFormularioService
     /**
      * Suplente assume a vaga: passa a ser selecionado e sai da fila de suplentes.
      * O `promoted_at` marca quando foi chamado — é dele que contam os dias extras
-     * para pagar (MercadoPagoService::prazoPagamento).
+     * para pagar (PagamentoService::prazo).
      */
     private function promover(object $preReg): bool
     {

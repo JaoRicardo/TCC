@@ -8,7 +8,6 @@ use App\Controller\Api\ApiController;
 use App\Model\Table\FormCorrectionsTable;
 use App\Model\Table\UserDocumentsTable;
 use App\Service\FormulariosService;
-use App\Service\MercadoPagoService;
 use App\Service\PagamentoService;
 use App\Service\PrazoFormularioService;
 use App\Service\RetiradaDoSorteioService;
@@ -31,7 +30,6 @@ class InscricoesController extends ApiController
         $this->Addresses                   = $this->fetchTable('Addresses');
         $this->Campings                    = $this->fetchTable('Campings');
         $this->prazoFormularioService      = new PrazoFormularioService();
-        $this->mercadoPagoService          = new MercadoPagoService();
         $this->pagamentoService            = new PagamentoService();
     }
 
@@ -859,49 +857,23 @@ class InscricoesController extends ApiController
      *   quem tem vaga de verdade. Se ele for chamado para uma vaga, o pagamento
      *   aparece liberado nesta mesma tela.
      * - Pagar vem **depois** do formulário enviado, e dentro da data de pagamento
-     *   cadastrada na atividade.
-     *
-     * Enquanto o token do Mercado Pago não estiver no .env, `integracao_ativa` vem
-     * false e a tela cai no link de pagamento cadastrado à mão na atividade.
+     *   cadastrada na atividade. A pessoa paga direto com a organização, que
+     *   registra no painel (PagamentoService).
      */
     private function serializePagamento(object $preReg, object $activity): array
     {
-        $valor    = $this->mercadoPagoService->valorDaTaxa($preReg, $activity);
-        $ultimo   = $this->mercadoPagoService->ultimoPagamento((int)$preReg->id);
-        $prazoPag = $this->mercadoPagoService->prazoPagamento($preReg, $activity);
-
-        $ehSuplente    = $preReg->substitute_position !== null;
-        $prazoVencido  = $this->prazoPagamentoVencido($prazoPag);
-        $liberado      = $valor > 0
-            && !$preReg->is_fee_paid
-            && (bool)$preReg->form_submitted
-            && !$ehSuplente
-            && !$prazoVencido;
+        $valor    = $this->pagamentoService->valor($preReg, $activity);
+        $prazoPag = $this->pagamentoService->prazo($preReg, $activity);
 
         return [
-            'necessario'       => $valor > 0,
-            'valor'            => $valor,
-            'pago'             => (bool)$preReg->is_fee_paid,
+            'necessario'    => $valor > 0,
+            'valor'         => $valor,
+            'pago'          => (bool)$preReg->is_fee_paid,
             // Suplente aparece com a taxa informada, mas sem cobrança.
-            'eh_suplente'      => $ehSuplente,
-            'prazo_vencido'    => $prazoVencido,
-            'liberado'         => $liberado,
-            'integracao_ativa' => MercadoPagoService::configurado(),
-            'status_provedor'  => $ultimo->status ?? null,
-            'url_pagamento'    => $preReg->is_fee_paid ? null : ($ultimo->init_point ?? null),
-            // Pagamento direto com a organização: não há mais link (decisão de 2026-11-21).
-            'link_manual'      => null,
-            'prazo'            => $this->formatarDataHora($prazoPag),
+            'eh_suplente'   => $preReg->substitute_position !== null,
+            'prazo_vencido' => $prazoPag !== null && $prazoPag->getTimestamp() < time(),
+            'prazo'         => $this->formatarDataHora($prazoPag),
         ];
-    }
-
-    /** A data de pagamento cadastrada na atividade já passou? */
-    private function prazoPagamentoVencido(mixed $prazoPagamento): bool
-    {
-        if ($prazoPagamento === null) return false;
-        if (!is_object($prazoPagamento) || !method_exists($prazoPagamento, 'getTimestamp')) return false;
-
-        return $prazoPagamento->getTimestamp() < time();
     }
 
     /**

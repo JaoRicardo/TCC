@@ -3,7 +3,7 @@ declare(strict_types=1);
 
 namespace App\Test\TestCase\Regras;
 
-use App\Service\MercadoPagoService;
+use App\Service\PagamentoService;
 use App\Service\PermissoesService;
 use App\Service\PrazoFormularioService;
 use App\Service\SorteioService;
@@ -105,7 +105,7 @@ class PrazoPagamentoTest extends RegrasTestCase
         $prazos->executarPrazosVencidos();
         $chamado = $this->recarregar($suplente);
         $this->assertNull($chamado->disqualified_at, 'Quem foi chamado não pode entrar com o prazo de pagamento já vencido.');
-        $prazo = (new MercadoPagoService())->prazoPagamento($chamado, $fac);
+        $prazo = (new PagamentoService())->prazo($chamado, $fac);
         $this->assertEqualsWithDelta($chamado->promoted_at->addDays(3)->getTimestamp(), $prazo->getTimestamp(), 1);
 
         // Passados os 3 dias (e os 2 de folga) sem pagar, perde a vaga e ela abre de novo.
@@ -132,7 +132,7 @@ class PrazoPagamentoTest extends RegrasTestCase
         $this->chamarProximo($fac, ['tipo' => 'Campista', 'grupo' => 'Homem']);
         $this->assertResponseOk();
 
-        $prazo = (new MercadoPagoService())->prazoPagamento($this->recarregar($suplente), $fac);
+        $prazo = (new PagamentoService())->prazo($this->recarregar($suplente), $fac);
         // As datas não têm hora: o limite é o fim (23h59) do primeiro dia.
         $this->assertSame(substr($inicio, 0, 10) . ' 23:59:00', $prazo->format('Y-m-d H:i:s'));
     }

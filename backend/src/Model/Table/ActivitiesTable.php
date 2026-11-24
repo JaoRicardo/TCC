@@ -115,18 +115,8 @@ class ActivitiesTable extends Table
             ->allowEmptyDateTime('participant_payment_date');
 
         $validator
-            ->scalar('participant_payment_link')
-            ->maxLength('participant_payment_link', 255)
-            ->allowEmptyString('participant_payment_link');
-
-        $validator
             ->dateTime('servant_payment_date')
             ->allowEmptyDateTime('servant_payment_date');
-
-        $validator
-            ->scalar('servant_payment_link')
-            ->maxLength('servant_payment_link', 255)
-            ->allowEmptyString('servant_payment_link');
 
         $validator
             ->dateTime('deleted')

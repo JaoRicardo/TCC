@@ -13,7 +13,6 @@ use Cake\ORM\Entity;
  * @property bool $is_paid_festival
  * @property int $ticket_price
  * @property \Cake\I18n\DateTime $sale_start_date
- * @property int $payment_link
  * @property \Cake\I18n\DateTime $created
  * @property \Cake\I18n\DateTime $modified
  * @property \Cake\I18n\DateTime|null $deleted
@@ -34,7 +33,6 @@ class Event extends Entity
         'is_paid_festival' => true,
         'ticket_price' => true,
         'sale_start_date' => true,
-        'payment_link' => true,
         'servant_registration_start_date' => true,
         'servant_registration_end_date' => true,
         'servant_vacancies' => true,
