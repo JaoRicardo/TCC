@@ -1,391 +1,430 @@
 <script lang="ts">
 	/**
-	 * "Meus Formulários" — lista as inscrições que têm formulário para responder.
-	 * Entra pelo menu lateral do painel; daqui o campista abre a tela de resposta.
+	 * "Meus formulários" — as inscrições que têm formulário para responder, no
+	 * mesmo visual de "Minha equipe" (marfim, azul e ouro). Daqui a pessoa abre a
+	 * tela de resposta (`/dashboard/formulario/{id}`).
 	 */
-	import { onMount } from 'svelte';
+	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { loginUrl } from '$lib/redirect';
+	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
+	import logoAsas from '$lib/imgs/logo-asas.png';
+	import '$lib/styles/formularios.css';
 	import { getMinhasInscricoes, type MinhaInscricao } from '$lib/services/inscricaoService';
 
-	let loading = $state(true);
-	let error = $state('');
+	let estado: 'inicio' | 'carregando' | 'erro' | 'pronto' = $state('inicio');
 	let inscricoes: MinhaInscricao[] = $state([]);
 
-	$effect(() => {
-		if (!auth.isLoading && !auth.isAuthenticated) {
-			window.location.href = '/login';
-		}
-	});
-
-	onMount(async () => {
+	async function carregar() {
+		estado = 'carregando';
 		const res = await getMinhasInscricoes();
-		if (res.error) error = res.error;
-		else inscricoes = res.inscricoes;
-		loading = false;
+		if (res.error) {
+			estado = 'erro';
+			return;
+		}
+		inscricoes = res.inscricoes;
+		estado = 'pronto';
+	}
+
+	$effect(() => {
+		if (auth.isLoading || estado !== 'inicio') return;
+		if (!auth.isAuthenticated) {
+			goto(loginUrl($page.url.pathname), { replaceState: true });
+			return;
+		}
+		carregar();
 	});
 
 	// Só entram as inscrições que já têm formulário montado e em que a pessoa está
 	// numa situação que dá direito a responder. Evento com formulário: a inscrição
-	// fica "em andamento" até enviar e vira "Inscrito" depois.
-	const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Inscrição em andamento', 'Inscrito'];
+	// fica "em andamento" até enviar e vira "Inscrito" depois. Correção pedida
+	// reabre o formulário até o prazo da correção.
+	const STATUS_COM_FORMULARIO = [
+		'Sorteado',
+		'Indicado',
+		'Suplente',
+		'Formulário Enviado',
+		'Inscrição em andamento',
+		'Inscrito',
+		'Correção pedida'
+	];
 
-	const comFormulario = $derived(
-		inscricoes.filter((i) => i.temFormulario && STATUS_COM_FORMULARIO.includes(i.status))
-	);
-
-	const pendentes = $derived(comFormulario.filter((i) => !i.formularioEnviado));
-	const enviados = $derived(comFormulario.filter((i) => i.formularioEnviado));
-
+	const comFormulario = $derived(inscricoes.filter((i) => i.temFormulario && STATUS_COM_FORMULARIO.includes(i.status)));
+	const correcao = (i: MinhaInscricao) => i.status === 'Correção pedida';
+	const pendentes = $derived(comFormulario.filter((i) => correcao(i) || !i.formularioEnviado));
+	const enviados = $derived(comFormulario.filter((i) => !correcao(i) && i.formularioEnviado));
 	// Inscrições que ainda não chegaram a ter formulário, mostradas só como contexto.
-	const aguardando = $derived(
-		inscricoes.filter(
-			(i) => !comFormulario.includes(i) && !['Desistência'].includes(i.status)
-		)
-	);
+	const outras = $derived(inscricoes.filter((i) => !comFormulario.includes(i) && i.status !== 'Desistência'));
 
-	function formatarPrazo(iso?: string | null): string {
+	const prazoDe = (i: MinhaInscricao) => (correcao(i) ? i.prazoCorrecao : i.prazoFormulario) ?? null;
+
+	function dataBr(iso?: string | null): string {
 		if (!iso) return '';
-		const [data, hora] = iso.split('T');
-		const [y, m, d] = data.split('-');
-		return `${d}/${m}/${y} às ${hora}`;
+		const [y, m, d] = iso.slice(0, 10).split('-');
+		return `${d}/${m}/${y}`;
 	}
 
-	function diasRestantes(iso?: string | null): number | null {
+	function diasRestantes(iso: string | null): number | null {
 		if (!iso) return null;
-		return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000);
+		const fim = new Date(iso.slice(0, 10) + 'T23:59:59');
+		const hoje = new Date();
+		hoje.setHours(0, 0, 0, 0);
+		return Math.floor((fim.getTime() - hoje.getTime()) / 86400000);
 	}
 
 	function textoPrazo(i: MinhaInscricao): string {
-		const dias = diasRestantes(i.prazoFormulario);
-		if (dias === null) return 'Sem prazo definido';
-		if (dias < 0) return `Prazo encerrado em ${formatarPrazo(i.prazoFormulario)}`;
-		if (dias === 0) return `Último dia — até ${formatarPrazo(i.prazoFormulario)}`;
-		if (dias === 1) return `Falta 1 dia — até ${formatarPrazo(i.prazoFormulario)}`;
-		return `Faltam ${dias} dias — até ${formatarPrazo(i.prazoFormulario)}`;
+		const prazo = prazoDe(i);
+		const dias = diasRestantes(prazo);
+		if (dias === null) return 'Sem prazo definido.';
+		const ate = `até ${dataBr(prazo)}`;
+		if (dias < 0) return `O prazo terminou em ${dataBr(prazo)}.`;
+		if (dias === 0) return `Último dia: responda ${ate}.`;
+		if (dias === 1) return `Falta 1 dia: responda ${ate}.`;
+		return `Faltam ${dias} dias: responda ${ate}.`;
 	}
 
 	function urgente(i: MinhaInscricao): boolean {
-		const dias = diasRestantes(i.prazoFormulario);
+		const dias = diasRestantes(prazoDe(i));
 		return dias !== null && dias <= 2;
+	}
+
+	const real = (v: number) => v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+
+	function textoPagamento(i: MinhaInscricao): string | null {
+		const p = i.pagamento;
+		const pagoEm = p?.pagoEm ?? i.pagoEm;
+		if (pagoEm) return `Pago em ${dataBr(pagoEm)}.`;
+		if (i.isPago) return 'Inscrição paga.';
+		if (i.status === 'Suplente') return 'Suplente só paga se for chamado para uma vaga.';
+		if (p?.precisaPagar && p.valor > 0) {
+			return `Pague ${real(p.valor)} diretamente com a organização${p.prazo ? ` até ${dataBr(p.prazo)}` : ''}.`;
+		}
+		return null;
+	}
+
+	function textoOutra(i: MinhaInscricao): string {
+		if (i.perdeuPrazo || i.status === 'Prazo Perdido') return 'O prazo terminou e a vaga foi repassada.';
+		if (i.status === 'Cancelada pela organização' || i.status === 'Recusada') return 'Esta inscrição foi encerrada pela organização.';
+		if (i.status === 'Retirado do sorteio') return 'Você não concorre mais neste sorteio.';
+		if (i.naoSorteado) return 'Você não foi sorteado desta vez.';
+		if (!i.temFormulario) return 'A organização ainda não montou o formulário.';
+		return 'O formulário abre quando você for sorteado, indicado ou ficar de suplente.';
 	}
 </script>
 
 <svelte:head>
-	<title>Meus Formulários | Acampamento São Miguel</title>
+	<title>Meus formulários | Acampamento São Miguel</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link
+		href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Source+Sans+3:wght@400;500;600;700&display=swap"
+		rel="stylesheet"
+	/>
 </svelte:head>
 
-<div class="page">
-	<a href="/dashboard" class="back-link">&larr; Voltar ao painel</a>
-	<h2>Meus Formulários</h2>
-	<p class="subtitle">
-		A ficha de inscrição de cada acampamento em que você foi selecionado ou está como suplente.
-	</p>
+<div class="pagina">
+	<CabecalhoSite />
 
-	{#if loading}
-		<div class="status-state">
-			<div class="spinner"></div>
-			<p>Carregando...</p>
+	<main class="folha">
+		<a href="/dashboard" class="voltar">← Voltar para o Início</a>
+		<div class="titulo">
+			<h1>Meus formulários</h1>
+			<p>A ficha de cada atividade em que você foi sorteado, indicado ou ficou de suplente.</p>
 		</div>
-	{:else if error}
-		<div class="status-state error">{error}</div>
-	{:else if comFormulario.length === 0 && aguardando.length === 0}
-		<div class="vazio">
-			<div class="vazio-icone">📝</div>
-			<h3>Nenhum formulário por enquanto</h3>
-			<p>Quando você for sorteado, indicado ou entrar na lista de suplentes, a ficha aparece aqui.</p>
-			<a href="/dashboard" class="btn-secundario">Ver acampamentos abertos</a>
-		</div>
-	{:else}
-		{#if pendentes.length > 0}
-			<section class="grupo">
-				<h3 class="grupo-titulo">Para responder ({pendentes.length})</h3>
-				{#each pendentes as i}
-					<a class="cartao" class:cartao--urgente={urgente(i)} href="/dashboard/formulario/{i.id}">
-						<div class="cartao-topo">
-							<span class="cartao-nome">{i.activity?.nome ?? 'Acampamento'}</span>
-							<span class="etiqueta etiqueta--{i.status === 'Suplente' ? 'suplente' : 'vaga'}">
-								{i.status}
-							</span>
-						</div>
-						<p class="cartao-prazo" class:cartao-prazo--urgente={urgente(i)}>
-							{textoPrazo(i)}
-						</p>
-						{#if i.status === 'Suplente'}
-							<p class="cartao-obs">
-								Suplente também responde: só é chamado para uma vaga quem já entregou a ficha.
-							</p>
-						{/if}
-						<span class="cartao-acao">Responder formulário →</span>
-					</a>
-				{/each}
-			</section>
-		{/if}
 
-		{#if enviados.length > 0}
-			<section class="grupo">
-				<h3 class="grupo-titulo">Já enviados ({enviados.length})</h3>
-				{#each enviados as i}
-					<a class="cartao cartao--pronto" href="/dashboard/formulario/{i.id}">
-						<div class="cartao-topo">
-							<span class="cartao-nome">{i.activity?.nome ?? 'Acampamento'}</span>
-							<span class="etiqueta etiqueta--ok">✓ Enviado</span>
-						</div>
-						<p class="cartao-prazo">
-							{#if i.isPago}
-								Inscrição paga.
-							{:else if i.status === 'Suplente'}
-								Suplentes não pagam a taxa.
-							{:else}
-								Falta o pagamento da inscrição.
-							{/if}
-						</p>
-						<span class="cartao-acao">Ver ou corrigir respostas →</span>
-					</a>
-				{/each}
+		{#if estado === 'inicio' || estado === 'carregando'}
+			<div class="carregando" aria-busy="true"><span class="fm-spinner"></span>Carregando seus formulários...</div>
+		{:else if estado === 'erro'}
+			<section class="cartao vazio" role="alert">
+				<p class="vazio-titulo">Não foi possível carregar seus formulários.</p>
+				<p class="vazio-texto">Verifique sua conexão com a internet e tente novamente.</p>
+				<button type="button" class="fm-btn fm-btn--ouro fm-btn--grande" onclick={carregar}>Tentar novamente</button>
 			</section>
-		{/if}
+		{:else if comFormulario.length === 0 && outras.length === 0}
+			<section class="cartao vazio">
+				<img src={logoAsas} alt="" class="brasao" />
+				<p class="vazio-titulo">Nenhum formulário por enquanto.</p>
+				<p class="vazio-texto">Quando você for sorteado, indicado ou ficar de suplente, a ficha aparece aqui.</p>
+				<a href="/dashboard" class="fm-btn fm-btn--contorno fm-btn--grande">Ver as atividades</a>
+			</section>
+		{:else}
+			{#if pendentes.length > 0}
+				<section class="grupo">
+					<h2 class="grupo-titulo">Para responder <span>{pendentes.length}</span></h2>
+					{#each pendentes as i (i.id)}
+						<article class="cartao item pendente" class:urgente={urgente(i)}>
+							<div class="item-textos">
+								<div class="item-nome">
+									<strong>{i.activity?.nome ?? 'Atividade'}</strong>
+									<span class="etiqueta" class:etiqueta--aviso={correcao(i)}>{i.status}</span>
+								</div>
+								{#if i.activity?.categoria}<span class="item-sub">{i.activity.categoria}</span>{/if}
+								<span class="item-prazo" class:item-prazo--urgente={urgente(i)}>{textoPrazo(i)}</span>
+								{#if correcao(i) && i.motivoOrganizacao}
+									<span class="item-obs">A organização pediu: “{i.motivoOrganizacao}”</span>
+								{:else if i.status === 'Suplente'}
+									<span class="item-obs">Suplente também responde: só é chamado quem já entregou a ficha.</span>
+								{/if}
+							</div>
+							<a href="/dashboard/formulario/{i.id}" class="fm-btn fm-btn--ouro fm-btn--grande">
+								{correcao(i) ? 'Corrigir respostas' : 'Responder'}
+							</a>
+						</article>
+					{/each}
+				</section>
+			{/if}
 
-		{#if aguardando.length > 0}
-			<section class="grupo">
-				<h3 class="grupo-titulo">Outras inscrições</h3>
-				{#each aguardando as i}
-					<div class="cartao cartao--inativo">
-						<div class="cartao-topo">
-							<span class="cartao-nome">{i.activity?.nome ?? 'Inscrição'}</span>
-							<span class="etiqueta etiqueta--neutra">{i.status}</span>
-						</div>
-						<p class="cartao-prazo">
-							{#if i.perdeuPrazo}
-								O prazo do formulário terminou.
-							{:else if !i.temFormulario}
-								A organização ainda não montou o formulário deste acampamento.
-							{:else}
-								O formulário abre quando você for selecionado.
+			{#if enviados.length > 0}
+				<section class="grupo">
+					<h2 class="grupo-titulo">Já enviados <span>{enviados.length}</span></h2>
+					{#each enviados as i (i.id)}
+						{@const pagamento = textoPagamento(i)}
+						<article class="cartao item enviado">
+							<div class="item-textos">
+								<div class="item-nome">
+									<strong>{i.activity?.nome ?? 'Atividade'}</strong>
+									<span class="etiqueta etiqueta--ok">✓ Enviado</span>
+								</div>
+								{#if i.activity?.categoria}<span class="item-sub">{i.activity.categoria}</span>{/if}
+								{#if pagamento}<span class="item-prazo">{pagamento}</span>{/if}
+							</div>
+							<a href="/dashboard/formulario/{i.id}" class="fm-btn fm-btn--contorno fm-btn--grande">Ver respostas</a>
+						</article>
+					{/each}
+				</section>
+			{/if}
+
+			{#if outras.length > 0}
+				<section class="grupo">
+					<h2 class="grupo-titulo">Outras inscrições <span>{outras.length}</span></h2>
+					{#each outras as i (i.id)}
+						<article class="cartao item inativo">
+							<div class="item-textos">
+								<div class="item-nome">
+									<strong>{i.activity?.nome ?? 'Atividade'}</strong>
+									<span class="etiqueta etiqueta--neutra">{i.naoSorteado ? 'Não sorteado' : i.status}</span>
+								</div>
+								<span class="item-prazo">{textoOutra(i)}</span>
+							</div>
+							{#if i.activity}
+								<a href="/dashboard/atividades/{i.activity.id}" class="fm-btn fm-btn--grande">Ver a atividade</a>
 							{/if}
-						</p>
-					</div>
-				{/each}
-			</section>
+						</article>
+					{/each}
+				</section>
+			{/if}
 		{/if}
-	{/if}
+	</main>
 </div>
 
 <style>
-	.page {
-		max-width: 820px;
+	/* As cores do painel (formularios.css), sem a classe .fm: ela tem margem
+	   negativa feita para o painel e puxaria a página (e o cabeçalho) para cima. */
+	.pagina {
+		--ouro: #b69e55;
+		--ouro-claro: #e2ce8a;
+		--ouro-texto: #7a6528;
+		--azul: #1b2f5e;
+		--azul-noite: #0f1d3d;
+		--vermelho: #9b2c2c;
+		--marfim: #f7f2e7;
+		--pergaminho: #fffdf8;
+		--borda: #d9cca6;
+		--borda-suave: #e3d8bc;
+		--tinta: #1e2233;
+		--tinta-2: #2b3045;
+		--tinta-3: #4f5468;
+		--campo-borda: #a39363;
+		--anel-foco: rgba(182, 158, 85, 0.45);
+		--linha: #efe7d3;
+		--cabecalho-tabela: #fbf6e6;
+		--aviso-bg: #fbf0d6;
+		--aviso-bd: #ebd39c;
+		--aviso-tx: #6a480c;
+		--aviso-ponto: #c08a1e;
+		--cartao-aberto-anel: 0 0 0 3px rgba(182, 158, 85, 0.3);
+		--icone-tipo-bg: #f1e8cf;
+		--icone-tipo-tx: #6b5822;
+		--selo-cond-bg: #e6ebf5;
+		--selo-cond-bd: #c4cfe6;
+		--selo-cond-tx: #21376a;
+		--opcional-bg: #efebe1;
+		--chave-on: #1b2f5e;
+		--chave-off: #c9c3b2;
+		--toast-bg: #0f1d3d;
+		--vitral: linear-gradient(90deg, #1b2f5e, #1f6b6e 40%, #b69e55 70%, #9b2c2c);
+		min-height: 100vh;
+		font-family: 'Source Sans 3', system-ui, sans-serif;
+		color: var(--tinta);
+		background: var(--marfim);
+	}
+
+	.pagina button {
+		font-family: inherit;
+	}
+	.folha {
+		display: flex;
+		flex-direction: column;
+		gap: 22px;
+		width: 100%;
+		max-width: 1200px;
+		box-sizing: border-box;
 		margin: 0 auto;
-		padding: 2rem 1.5rem 4rem;
+		padding: 22px 48px 64px;
 	}
-
-	.back-link {
-		display: inline-block;
-		margin-bottom: 1rem;
-		color: #1c8b6b;
-		text-decoration: none;
+	.voltar {
+		align-self: flex-start;
+		font-size: 16px;
 		font-weight: 600;
-		font-size: 0.9rem;
-	}
-
-	h2 {
-		margin: 0 0 0.3rem 0;
-		color: #1a1a1a;
-	}
-
-	.subtitle {
-		color: #777;
-		margin: 0 0 2rem 0;
-	}
-
-	.status-state {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-		padding: 3rem 1rem;
-		color: #666;
-		text-align: center;
-	}
-
-	.status-state.error {
-		color: #b91c1c;
-	}
-
-	.spinner {
-		width: 32px;
-		height: 32px;
-		border: 4px solid rgba(111, 222, 194, 0.3);
-		border-top-color: #6fdec2;
-		border-radius: 50%;
-		animation: spin 1s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
-	.vazio {
-		background: #fff;
-		border: 1px solid #eaeaea;
-		border-radius: 14px;
-		padding: 3rem 2rem;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.6rem;
-		text-align: center;
-	}
-
-	.vazio-icone {
-		font-size: 2.6rem;
-	}
-
-	.vazio h3 {
-		margin: 0;
-		color: #222;
-	}
-
-	.vazio p {
-		margin: 0;
-		color: #666;
-		max-width: 44ch;
-		line-height: 1.5;
-	}
-
-	.btn-secundario {
-		margin-top: 0.8rem;
-		background: #6fdec2;
-		color: #115843;
-		padding: 0.65rem 1.6rem;
-		border-radius: 999px;
-		font-weight: 700;
-		font-size: 0.9rem;
+		color: var(--azul);
 		text-decoration: none;
 	}
-
-	.grupo {
-		margin-bottom: 2.2rem;
+	.titulo {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
 	}
-
-	.grupo-titulo {
-		font-size: 0.78rem;
-		font-weight: 800;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		color: #9a9a9a;
-		margin: 0 0 0.8rem 0;
+	.titulo h1 {
+		margin: 0;
+		font: 600 48px/1.05 'Cormorant Garamond', serif;
+		color: var(--azul);
 	}
-
+	.titulo p {
+		margin: 0;
+		font-size: 17px;
+		color: var(--tinta-3);
+	}
 	.cartao {
-		display: block;
-		background: #fff;
-		border: 1px solid #eaeaea;
-		border-left: 5px solid #6fdec2;
-		border-radius: 12px;
-		padding: 1.1rem 1.3rem;
-		margin-bottom: 0.9rem;
-		text-decoration: none;
-		color: inherit;
-		transition:
-			box-shadow 0.15s ease,
-			transform 0.15s ease;
+		background: var(--pergaminho);
+		border: 1px solid var(--borda-suave);
+		border-radius: 14px;
+		box-shadow: 0 14px 28px -24px rgba(15, 29, 61, 0.45);
 	}
-
-	a.cartao:hover {
-		box-shadow: 0 6px 18px rgba(17, 88, 67, 0.1);
-		transform: translateY(-1px);
+	.grupo {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
 	}
-
-	.cartao--urgente {
-		border-left-color: #f59e0b;
-	}
-
-	.cartao--pronto {
-		border-left-color: #34d399;
-	}
-
-	.cartao--inativo {
-		border-left-color: #e5e7eb;
-		background: #fafafa;
-	}
-
-	.cartao-topo {
+	.grupo-titulo {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
-		gap: 0.8rem;
+		gap: 10px;
+		margin: 6px 0 0;
+		font: 600 26px/1.1 'Cormorant Garamond', serif;
+		color: var(--azul);
+	}
+	.grupo-titulo span {
+		font: 700 13px 'Source Sans 3', sans-serif;
+		color: var(--ouro-texto);
+		background: var(--cabecalho-tabela);
+		border: 1px solid var(--borda);
+		border-radius: 999px;
+		padding: 2px 9px;
+	}
+	.item {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) auto;
+		gap: 20px;
+		align-items: center;
+		padding: 20px 24px;
+		border-left: 5px solid var(--azul);
+	}
+	.item.pendente {
+		border-left-color: var(--ouro);
+	}
+	.item.urgente {
+		border-left-color: var(--vermelho);
+	}
+	.item.inativo {
+		border-left-color: var(--borda);
+	}
+	.item-textos {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.item-nome {
+		display: flex;
+		align-items: center;
+		gap: 10px;
 		flex-wrap: wrap;
 	}
-
-	.cartao-nome {
-		font-weight: 700;
-		color: #1a1a1a;
-		font-size: 1.02rem;
+	.item-nome strong {
+		font: 600 28px/1.1 'Cormorant Garamond', serif;
+		color: var(--azul);
 	}
-
-	.cartao-prazo {
-		margin: 0.35rem 0 0;
-		color: #666;
-		font-size: 0.88rem;
+	.item-sub {
+		font-size: 15px;
+		color: var(--tinta-3);
 	}
-
-	.cartao-prazo--urgente {
-		color: #b45309;
+	.item-prazo {
+		font-size: 17px;
+		color: var(--tinta);
+	}
+	.item-prazo--urgente {
+		color: var(--vermelho);
 		font-weight: 600;
 	}
-
-	.cartao-obs {
-		margin: 0.3rem 0 0;
-		color: #888;
-		font-size: 0.82rem;
-		line-height: 1.45;
+	.item-obs {
+		font-size: 15px;
+		color: var(--tinta-3);
 	}
-
-	.cartao-acao {
-		display: inline-block;
-		margin-top: 0.7rem;
-		color: #1c8b6b;
-		font-weight: 700;
-		font-size: 0.88rem;
-	}
-
 	.etiqueta {
-		font-size: 0.7rem;
-		font-weight: 800;
+		font-size: 11px;
+		font-weight: 700;
 		text-transform: uppercase;
-		letter-spacing: 0.04em;
-		padding: 0.2rem 0.6rem;
+		letter-spacing: 0.05em;
+		padding: 3px 9px;
 		border-radius: 999px;
 		white-space: nowrap;
+		color: var(--selo-cond-tx);
+		background: var(--selo-cond-bg);
+		border: 1px solid var(--selo-cond-bd);
 	}
-
-	.etiqueta--vaga {
-		background: #ecfdf5;
-		color: #065f46;
-		border: 1px solid #a7f3d0;
+	.etiqueta--aviso {
+		color: var(--aviso-tx);
+		background: var(--aviso-bg);
+		border-color: var(--aviso-bd);
 	}
-
-	.etiqueta--suplente {
-		background: #eff6ff;
-		color: #1e40af;
-		border: 1px solid #bfdbfe;
-	}
-
 	.etiqueta--ok {
-		background: #6fdec2;
-		color: #115843;
+		color: #fff;
+		background: var(--azul);
+		border-color: var(--azul);
 	}
-
 	.etiqueta--neutra {
-		background: #f3f4f6;
-		color: #6b7280;
-		border: 1px solid #e5e7eb;
+		color: var(--tinta-3);
+		background: var(--opcional-bg);
+		border-color: var(--borda-suave);
 	}
-
-	@media (max-width: 520px) {
-		.page {
-			padding: 1.5rem 1rem 3rem;
-		}
+	.vazio {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		gap: 10px;
+		padding: 56px 24px;
+	}
+	.vazio-titulo {
+		margin: 0;
+		font: 600 28px 'Cormorant Garamond', serif;
+		color: var(--azul);
+	}
+	.vazio-texto {
+		margin: 0;
+		max-width: 520px;
+		font-size: 17px;
+		color: var(--tinta-3);
+	}
+	.brasao {
+		width: 110px;
+		opacity: 0.55;
+		filter: sepia(1) saturate(0.6);
+	}
+	.carregando {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		font-size: 17px;
+		color: var(--tinta-3);
 	}
 </style>

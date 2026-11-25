@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { auth } from "$lib/stores/auth.svelte";
-	import { acessaPainel, primeiraTela } from "$lib/permissoes";
 	import { getActivities } from "$lib/services/activityService";
 	import { getMinhasInscricoes, type MinhaInscricao } from "$lib/services/inscricaoService";
 	import { API_HOST } from "$lib/api";
@@ -17,7 +16,7 @@
 		jaTerminou,
 		servosAbertosAte,
 	} from "$lib/faseAtividade";
-	import banner from "$lib/imgs/banner.png";
+	import CabecalhoSite from "$lib/components/CabecalhoSite.svelte";
 	import logoAsas from "$lib/imgs/logo-asas.png";
 
 	let activities: Activity[] = $state([]);
@@ -119,8 +118,8 @@
 		}
 	}
 
-	function handleLogout() {
-		auth.clearToken();
+	// Ao sair (pelo cabeçalho), os cartões deixam de mostrar a situação da pessoa.
+	function limparMinhasInscricoes() {
 		minhasInscricoesMap = {};
 		formulariosPendentes = 0;
 		inscricoesCarregadas = false;
@@ -187,29 +186,7 @@
 </svelte:head>
 
 <div class="pagina">
-	<header class="cabecalho">
-		<img src={banner} alt="Comunidade São Miguel do Arcanjo" class="banner" />
-		{#if auth.isLoading}
-			<!-- conferindo a sessão salva -->
-		{:else if auth.isAuthenticated && auth.user}
-			<div class="usuario">
-				<div class="usuario-saudacao">
-					<div class="avatar">{auth.user.name?.charAt(0).toUpperCase()}</div>
-					<div class="usuario-nome">
-						<span class="usuario-bemvindo">Bem-vindo(a),</span>
-						<span class="usuario-primeiro-nome">{auth.user.name?.split(" ")[0]}</span>
-					</div>
-				</div>
-				<a href="/dashboard/perfil" class="btn-sair">Meu cadastro</a>
-				{#if acessaPainel()}
-					<a href={primeiraTela()} class="btn-admin">Painel</a>
-				{/if}
-				<button class="btn-sair" onclick={handleLogout}>Sair</button>
-			</div>
-		{:else}
-			<a href="/login" class="btn-entrar">Entrar</a>
-		{/if}
-	</header>
+	<CabecalhoSite aoSair={limparMinhasInscricoes} />
 
 	<!-- Topo em "vitral" -->
 	<section class="vitral">
@@ -402,125 +379,6 @@
 	button {
 		font-family: inherit;
 		box-sizing: border-box;
-	}
-
-	/* ─── Cabeçalho ─────────────────────────────────────────────── */
-	.cabecalho {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		flex-wrap: wrap;
-		padding: 10px var(--margem);
-		background: var(--pergaminho);
-		border-bottom: 1px solid var(--borda);
-		/* filete dourado duplo */
-		box-shadow:
-			0 3px 0 -1px #fffdf8,
-			0 4px 0 -1px #b69e55;
-		position: relative;
-		z-index: 2;
-	}
-
-	.banner {
-		height: clamp(44px, 4.2vw, 60px);
-		width: auto;
-		display: block;
-	}
-
-	.btn-entrar {
-		font-size: 16px;
-		font-weight: 600;
-		color: var(--pergaminho);
-		background: var(--azul);
-		border: 1px solid var(--azul);
-		border-radius: 999px;
-		padding: 11px 26px;
-		text-decoration: none;
-		box-shadow:
-			inset 0 0 0 2px #1b2f5e,
-			inset 0 0 0 3px rgba(182, 158, 85, 0.8);
-		transition: background 0.2s;
-	}
-
-	.btn-entrar:hover {
-		background: var(--azul-noite);
-	}
-
-	.usuario {
-		display: flex;
-		align-items: center;
-		gap: clamp(8px, 1.1vw, 16px);
-	}
-
-	.usuario-saudacao {
-		display: flex;
-		align-items: center;
-		gap: 10px;
-	}
-
-	.avatar {
-		width: 42px;
-		height: 42px;
-		border-radius: 50%;
-		background: var(--azul);
-		border: 2px solid var(--ouro);
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font: 700 22px "Cormorant Garamond", serif;
-		color: var(--ouro-claro);
-		flex: 0 0 auto;
-		box-sizing: border-box;
-	}
-
-	.usuario-nome {
-		display: flex;
-		flex-direction: column;
-		line-height: 1.15;
-	}
-
-	.usuario-bemvindo {
-		font-size: 13px;
-		color: #5a5f72;
-	}
-
-	.usuario-primeiro-nome {
-		font-size: 17px;
-		font-weight: 700;
-		color: var(--tinta);
-	}
-
-	.btn-admin,
-	.btn-sair {
-		font-size: 15px;
-		font-weight: 600;
-		border-radius: 999px;
-		padding: 9px 16px;
-		cursor: pointer;
-		white-space: nowrap;
-		text-decoration: none;
-		transition: background 0.2s;
-	}
-
-	.btn-admin {
-		color: #6b5822;
-		background: #fbf6e6;
-		border: 1px solid var(--ouro);
-	}
-
-	.btn-admin:hover {
-		background: #f3e9c8;
-	}
-
-	.btn-sair {
-		color: var(--azul);
-		background: transparent;
-		border: 1px solid #c9cfde;
-	}
-
-	.btn-sair:hover {
-		background: #eef1f7;
 	}
 
 	/* ─── Topo em vitral ────────────────────────────────────────── */

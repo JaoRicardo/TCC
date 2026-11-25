@@ -56,7 +56,6 @@
 	/** null = sem erro; '' = falha de conexão; texto = o que o servidor disse. */
 	let erroEnvio: string | null = $state(null);
 	let rascunhoAs = $state('');
-	let topo: HTMLElement | undefined = $state();
 	/** Respostas como estavam no servidor: com correção pedida, mostra o que a pessoa já atualizou. */
 	let originais: Record<number, string> = $state({});
 	/** Acabou de reenviar depois da correção (tela "Correção enviada!"). */
@@ -257,7 +256,8 @@
 		mostrarErros = false;
 		guardarRascunho();
 		await tick();
-		topo?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+		// Volta ao topo da página, com o cabeçalho à vista, como nas outras telas.
+		window.scrollTo({ top: 0, behavior: 'smooth' });
 	}
 
 	// ─── Perguntas de arquivo ────────────────────────────────────────────
@@ -791,7 +791,7 @@
 <div class="pagina">
 	<CabecalhoSite />
 
-	<main class="folha" bind:this={topo}>
+	<main class="folha">
 		{#if ehEvento && form?.atividade}
 			<a href="/dashboard/atividades/{form.atividade.id}" class="voltar">← Detalhes do evento</a>
 		{:else}
@@ -1093,7 +1093,6 @@
 		max-width: 760px;
 		margin: 0 auto;
 		padding: 16px var(--margem) 48px;
-		scroll-margin-top: 8px;
 	}
 
 	.voltar {

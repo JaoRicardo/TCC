@@ -5,6 +5,7 @@
 	import { acessaPainel, menuDaPessoa, podeAbrir, primeiraTela, telaAtual } from '$lib/permissoes';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 	import { caminhoDoPainel } from '$lib/stores/caminho.svelte';
+	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
 
 	let { children } = $props();
 
@@ -13,9 +14,6 @@
 	let telaLiberada = $derived(!auth.isLoading && acessaPainel() && podeAbrir($page.url.pathname));
 
 	let tela = $derived(telaAtual($page.url.pathname));
-
-	/** "João Pedro Ricardo de Souza" → "João Pedro", como no topo do design. */
-	let nomeCurto = $derived((auth.user?.name ?? '').split(' ').slice(0, 2).join(' '));
 
 	$effect(() => {
 		if (!auth.isLoading) {
@@ -30,10 +28,6 @@
 		}
 	});
 
-	function handleLogout() {
-		auth.clearToken();
-		window.location.href = '/login';
-	}
 </script>
 
 <svelte:head>
@@ -81,25 +75,19 @@
 		</aside>
 
 		<div class="admin-main">
-			<header class="topo">
-				<div class="caminho">
-					<span>Painel da Comunidade</span>
-					{#if tela.nome && caminhoDoPainel.subtela && tela.itemDoMenu}
-						<span class="caminho-seta" aria-hidden="true">›</span>
-						<a href={tela.itemDoMenu}>{tela.nome}</a>
-						<span class="caminho-seta" aria-hidden="true">›</span>
-						<strong>{caminhoDoPainel.subtela}</strong>
-					{:else if tela.nome}
-						<span class="caminho-seta" aria-hidden="true">›</span>
-						<strong>{tela.nome}</strong>
-					{/if}
-				</div>
-				<div class="conta">
-					<div class="avatar" aria-hidden="true">{auth.user?.name?.charAt(0).toUpperCase()}</div>
-					<span class="conta-nome">{nomeCurto}</span>
-					<button class="sair" onclick={handleLogout}>Sair do sistema</button>
-				</div>
-			</header>
+			<CabecalhoSite semPainel aoSair={() => (window.location.href = '/login')} />
+			<div class="caminho">
+				<span>Painel da Comunidade</span>
+				{#if tela.nome && caminhoDoPainel.subtela && tela.itemDoMenu}
+					<span class="caminho-seta" aria-hidden="true">›</span>
+					<a href={tela.itemDoMenu}>{tela.nome}</a>
+					<span class="caminho-seta" aria-hidden="true">›</span>
+					<strong>{caminhoDoPainel.subtela}</strong>
+				{:else if tela.nome}
+					<span class="caminho-seta" aria-hidden="true">›</span>
+					<strong>{tela.nome}</strong>
+				{/if}
+			</div>
 
 			<main class="admin-content">
 				{@render children()}
@@ -290,39 +278,25 @@
 		background: rgba(255, 253, 248, 0.1);
 	}
 
-	.lateral a:focus-visible,
-	.sair:focus-visible {
+	.lateral a:focus-visible {
 		outline: 4px solid rgba(182, 158, 85, 0.45);
 		outline-offset: 0;
 	}
 
-	/* ─── Barra superior ──────────────────────────────────────────── */
 	.admin-main {
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
 	}
 
-	.topo {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 16px;
-		padding: 12px 32px;
-		background: #fffdf8;
-		border-bottom: 1px solid #d9cca6;
-		box-shadow: 0 3px 0 -1px #fffdf8, 0 4px 0 -1px #b69e55;
-		font-family: 'Source Sans 3', system-ui, sans-serif;
-		color: #1e2233;
-		position: relative;
-		z-index: 1;
-	}
-
+	/* Onde a pessoa está no painel, logo abaixo da barra superior. */
 	.caminho {
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		font-size: 16px;
+		padding: 14px 2.5rem 0;
+		font-family: 'Source Sans 3', system-ui, sans-serif;
+		font-size: 15px;
 		color: #4f5468;
 	}
 
@@ -338,48 +312,8 @@
 		color: #b69e55;
 	}
 
-	.conta {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-	}
-
-	.avatar {
-		width: 40px;
-		height: 40px;
-		box-sizing: border-box;
-		border-radius: 50%;
-		background: #1b2f5e;
-		border: 2px solid #b69e55;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		font: 700 21px 'Cormorant Garamond', serif;
-		color: #e2ce8a;
-	}
-
-	.conta-nome {
-		font-size: 16px;
-		font-weight: 600;
-	}
-
-	/* Sair não é uma ação perigosa: contorno azul, não vermelho. */
-	.sair {
-		font: 600 15px 'Source Sans 3', system-ui, sans-serif;
-		color: #1b2f5e;
-		background: transparent;
-		border: 1px solid #c9cfde;
-		border-radius: 999px;
-		padding: 9px 16px;
-		cursor: pointer;
-	}
-
-	.sair:hover {
-		background: #eef1f7;
-	}
-
 	.admin-content {
-		padding: 2.5rem;
+		padding: 1.25rem 2.5rem 2.5rem;
 		flex: 1;
 	}
 </style>
