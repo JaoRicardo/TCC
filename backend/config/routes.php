@@ -160,6 +160,12 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/categorias/{id}/arquivar', ['controller' => 'Categories', 'action' => 'arquivar'])->setPass(['id'])->setPatterns(['id' => '\d+']);
             $builder->post('/admin/categorias/{id}/desarquivar', ['controller' => 'Categories', 'action' => 'desarquivar'])->setPass(['id'])->setPatterns(['id' => '\d+']);
 
+            // --- Admin: Gestão › Participações anteriores (permissão "participacoes") ---
+            $builder->get('/admin/participacoes', ['controller' => 'Participacoes', 'action' => 'lista']);
+            $builder->post('/admin/participacoes', ['controller' => 'Participacoes', 'action' => 'adicionar']);
+            $builder->get('/admin/participacoes/cpf/{cpf}', ['controller' => 'Participacoes', 'action' => 'cpf'])->setPass(['cpf'])->setPatterns(['cpf' => '[0-9.\-]+']);
+            $builder->delete('/admin/participacoes/{id}', ['controller' => 'Participacoes', 'action' => 'remover'])->setPass(['id'])->setPatterns(['id' => '\d+']);
+
             // --- Admin: métodos de seleção/indicação ---
             $builder->get('/admin/selection-methods', ['controller' => 'SelectionMethods', 'action' => 'index']);
 

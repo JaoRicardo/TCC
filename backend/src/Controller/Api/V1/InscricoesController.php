@@ -10,6 +10,7 @@ use App\Model\Table\UserDocumentsTable;
 use App\Service\CategoriasService;
 use App\Service\FormulariosService;
 use App\Service\PagamentoService;
+use App\Service\ParticipacoesService;
 use App\Service\PrazoFormularioService;
 use App\Service\SorteioService;
 use Cake\Datasource\EntityInterface;
@@ -1444,22 +1445,10 @@ class InscricoesController extends ApiController
         $categoryName = $categoria->name;
         $categorias = new CategoriasService();
 
-        $priorRegs = $this->PreRegistrations->find()
-            ->contain(['Activities'])
-            ->where([
-                'PreRegistrations.user_id'              => $identity->id,
-                'PreRegistrations.subscription_type IN' => ['Campista', 'Participante'],
-                'PreRegistrations.is_quitter'            => false,
-                'PreRegistrations.deleted IS'            => null,
-            ])
-            ->all();
-
-        $foiCampistaEm = [];
-        foreach ($priorRegs as $reg) {
-            $id = $reg->activity->category_id ?? null;
-            if ($id !== null) $foiCampistaEm[(int)$id] = true;
-        }
-        $foiCampistaEm = array_keys($foiCampistaEm);
+        // Só acampamento concluído (titular até o início, formulário e pagamento)
+        // ou participação anterior cadastrada pelo CPF — ver ParticipacoesService.
+        $participacoes = new ParticipacoesService();
+        $foiCampistaEm = $participacoes->categoriasEmQueFoiCampista($identity);
 
         if ($tipo === 'Servo') {
             if (!in_array((int)$categoria->id, $categorias->liberadasParaServir($foiCampistaEm), true)) {
@@ -1473,6 +1462,11 @@ class InscricoesController extends ApiController
         // tipo === 'Campista'
         if (in_array((int)$categoria->id, $foiCampistaEm, true)) {
             return $nao('ja_campista', "Você já participou como campista em {$categoryName} anteriormente. Não é possível se inscrever novamente como campista nessa categoria.");
+        }
+
+        $outro = $participacoes->concorrendoEmOutro((int)$identity->id, (int)$categoria->id, (int)$activity->id);
+        if ($outro !== null) {
+            return $nao('inscrito_em_outro', "Você já está inscrito(a) como campista no {$outro->name}, da mesma categoria. Só é possível concorrer em um acampamento {$categoryName} por vez.");
         }
 
         $min = $categoria->min_age;

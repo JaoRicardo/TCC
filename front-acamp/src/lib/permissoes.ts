@@ -39,7 +39,10 @@ export const MENU_DO_PAINEL: { titulo: string; itens: ItemDoMenu[] }[] = [
 	},
 	{
 		titulo: 'Gestão',
-		itens: [{ chave: 'categorias', caminho: '/admin/categorias', nome: 'Categorias' }]
+		itens: [
+			{ chave: 'categorias', caminho: '/admin/categorias', nome: 'Categorias' },
+			{ chave: 'participacoes', caminho: '/admin/participacoes', nome: 'Participações anteriores' }
+		]
 	}
 ];
 
@@ -68,7 +71,8 @@ const TELA_POR_CAMINHO: [string | RegExp, string | string[]][] = [
 	['/admin/equipes', ['equipes', 'setores']],
 	['/admin/setores', 'setores'],
 	['/admin/formularios', ['formularios', 'respostas_formularios']],
-	['/admin/categorias', 'categorias']
+	['/admin/categorias', 'categorias'],
+	['/admin/participacoes', 'participacoes']
 ];
 
 /** Tem a permissão (ou qualquer uma da lista). */

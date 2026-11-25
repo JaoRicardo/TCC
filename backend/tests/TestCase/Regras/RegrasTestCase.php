@@ -189,11 +189,21 @@ abstract class RegrasTestCase extends TestCase
         ]);
     }
 
-    /** Histórico: a pessoa já foi campista num acampamento anterior desta categoria. */
-    protected function jaFoiCampista(EntityInterface $usuario, string $categoria, bool $desistiu = false): void
+    /**
+     * Histórico: a pessoa concluiu um acampamento anterior desta categoria —
+     * já começou, foi sorteada, enviou o formulário e pagou (ParticipacoesService).
+     * `$extra` muda a inscrição (ex.: suplente, desistência) para os testes da regra.
+     */
+    protected function jaFoiCampista(EntityInterface $usuario, string $categoria, bool $desistiu = false, array $extra = [], array $dadosAtividade = []): EntityInterface
     {
-        $anterior = $this->criarAcampamento($categoria);
-        $this->inscrever($usuario, $anterior, 'Campista', ['is_quitter' => $desistiu]);
+        $anterior = $this->criarAcampamento($categoria, [], $dadosAtividade + ['start_date' => '2025-01-10 08:00:00', 'year' => 2025, 'participant_fee' => 100]);
+
+        return $this->inscrever($usuario, $anterior, 'Campista', $extra + [
+            'is_quitter' => $desistiu,
+            'selection_method_id' => $this->metodos['Sorteio'],
+            'form_submitted' => true,
+            'is_fee_paid' => true,
+        ]);
     }
 
     /** Pergunta no formulário da categoria — sem nenhuma, a regra do prazo não age. */
@@ -245,7 +255,7 @@ abstract class RegrasTestCase extends TestCase
     }
 
     /** CPF com dígitos verificadores válidos (o cadastro de usuário recusa CPF inválido). */
-    private function cpfValido(int $n): string
+    protected function cpfValido(int $n): string
     {
         $base = str_pad((string)(100000000 + $n), 9, '0', STR_PAD_LEFT);
         for ($t = 9; $t < 11; $t++) {
