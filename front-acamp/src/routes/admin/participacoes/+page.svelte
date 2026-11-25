@@ -13,6 +13,7 @@
 	import '$lib/styles/formularios.css';
 	import '$lib/styles/inscritos.css';
 	import { pode } from '$lib/permissoes';
+	import { semAcento, digitosDeCpf, cpfContem } from '$lib/busca';
 	import {
 		adicionarParticipacao,
 		consultarCpf,
@@ -196,15 +197,13 @@
 	const POR_VEZ = 100;
 	let mostrando = $state(POR_VEZ);
 
-	const semAcento = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-
 	const filtradas = $derived.by(() => {
 		const termo = semAcento(busca.trim());
-		const digitos = busca.replace(/\D/g, '');
+		const digitos = digitosDeCpf(busca);
 		return participacoes.filter((p) => {
 			if (filtroCategoria && p.categoriaId !== filtroCategoria) return false;
 			if (!termo) return true;
-			return semAcento(p.nome).includes(termo) || (digitos.length >= 3 && p.cpf.replace(/\D/g, '').includes(digitos));
+			return semAcento(p.nome).includes(termo) || cpfContem(p.cpf, digitos);
 		});
 	});
 

@@ -6,6 +6,7 @@
 	 * Vale para acampamento e evento; as regras ficam no servidor (PagamentoService).
 	 */
 	import { apiFetch } from '$lib/api';
+	import { semAcento, digitosDeCpf, cpfContem } from '$lib/busca';
 	import { auth } from '$lib/stores/auth.svelte';
 	import Janela from '$lib/components/painel/Janela.svelte';
 	import {
@@ -90,7 +91,6 @@
 		return partes.length ? partes.join(' · ') : 'Sem prazo';
 	});
 
-	const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
 
 	/** Ordem: na folga, precisam pagar, ainda não precisam, pagos, perderam a vaga; por nome. */
 	function grupo(p: ResumoPagamento) {
@@ -100,14 +100,14 @@
 
 	let lista = $derived.by(() => {
 		const termo = semAcento(busca.trim());
-		const digitos = busca.replace(/\D/g, '');
+		const digitos = digitosDeCpf(busca);
 		return comPagamento
 			.filter((i) => {
 				const s = i.pagamento.situacao;
 				if (filtro === 'naoPagos' && s !== 'nao_pago') return false;
 				if (filtro === 'pagos' && s !== 'pago') return false;
 				if (!termo) return true;
-				return semAcento(i.user.name).includes(termo) || (digitos.length >= 3 && i.user.cpf.replace(/\D/g, '').includes(digitos));
+				return semAcento(i.user.name).includes(termo) || cpfContem(i.user.cpf, digitos);
 			})
 			.sort((a, b) => grupo(a.pagamento) - grupo(b.pagamento) || a.user.name.localeCompare(b.user.name, 'pt-BR'));
 	});

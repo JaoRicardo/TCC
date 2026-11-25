@@ -4,6 +4,7 @@
  * participante. O servidor é quem decide de verdade; aqui só se espelha para a
  * tela não oferecer o que a pessoa não pode fazer.
  */
+import { digitosDeCpf, cpfContem } from '$lib/busca';
 import type { EquipeDoAcampamento, PessoaDaEquipe, PessoaDoBanco, SetorDaEquipe, SituacaoNoBanco } from '$lib/services/equipeService';
 
 export const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
@@ -129,8 +130,8 @@ export function infoDaPessoa(p: PessoaDoBanco, comCpf = true): string {
 export function buscaNoBanco(banco: PessoaDoBanco[], termo: string): PessoaDoBanco[] {
 	const q = normalizar(termo);
 	if (!q) return banco;
-	const digitos = termo.replace(/\D/g, '');
-	return banco.filter((p) => normalizar(p.nome).includes(q) || (digitos.length >= 3 && (p.cpf ?? '').replace(/\D/g, '').includes(digitos)));
+	const digitos = digitosDeCpf(termo);
+	return banco.filter((p) => normalizar(p.nome).includes(q) || cpfContem(p.cpf, digitos));
 }
 
 // ─── Quem pode o quê (espelho do servidor) ────────────────────────────────

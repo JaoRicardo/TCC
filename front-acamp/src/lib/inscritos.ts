@@ -4,6 +4,7 @@
  * casal como unidade, filtros). O servidor continua sendo quem decide.
  */
 import { naFolga, type ResumoPagamento } from '$lib/pagamentos';
+import { digitosDeCpf, cpfContem } from '$lib/busca';
 
 /** Uma inscrição como `GET /activities/{id}/subscriptions` manda. */
 export interface Inscricao {
@@ -239,12 +240,11 @@ export const somenteDigitos = (s: string) => s.replace(/\D/g, '');
 export const normalizar = (s: string) =>
 	s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 
-/** Nome contém o texto (sem maiúsculas/acentos) ou o CPF contém os dígitos (a partir de 3). */
+/** Nome contém o texto (sem maiúsculas/acentos) ou, se o termo parece um CPF, o CPF contém os dígitos. */
 export function casaBusca(nome: string, cpf: string, busca: string): boolean {
 	const q = normalizar(busca);
 	if (!q) return true;
-	const digitos = somenteDigitos(busca);
-	return normalizar(nome).includes(q) || (digitos.length >= 3 && somenteDigitos(cpf).includes(digitos));
+	return normalizar(nome).includes(q) || cpfContem(cpf, digitosDeCpf(busca));
 }
 
 export const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;

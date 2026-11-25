@@ -7,6 +7,7 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import { pode } from '$lib/permissoes';
 	import { mascaraCpf, mascaraTelefone } from '$lib/mascaras';
+	import { semAcento, digitosDeCpf, cpfContem } from '$lib/busca';
 	import logoAsas from '$lib/imgs/logo-asas.png';
 	import JanelasDaConta from '$lib/components/painel/JanelasDaConta.svelte';
 
@@ -69,18 +70,16 @@
 
 	const linkDaFicha = (u: User) => `/admin/pessoas/${u.id}${filtrosDaLista}`;
 
-	// Ignora acentos e maiúsculas; no CPF compara só os dígitos.
-	const semAcento = (s: string) => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
-
+	// Ignora acentos e maiúsculas; o CPF só entra quando o termo parece um CPF.
 	let encontrados = $derived.by(() => {
 		const termo = semAcento(busca.trim());
 		if (!termo) return users;
-		const digitos = termo.replace(/\D/g, '');
+		const digitos = digitosDeCpf(termo);
 		return users.filter(
 			(u) =>
 				semAcento(u.name).includes(termo) ||
 				semAcento(u.email ?? '').includes(termo) ||
-				(digitos !== '' && (u.cpf ?? '').replace(/\D/g, '').includes(digitos))
+				cpfContem(u.cpf, digitos)
 		);
 	});
 
