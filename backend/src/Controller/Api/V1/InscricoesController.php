@@ -7,10 +7,10 @@ use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Model\Table\FormCorrectionsTable;
 use App\Model\Table\UserDocumentsTable;
+use App\Service\CategoriasService;
 use App\Service\FormulariosService;
 use App\Service\PagamentoService;
 use App\Service\PrazoFormularioService;
-use App\Service\RetiradaDoSorteioService;
 use App\Service\SorteioService;
 use Cake\Datasource\EntityInterface;
 use Cake\Http\Response;
@@ -666,6 +666,8 @@ class InscricoesController extends ApiController
                     'id'        => $activity->id,
                     'nome'      => $activity->name,
                     'categoria' => $activity->category->name ?? null,
+                    // Regra da categoria: quem preenche é o responsável, na conta da criança.
+                    'preenchidoPeloResponsavel' => (bool)($activity->category->filled_by_guardian ?? false),
                     'local'     => $activity->place,
                     'inicio'    => $activity->start_date?->format('Y-m-d\TH:i'),
                     'fim'       => $activity->start_date
@@ -1384,16 +1386,6 @@ class InscricoesController extends ApiController
 
     // ─── Helpers ───────────────────────────────────────────────────────────
 
-    // Hierarquia por idade dos acampamentos (do mais novo para o mais velho).
-    // Casais e Discipulados ficam fora dessa cadeia — cada um é autocontido:
-    // só desbloqueiam servir neles mesmos, não influenciam nem são influenciados
-    // pelas categorias da cadeia principal.
-    private const CATEGORY_CHAIN = ['Mirim' => 1, 'FAC' => 2, 'Juvenil' => 3, 'Sênior' => 4];
-
-    // Casais: sem restrição de idade. Discipulados: nenhuma faixa definida. A
-    // mesma tabela decide quem sai do sorteio quando a ficha tem o nascimento corrigido.
-    private const CATEGORY_AGE_RANGES = RetiradaDoSorteioService::FAIXAS_DE_IDADE;
-
     /**
      * Acampamento: a inscrição só vale dentro do período do tipo — campista
      * pelas datas de inscrição da atividade, servo pelas de inscrição de servos.
@@ -1429,10 +1421,12 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * Regras de elegibilidade específicas de Acampamento: uma pessoa só pode ser
-     * campista uma vez por categoria; para servir, precisa já ter sido campista
-     * naquela categoria (ou em uma "abaixo" dela na hierarquia); Juvenil exclui
-     * casados/união estável; Discipulados exige ter sido campista no Sênior antes.
+     * Regras de elegibilidade de Acampamento. As regras de cada categoria vêm das
+     * colunas dela (tela Gestão › Categorias, CategoriasService), nunca do nome:
+     * campista uma vez só por categoria; idade do campista; quem não aceita
+     * casados; categoria só de casais; "precisa ter sido campista em…". Para
+     * servir, precisa ter sido campista nela ou, na escada por idade, numa que
+     * vem depois dela.
      *
      * Pode se inscrever como campista/servo neste acampamento? Null = pode;
      * senão, um código (a página da atividade escolhe o texto por ele) e a
@@ -1443,13 +1437,15 @@ class InscricoesController extends ApiController
     private function checkAcampamentoEligibility(object $identity, object $activity, string $tipo): ?array
     {
         $nao = fn(string $codigo, string $mensagem) => ['codigo' => $codigo, 'mensagem' => $mensagem];
-        $categoryName = $activity->category->name ?? null;
-        if ($categoryName === null) {
+        $categoria = $activity->category ?? null;
+        if ($categoria === null) {
             return null;
         }
+        $categoryName = $categoria->name;
+        $categorias = new CategoriasService();
 
         $priorRegs = $this->PreRegistrations->find()
-            ->contain(['Activities' => ['Categories']])
+            ->contain(['Activities'])
             ->where([
                 'PreRegistrations.user_id'              => $identity->id,
                 'PreRegistrations.subscription_type IN' => ['Campista', 'Participante'],
@@ -1458,17 +1454,16 @@ class InscricoesController extends ApiController
             ])
             ->all();
 
-        $priorCategoryNames = [];
+        $foiCampistaEm = [];
         foreach ($priorRegs as $reg) {
-            $name = $reg->activity->category->name ?? null;
-            if ($name !== null) $priorCategoryNames[$name] = true;
+            $id = $reg->activity->category_id ?? null;
+            if ($id !== null) $foiCampistaEm[(int)$id] = true;
         }
-        $priorCategoryNames = array_keys($priorCategoryNames);
+        $foiCampistaEm = array_keys($foiCampistaEm);
 
         if ($tipo === 'Servo') {
-            $unlocked = $this->unlockedServoCategories($priorCategoryNames);
-            if (!in_array($categoryName, $unlocked, true)) {
-                return empty($priorCategoryNames)
+            if (!in_array((int)$categoria->id, $categorias->liberadasParaServir($foiCampistaEm), true)) {
+                return empty($foiCampistaEm)
                     ? $nao('nunca_campista', 'Você ainda não pode se inscrever como servo(a): é preciso ter participado como campista em ao menos uma categoria de acampamento antes.')
                     : $nao('nao_pode_servir', "Você ainda não pode servir em {$categoryName}. Só é possível servir nas categorias em que você já foi campista ou nas categorias abaixo delas na hierarquia.");
             }
@@ -1476,64 +1471,56 @@ class InscricoesController extends ApiController
         }
 
         // tipo === 'Campista'
-        if (in_array($categoryName, $priorCategoryNames, true)) {
+        if (in_array((int)$categoria->id, $foiCampistaEm, true)) {
             return $nao('ja_campista', "Você já participou como campista em {$categoryName} anteriormente. Não é possível se inscrever novamente como campista nessa categoria.");
         }
 
-        if (isset(self::CATEGORY_AGE_RANGES[$categoryName])) {
-            [$min, $max] = self::CATEGORY_AGE_RANGES[$categoryName];
-            $age = $this->calcularIdade($identity->birthday);
-            if ($age !== null && ($age < $min || $age > $max)) {
-                return $nao('idade', "A categoria {$categoryName} é para campistas de {$min} a {$max} anos.");
-            }
+        $min = $categoria->min_age;
+        $max = $categoria->max_age;
+        $age = $this->calcularIdade($identity->birthday);
+        if ($age !== null && (($min !== null && $age < $min) || ($max !== null && $age > $max))) {
+            $faixa = match (true) {
+                $min !== null && $max !== null => "de {$min} a {$max} anos",
+                $min !== null                  => "a partir de {$min} anos",
+                default                        => "de até {$max} anos",
+            };
+            return $nao('idade', "A categoria {$categoryName} é para campistas {$faixa}.");
         }
 
-        if ($categoryName === 'Juvenil') {
-            $maritalTitle = $this->fetchTable('MaritalStatuses')->find()
-                ->where(['id' => $identity->marital_status_id])
-                ->first()?->title;
-            if (in_array($maritalTitle, ['Casado', 'União estável'], true)) {
-                return $nao('casado_juvenil', 'Campistas casados(as) ou em união estável devem se inscrever na categoria Sênior, não no Juvenil.');
+        $casado = null;
+        $ehCasado = function () use ($identity, &$casado): bool {
+            if ($casado === null) {
+                $titulo = $this->fetchTable('MaritalStatuses')->find()
+                    ->where(['id' => $identity->marital_status_id])
+                    ->first()?->title;
+                $casado = in_array($titulo, ['Casado', 'União estável'], true);
             }
+            return $casado;
+        };
+
+        if (!$categoria->couples_only && !$categoria->accepts_married && $ehCasado()) {
+            $proxima = $categorias->proximaQueAceitaCasados($categoria);
+            return $nao('nao_aceita_casados', $proxima
+                ? "Campistas casados(as) ou em união estável devem se inscrever na categoria {$proxima->name}, não no {$categoryName}."
+                : "A categoria {$categoryName} não aceita campistas casados(as) ou em união estável.");
         }
 
-        // O Casais só tem vagas de casais (o casal é sorteado junto): quem não é
-        // casado(a) nem vive em união estável nunca seria sorteado.
-        if ($categoryName === 'Casais') {
-            $maritalTitle = $this->fetchTable('MaritalStatuses')->find()
-                ->where(['id' => $identity->marital_status_id])
-                ->first()?->title;
-            if (!in_array($maritalTitle, ['Casado', 'União estável'], true)) {
-                return $nao('casais_so_casados', 'O acampamento de Casais é só para pessoas casadas ou em união estável. Se o seu estado civil mudou, atualize em Meu cadastro.');
-            }
+        // Categoria só de casais (o casal é sorteado junto): quem não é casado(a)
+        // nem vive em união estável nunca seria sorteado.
+        if ($categoria->couples_only && !$ehCasado()) {
+            return $nao('so_casados', "O acampamento {$categoryName} é só para pessoas casadas ou em união estável. Se o seu estado civil mudou, atualize em Meu cadastro.");
         }
 
-        if ($categoryName === 'Discipulados' && !in_array('Sênior', $priorCategoryNames, true)) {
-            return $nao('discipulados', 'Para se inscrever no Discipulados é necessário ter participado de um acampamento Sênior antes.');
+        if ($categoria->required_category_id !== null && !in_array((int)$categoria->required_category_id, $foiCampistaEm, true)) {
+            $requerida = $this->fetchTable('Categories')->find()
+                ->where(['id' => $categoria->required_category_id, 'deleted IS' => null])
+                ->first();
+            if ($requerida !== null) {
+                return $nao('pre_requisito', "Para se inscrever no {$categoryName} é necessário ter participado de um acampamento {$requerida->name} antes.");
+            }
         }
 
         return null;
-    }
-
-    private function unlockedServoCategories(array $priorCategoryNames): array
-    {
-        $unlocked = [];
-        $maxRank  = 0;
-
-        foreach ($priorCategoryNames as $name) {
-            if (isset(self::CATEGORY_CHAIN[$name])) {
-                $maxRank = max($maxRank, self::CATEGORY_CHAIN[$name]);
-            } else {
-                // Casais, Discipulados (ou qualquer categoria fora da cadeia principal).
-                $unlocked[] = $name;
-            }
-        }
-
-        foreach (self::CATEGORY_CHAIN as $name => $rank) {
-            if ($rank <= $maxRank) $unlocked[] = $name;
-        }
-
-        return $unlocked;
     }
 
     private function calcularIdade(mixed $birthday): ?int

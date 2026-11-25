@@ -51,7 +51,7 @@ export interface MinhaInscricao {
 
 export interface Elegibilidade {
     pode: boolean;
-    /** nunca_campista, nao_pode_servir, ja_campista, idade, casado_juvenil, casais_so_casados, discipulados, fora_faixa_etaria */
+    /** nunca_campista, nao_pode_servir, ja_campista, idade, nao_aceita_casados, so_casados, pre_requisito, fora_faixa_etaria */
     codigo: string | null;
     mensagem: string | null;
     /** Evento com faixa etária: "de 18 a 35 anos". */

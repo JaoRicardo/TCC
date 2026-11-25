@@ -11,6 +11,15 @@ use Cake\ORM\Entity;
  * @property int $id
  * @property string $name
  * @property string $type
+ * @property int $position
+ * @property int|null $min_age
+ * @property int|null $max_age
+ * @property bool $in_hierarchy
+ * @property int|null $required_category_id
+ * @property bool $couples_only
+ * @property bool $accepts_married
+ * @property bool $filled_by_guardian
+ * @property \Cake\I18n\DateTime|null $archived_at
  * @property \Cake\I18n\DateTime $created
  * @property \Cake\I18n\DateTime $modified
  * @property \Cake\I18n\DateTime|null $deleted
@@ -33,6 +42,15 @@ class Category extends Entity
     protected array $_accessible = [
         'name' => true,
         'type' => true,
+        'position' => true,
+        'min_age' => true,
+        'max_age' => true,
+        'in_hierarchy' => true,
+        'required_category_id' => true,
+        'couples_only' => true,
+        'accepts_married' => true,
+        'filled_by_guardian' => true,
+        'archived_at' => true,
         'created' => true,
         'modified' => true,
         'deleted' => true,

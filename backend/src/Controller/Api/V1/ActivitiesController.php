@@ -3,6 +3,7 @@ declare(strict_types=1);
 namespace App\Controller\Api\V1;
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Service\CategoriasService;
 use App\Service\PrazoFormularioService;
 use App\Service\SorteioService;
 use Cake\Http\Response;
@@ -1556,7 +1557,13 @@ class ActivitiesController extends ApiController
             'imagem'      => $activity->image ? '/' . $activity->image : null,
             'publicoAlvo' => $activity->category->name ?? '',
             'categoria'   => $activity->category
-                ? ['id' => $activity->category->id, 'nome' => $activity->category->name, 'tipo' => $activity->category->type]
+                ? [
+                    'id'       => $activity->category->id,
+                    'nome'     => $activity->category->name,
+                    'tipo'     => $activity->category->type,
+                    // Regra da categoria (tela Gestão › Categorias): só vagas de casais.
+                    'soCasais' => (bool)$activity->category->couples_only,
+                ]
                 : null,
             'vagasTotais'  => $activity->total_vacancies,
             'inicioEvento' => $activity->start_date?->format('Y-m-d\TH:i'),
@@ -1753,7 +1760,13 @@ class ActivitiesController extends ApiController
         if (trim((string)$daAtividade('name')) === '') $erro('name', 'Informe o nome do acampamento.');
         if (trim((string)$daAtividade('place')) === '') $erro('place', 'Informe o local.');
         $categoria = $this->categoriaDeAcampamento($daAtividade('category_id'));
-        if ($categoria === null) $erro('category_id', 'Escolha a categoria.');
+        if ($categoria === null) {
+            $erro('category_id', 'Escolha a categoria.');
+        } elseif ($categoria->archived_at !== null && (int)$categoria->id !== (int)($atividade?->category_id ?? 0)) {
+            // Arquivada não recebe acampamento novo; o que já é dela continua.
+            $erro('category_id', "A categoria {$categoria->name} foi arquivada. Escolha outra.");
+        }
+        $soCasais = CategoriasService::soCasais($categoria);
 
         $inicio = $dia($daAtividade('start_date'));
         if ($inicio === null) {
@@ -1804,7 +1817,7 @@ class ActivitiesController extends ApiController
             }
         }
 
-        // Vagas do sorteio: no Casais só casais; nas outras, homens e mulheres.
+        // Vagas do sorteio: na categoria só de casais, só casais; nas outras, homens e mulheres.
         // Indicações não contam: são ilimitadas, fora do sorteio.
         $vagas = [];
         foreach (['raffle_man_vacancies', 'raffle_woman_vacancies', 'raffle_couple_vacancies'] as $campo) {
@@ -1816,7 +1829,7 @@ class ActivitiesController extends ApiController
             }
             $vagas[$campo] = (int)$v;
         }
-        if ($categoria === 'Casais') {
+        if ($soCasais) {
             if ($vagas['raffle_couple_vacancies'] < 1 && !isset($erros['raffle_couple_vacancies'])) {
                 $erro('raffle_couple_vacancies', 'Informe quantos casais serão sorteados.');
             }
@@ -1831,7 +1844,7 @@ class ActivitiesController extends ApiController
     /**
      * Deixa os dados do acampamento coerentes com as regras da tela:
      * - um prazo só por trilha: o prazo do pagamento é o mesmo do formulário;
-     * - vagas: no Casais só casais, nas outras só homens e mulheres; as
+     * - vagas: na categoria só de casais, só casais; nas outras só homens e mulheres; as
      *   "planejadas" (antigas) acompanham as do sorteio e o total da atividade é
      *   a soma, com o casal contando 2 pessoas;
      * - sem link de pagamento (a pessoa paga direto com a organização).
@@ -1847,9 +1860,10 @@ class ActivitiesController extends ApiController
 
         $categoria = $this->categoriaDeAcampamento($ad['category_id'] ?? $atual($atividade, 'category_id'));
         $vaga = fn(string $campo) => max(0, (int)($cd[$campo] ?? $atual($camping, $campo) ?? 0));
-        $homens = $categoria === 'Casais' ? 0 : $vaga('raffle_man_vacancies');
-        $mulheres = $categoria === 'Casais' ? 0 : $vaga('raffle_woman_vacancies');
-        $casais = $categoria === 'Casais' ? $vaga('raffle_couple_vacancies') : 0;
+        $soCasais = CategoriasService::soCasais($categoria);
+        $homens = $soCasais ? 0 : $vaga('raffle_man_vacancies');
+        $mulheres = $soCasais ? 0 : $vaga('raffle_woman_vacancies');
+        $casais = $soCasais ? $vaga('raffle_couple_vacancies') : 0;
         $cd['raffle_man_vacancies'] = $cd['planned_man_vacancies'] = $homens;
         $cd['raffle_woman_vacancies'] = $cd['planned_woman_vacancies'] = $mulheres;
         $cd['raffle_couple_vacancies'] = $cd['planned_couple_vacancies'] = $casais;
@@ -1859,14 +1873,15 @@ class ActivitiesController extends ApiController
     }
 
     /** Nome da categoria de acampamento com este id, ou null se não for uma. */
-    private function categoriaDeAcampamento(mixed $id): ?string
+    /** A categoria de acampamento escolhida (arquivada inclusive; quem chama decide). */
+    private function categoriaDeAcampamento(mixed $id): ?object
     {
         if (!is_numeric($id) || (int)$id <= 0) return null;
         $categoria = $this->fetchTable('Categories')->find()
             ->where(['id' => (int)$id, 'type' => 'Acampamento', 'deleted IS' => null])
             ->first();
 
-        return $categoria?->name;
+        return $categoria;
     }
 
     /** Inscrições ativas de um tipo (Campista ou Servo) num acampamento. */
@@ -1910,11 +1925,12 @@ class ActivitiesController extends ApiController
             'deleted IS' => null,
         ])->count() > 0;
 
+        // Na ordem da tela Categorias, arquivadas inclusive (a tela só as mostra
+        // para o acampamento que já é delas) e com as regras, para o texto de
+        // "quem pode participar".
         $categorias = [];
-        $lista = $this->fetchTable('Categories')->find()
-            ->where(['type' => 'Acampamento', 'deleted IS' => null])
-            ->orderBy(['id' => 'ASC'])
-            ->all();
+        $servicoCategorias = new CategoriasService();
+        $lista = $servicoCategorias->todas();
         foreach ($lista as $c) {
             $setores = [];
             $modelos = $this->CategoriesSectors->find()
@@ -1925,9 +1941,7 @@ class ActivitiesController extends ApiController
             foreach ($modelos as $cs) {
                 $setores[] = ['nome' => $cs->sector->name, 'vagas' => (int)$cs->vacancies];
             }
-            $categorias[] = [
-                'id' => $c->id,
-                'nome' => $c->name,
+            $categorias[] = $servicoCategorias->serializar($c) + [
                 'formularioCampista' => $temFormulario((int)$c->id, 'Campista'),
                 'formularioServo' => $temFormulario((int)$c->id, 'Servo'),
                 'setores' => $setores,

@@ -825,7 +825,8 @@
 	let toast = $state('');
 	let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
-	let ehCasais = $derived(categoria === 'Casais' || activity?.targetAudience === 'Casais');
+	// Categoria só de casais (regra da categoria, tela Gestão › Categorias) ou evento para casais.
+	let ehCasais = $derived(!!activity?.categoria?.soCasais || activity?.targetAudience === 'Casais');
 	let casado = $derived(['Casado', 'União estável'].includes(auth.user?.marital_status?.title ?? ''));
 	let pedeConjuge = $derived((ehCasais && janelaTrilha !== 'servo') || casado);
 	let pedeEndereco = $derived(!auth.user?.address);

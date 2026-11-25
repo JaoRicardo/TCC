@@ -36,6 +36,10 @@ export const MENU_DO_PAINEL: { titulo: string; itens: ItemDoMenu[] }[] = [
 			// Quem só vê as respostas também entra: o editor abre só para leitura.
 			{ chave: ['formularios', 'respostas_formularios'], caminho: '/admin/formularios', nome: 'Formulários' }
 		]
+	},
+	{
+		titulo: 'Gestão',
+		itens: [{ chave: 'categorias', caminho: '/admin/categorias', nome: 'Categorias' }]
 	}
 ];
 
@@ -63,7 +67,8 @@ const TELA_POR_CAMINHO: [string | RegExp, string | string[]][] = [
 	['/admin/inscricoes', 'inscricoes'],
 	['/admin/equipes', ['equipes', 'setores']],
 	['/admin/setores', 'setores'],
-	['/admin/formularios', ['formularios', 'respostas_formularios']]
+	['/admin/formularios', ['formularios', 'respostas_formularios']],
+	['/admin/categorias', 'categorias']
 ];
 
 /** Tem a permissão (ou qualquer uma da lista). */

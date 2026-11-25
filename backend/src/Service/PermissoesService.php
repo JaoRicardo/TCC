@@ -40,6 +40,7 @@ class PermissoesService
         'respostas_formularios' => ['Respostas dos formulários', 'Ver as respostas e os arquivos dos formulários, que têm dados de saúde, baixar as planilhas, pedir correção e cancelar inscrições.', 'servos'],
         'usuarios'           => ['Pessoas e acessos', 'Ver e desativar contas de usuários.', 'pessoas'],
         'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.', 'pessoas'],
+        'categorias'         => ['Categorias', 'Criar, editar, ordenar e arquivar as categorias dos acampamentos e as regras de quem participa de cada uma.', 'gestao'],
     ];
 
     /** Área => [nome, nome curto (usado no selo da lista de pessoas)]. */
@@ -47,6 +48,7 @@ class PermissoesService
         'atividades' => ['Acampamentos e eventos', 'Atividades'],
         'servos'     => ['Servos e formulários', 'Servos e formulários'],
         'pessoas'    => ['Pessoas e acessos', 'Pessoas'],
+        'gestao'     => ['Gestão', 'Gestão'],
     ];
 
     /** Permissão que só faz sentido junto com outra (a tela só se abre por ela). */

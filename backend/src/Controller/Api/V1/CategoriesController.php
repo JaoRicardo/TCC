@@ -1,118 +1,163 @@
 <?php
 declare(strict_types=1);
+
 namespace App\Controller\Api\V1;
-use AllowDynamicProperties;
+
 use App\Controller\Api\ApiController;
+use App\Service\CategoriasService;
 use Cake\Http\Response;
 
-#[AllowDynamicProperties]
+/**
+ * Categorias dos acampamentos. `GET /categories` é a lista simples (sem as
+ * arquivadas) usada por outras telas; o resto é a tela Gestão › Categorias
+ * (permissão `categorias`). As regras ficam em CategoriasService.
+ */
 class CategoriesController extends ApiController
 {
+    private CategoriasService $categorias;
+
     public function initialize(): void
     {
         parent::initialize();
-        $this->Categories = $this->fetchTable('Categories');
+        $this->categorias = new CategoriasService();
     }
 
+    /** GET /categories — categorias ativas (acampamento na ordem da lista, depois as de evento). */
     public function index(): Response
     {
         $this->request->allowMethod(['get']);
-        $cats = $this->Categories->find()
-            ->where(['deleted IS' => null])
-            ->orderBy(['type' => 'ASC', 'name' => 'ASC'])
+        $cats = $this->fetchTable('Categories')->find()
+            ->where(['deleted IS' => null, 'archived_at IS' => null])
+            ->orderBy(['type' => 'ASC', 'position' => 'ASC', 'name' => 'ASC'])
             ->all()
             ->map(fn($c) => [
-                'id'          => $c->id,
-                'name'        => $c->name,
-                'type'        => $c->type,
-                'minimal_age' => $c->minimal_age,
-                'maximal_age' => $c->maximal_age,
+                'id'   => $c->id,
+                'name' => $c->name,
+                'type' => $c->type,
             ])
             ->toArray();
+
         return $this->apiResponse(['data' => array_values($cats)]);
     }
 
-    public function add(): Response
+    /** GET /admin/categorias */
+    public function lista(): Response
+    {
+        $this->request->allowMethod(['get']);
+        $identity = $this->requirePermissao('categorias');
+        if ($identity instanceof Response) return $identity;
+
+        return $this->apiResponse(['data' => $this->categorias->listar()]);
+    }
+
+    /** POST /admin/categorias */
+    public function criar(): Response
     {
         $this->request->allowMethod(['post']);
-        $identity = $this->requirePermissao('acampamentos');
+        $identity = $this->requirePermissao('categorias');
         if ($identity instanceof Response) return $identity;
 
-        $data = $this->request->getData();
-        $name   = trim((string)($data['name']   ?? ''));
-        $type   = trim((string)($data['type']   ?? ''));
-        $minAge = isset($data['minimal_age']) ? (int)$data['minimal_age'] : null;
-        $maxAge = isset($data['maximal_age']) ? (int)$data['maximal_age'] : null;
-
-        if ($name === '') {
-            return $this->apiError('Informe o nome da categoria', 400);
-        }
-        if (!in_array($type, ['Acampamento', 'Evento'], true)) {
-            return $this->apiError('Tipo deve ser "Acampamento" ou "Evento"', 400);
-        }
-        if ($minAge === null || $maxAge === null) {
-            return $this->apiError('Informe minimal_age e maximal_age', 400);
-        }
-        if ($minAge < 0 || $maxAge < 0 || $minAge > $maxAge) {
-            return $this->apiError('Idades inválidas: mínima deve ser ≤ máxima e ≥ 0', 400);
+        [$categoria, $erros] = $this->categorias->salvar(null, (array)$this->request->getData());
+        if ($erros) {
+            return $this->apiResponse(['error' => 'Confira os campos destacados.', 'erros' => $erros], 422);
         }
 
-        $cat = $this->Categories->newEntity([
-            'name'        => $name,
-            'type'        => $type,
-            'minimal_age' => $minAge,
-            'maximal_age' => $maxAge,
-        ]);
-        if (!$this->Categories->save($cat)) {
-            return $this->apiError('Erro ao criar categoria', 500);
-        }
-
-        return $this->apiResponse([
-            'data' => [
-                'id'          => $cat->id,
-                'name'        => $cat->name,
-                'type'        => $cat->type,
-                'minimal_age' => $cat->minimal_age,
-                'maximal_age' => $cat->maximal_age,
-            ],
-        ], 201);
+        return $this->apiResponse(['data' => $this->categorias->serializar($categoria)], 201);
     }
 
-    public function edit(int $id): Response
+    /** PATCH /admin/categorias/{id} */
+    public function editar(int $id): Response
     {
         $this->request->allowMethod(['patch']);
-        $identity = $this->requirePermissao('acampamentos');
+        $identity = $this->requirePermissao('categorias');
         if ($identity instanceof Response) return $identity;
 
-        $cat = $this->Categories->find()->where(['id' => $id, 'deleted IS' => null])->first();
-        if (!$cat) {
-            return $this->apiError('Categoria não encontrada', 404);
+        $categoria = $this->categorias->buscar($id);
+        if ($categoria === null) {
+            return $this->apiError('Categoria não encontrada.', 404);
         }
 
-        $data = $this->request->getData();
-        $minAge = isset($data['minimal_age']) ? (int)$data['minimal_age'] : null;
-        $maxAge = isset($data['maximal_age']) ? (int)$data['maximal_age'] : null;
-
-        if ($minAge === null || $maxAge === null) {
-            return $this->apiError('Informe minimal_age e maximal_age', 400);
-        }
-        if ($minAge < 0 || $maxAge < 0 || $minAge > $maxAge) {
-            return $this->apiError('Idades inválidas: mínima deve ser ≤ máxima e ≥ 0', 400);
+        [$categoria, $erros] = $this->categorias->salvar($categoria, (array)$this->request->getData());
+        if ($erros) {
+            return $this->apiResponse(['error' => 'Confira os campos destacados.', 'erros' => $erros], 422);
         }
 
-        $this->Categories->patchEntity($cat, ['minimal_age' => $minAge, 'maximal_age' => $maxAge]);
-        if (!$this->Categories->save($cat)) {
-            return $this->apiError('Erro ao salvar categoria', 500);
-        }
-
-        return $this->apiResponse([
-            'data' => [
-                'id'          => $cat->id,
-                'name'        => $cat->name,
-                'type'        => $cat->type,
-                'minimal_age' => $cat->minimal_age,
-                'maximal_age' => $cat->maximal_age,
-            ],
-        ]);
+        return $this->apiResponse(['data' => $this->categorias->serializar($categoria)]);
     }
+
+    /** POST /admin/categorias/ordem — body { ids: [...] }: as em uso na ordem nova (arquivadas ficam no lugar). */
+    public function ordem(): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('categorias');
+        if ($identity instanceof Response) return $identity;
+
+        $ids = $this->request->getData('ids');
+        if (!is_array($ids)) {
+            return $this->apiError('Envie a lista de categorias na nova ordem.', 422);
+        }
+        $this->categorias->reordenar($ids);
+
+        return $this->apiResponse(['data' => $this->categorias->listar()]);
+    }
+
+    /** POST /admin/categorias/{id}/arquivar */
+    public function arquivar(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('categorias');
+        if ($identity instanceof Response) return $identity;
+
+        $categoria = $this->categorias->buscar($id);
+        if ($categoria === null) {
+            return $this->apiError('Categoria não encontrada.', 404);
+        }
+        $motivo = $this->categorias->arquivar($categoria);
+        if ($motivo !== null) {
+            return $this->apiResponse(['error' => $motivo, 'codigo' => 'acampamento_por_acontecer'], 422);
+        }
+
+        return $this->apiResponse(['data' => $this->categorias->serializar($categoria)]);
+    }
+
+    /** POST /admin/categorias/{id}/desarquivar */
+    public function desarquivar(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requirePermissao('categorias');
+        if ($identity instanceof Response) return $identity;
+
+        $categoria = $this->categorias->buscar($id);
+        if ($categoria === null) {
+            return $this->apiError('Categoria não encontrada.', 404);
+        }
+        // Body opcional: { depois: id|null } escolhe o degrau; { fim: true } manda
+        // a de fora da escada para o fim. Sem nada, volta no mesmo lugar ("Desfazer").
+        $erro = $this->categorias->desarquivar($categoria, (array)$this->request->getData());
+        if ($erro !== null) {
+            return $this->apiResponse(['error' => $erro, 'erros' => ['depois' => $erro]], 422);
+        }
+
+        return $this->apiResponse(['data' => $this->categorias->serializar($this->categorias->buscar($id))]);
+    }
+
+    /** DELETE /admin/categorias/{id} — só quem nunca teve acampamento. */
+    public function excluir(int $id): Response
+    {
+        $this->request->allowMethod(['delete']);
+        $identity = $this->requirePermissao('categorias');
+        if ($identity instanceof Response) return $identity;
+
+        $categoria = $this->categorias->buscar($id);
+        if ($categoria === null) {
+            return $this->apiError('Categoria não encontrada.', 404);
+        }
+        $motivo = $this->categorias->excluir($categoria);
+        if ($motivo !== null) {
+            return $this->apiResponse(['error' => $motivo, 'codigo' => 'ja_teve_acampamento'], 422);
+        }
+
+        return $this->apiResponse(['ok' => true]);
+    }
+
 }

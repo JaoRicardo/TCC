@@ -5,6 +5,7 @@ namespace App\Controller\Api\V1;
 
 use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
+use App\Service\CategoriasService;
 use App\Service\FormulariosService;
 use Cake\Http\Response;
 
@@ -386,17 +387,9 @@ class QuestionsController extends ApiController
         $identity = $this->requirePermissao(self::LER);
         if ($identity instanceof Response) return $identity;
 
-        $ordemDasCategorias = ['Mirim', 'FAC', 'Juvenil', 'Sênior', 'Casais', 'Discipulados'];
-        $categorias = $this->fetchTable('Categories')->find()
-            ->where(['type' => 'Acampamento', 'deleted IS' => null])
-            ->all()
-            ->toList();
-        usort($categorias, function ($a, $b) use ($ordemDasCategorias) {
-            $pa = array_search($a->name, $ordemDasCategorias, true);
-            $pb = array_search($b->name, $ordemDasCategorias, true);
-
-            return [$pa === false ? 99 : $pa, $a->name] <=> [$pb === false ? 99 : $pb, $b->name];
-        });
+        // Na ordem da tela Categorias. As arquivadas vêm marcadas: a lista as
+        // separa, mas os formulários e as respostas continuam acessíveis.
+        $categorias = (new CategoriasService())->todas();
 
         $porSecao = $this->Questions->find();
         $porSecao->select(['category_id', 'subscription_type', 'section_id', 'n' => $porSecao->func()->count('*')])
@@ -439,6 +432,7 @@ class QuestionsController extends ApiController
                 $formularios[] = [
                     'category_id'       => $categoria->id,
                     'categoria'         => $categoria->name,
+                    'arquivada'         => $categoria->archived_at !== null,
                     'subscription_type' => $tipo,
                     'perguntas'         => array_sum($secoes),
                     'secoes'            => array_keys($secoes),

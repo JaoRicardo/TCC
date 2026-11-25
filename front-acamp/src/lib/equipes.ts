@@ -6,8 +6,6 @@
  */
 import type { EquipeDoAcampamento, PessoaDaEquipe, PessoaDoBanco, SetorDaEquipe, SituacaoNoBanco } from '$lib/services/equipeService';
 
-export const CATEGORIAS_DE_ACAMPAMENTO = ['Mirim', 'FAC', 'Juvenil', 'Sênior', 'Casais', 'Discipulados'];
-
 export const plural = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`;
 
 /** Sem maiúsculas, acentos e espaços a mais (busca). */

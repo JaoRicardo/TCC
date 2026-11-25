@@ -151,9 +151,14 @@ return function (RouteBuilder $routes): void {
             $builder->post('/admin/secoes/{id}/excluir-perguntas', ['controller' => 'Questions', 'action' => 'excluirPerguntasDaSecao'])->setPass(['id']);
             $builder->post('/admin/secoes/{id}/restaurar-perguntas', ['controller' => 'Questions', 'action' => 'restaurarPerguntasDaSecao'])->setPass(['id']);
 
-            // --- Admin: categorias ---
-            $builder->post('/admin/categories', ['controller' => 'Categories', 'action' => 'add']);
-            $builder->patch('/admin/categories/{id}', ['controller' => 'Categories', 'action' => 'edit'])->setPass(['id']);
+            // --- Admin: Gestão › Categorias (permissão "categorias") ---
+            $builder->get('/admin/categorias', ['controller' => 'Categories', 'action' => 'lista']);
+            $builder->post('/admin/categorias', ['controller' => 'Categories', 'action' => 'criar']);
+            $builder->post('/admin/categorias/ordem', ['controller' => 'Categories', 'action' => 'ordem']);
+            $builder->patch('/admin/categorias/{id}', ['controller' => 'Categories', 'action' => 'editar'])->setPass(['id'])->setPatterns(['id' => '\d+']);
+            $builder->delete('/admin/categorias/{id}', ['controller' => 'Categories', 'action' => 'excluir'])->setPass(['id'])->setPatterns(['id' => '\d+']);
+            $builder->post('/admin/categorias/{id}/arquivar', ['controller' => 'Categories', 'action' => 'arquivar'])->setPass(['id'])->setPatterns(['id' => '\d+']);
+            $builder->post('/admin/categorias/{id}/desarquivar', ['controller' => 'Categories', 'action' => 'desarquivar'])->setPass(['id'])->setPatterns(['id' => '\d+']);
 
             // --- Admin: métodos de seleção/indicação ---
             $builder->get('/admin/selection-methods', ['controller' => 'SelectionMethods', 'action' => 'index']);

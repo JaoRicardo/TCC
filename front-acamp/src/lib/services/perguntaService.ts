@@ -62,6 +62,8 @@ export interface UsoDoFormulario {
 export interface ResumoFormulario {
 	category_id: number;
 	categoria: string;
+	/** Categoria arquivada (Gestão › Categorias): a lista a mostra à parte, mas continua acessível. */
+	arquivada?: boolean;
 	subscription_type: 'Campista' | 'Servo';
 	perguntas: number;
 	/** Seções que têm pergunta neste formulário. */

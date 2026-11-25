@@ -75,7 +75,7 @@ class SorteioService
         return $ids;
     }
 
-    /** O acampamento é da categoria Casais (a única com vagas de casais)? */
+    /** A categoria do acampamento é só de casais (a única com vagas de casais — couples_only)? */
     public static function categoriaDeCasais(int $activityId): bool
     {
         $activity = (new TableLocator())->get('Activities')->find()
@@ -83,7 +83,7 @@ class SorteioService
             ->where(['Activities.id' => $activityId])
             ->first();
 
-        return ($activity?->category?->name ?? null) === 'Casais';
+        return CategoriasService::soCasais($activity?->category);
     }
 
     // ─── Situação do sorteio ────────────────────────────────────────────────

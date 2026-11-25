@@ -25,14 +25,6 @@ use Cake\ORM\Locator\TableLocator;
  */
 class RetiradaDoSorteioService
 {
-    /** Faixa de idade de Campista por categoria (Casais e Discipulados não têm). */
-    public const FAIXAS_DE_IDADE = [
-        'Mirim'   => [10, 12],
-        'FAC'     => [14, 17],
-        'Juvenil' => [18, 24],
-        'Sênior'  => [25, 60],
-    ];
-
     private $PreRegistrations;
 
     public function __construct()
@@ -93,12 +85,15 @@ class RetiradaDoSorteioService
             if ($saiuDaArea) {
                 $motivo = 'cidade';
             } elseif ($inscricao->subscription_type === 'Campista') {
-                $faixa = self::FAIXAS_DE_IDADE[$atividade->category->name ?? ''] ?? null;
-                if ($mudouNascimento && $faixa !== null && $idade !== null && ($idade < $faixa[0] || $idade > $faixa[1])) {
+                // Idade do campista: a da categoria (tela Gestão › Categorias).
+                $min = $atividade->category->min_age ?? null;
+                $max = $atividade->category->max_age ?? null;
+                $foraDaIdade = $idade !== null && (($min !== null && $idade < $min) || ($max !== null && $idade > $max));
+                if ($mudouNascimento && $foraDaIdade) {
                     $motivo = 'idade';
-                } elseif ($mudouSexo && ($atividade->category->name ?? '') !== 'Casais' && $this->semVagaParaOSexo($atividade->camping, (string)$depois['sex'])) {
-                    // No Casais todos concorrem como casal; fora dele, quem é
-                    // casado concorre como homem ou mulher, então o sexo conta.
+                } elseif ($mudouSexo && !CategoriasService::soCasais($atividade->category ?? null) && $this->semVagaParaOSexo($atividade->camping, (string)$depois['sex'])) {
+                    // Na categoria só de casais todos concorrem como casal; fora
+                    // dela, quem é casado concorre como homem ou mulher, então o sexo conta.
                     $motivo = 'sexo';
                 }
             }

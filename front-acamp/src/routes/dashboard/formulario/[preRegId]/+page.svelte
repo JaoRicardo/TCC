@@ -6,8 +6,9 @@
 	 * mudança, então dá para fechar a aba e continuar depois, e um envio que
 	 * falha não perde nada. O servidor continua validando tudo no envio.
 	 *
-	 * Mirim: quem preenche é o responsável, na conta da criança — os textos
-	 * falam da criança.
+	 * Categoria em que o responsável preenche (o Mirim; regra da categoria em
+	 * Gestão › Categorias): quem preenche é o responsável, na conta da criança —
+	 * os textos falam da criança.
 	 *
 	 * Depois do envio vem o pagamento da taxa, que só é cobrado de quem tem vaga
 	 * (suplente não paga).
@@ -246,7 +247,8 @@
 
 	let ehMirim = $derived.by(() => {
 		if (!form) return false;
-		return form.atividade?.categoria === 'Mirim';
+		// Regra da categoria (tela Gestão › Categorias): quem preenche é o responsável.
+		return !!form.atividade?.preenchidoPeloResponsavel;
 	});
 	let nomeDaEtapa = $derived(etapa === 0 ? (ehMirim ? 'Dados da criança' : 'Seus dados') : ehRevisao ? 'Revisão' : (secaoAtual?.title ?? ''));
 

@@ -93,17 +93,24 @@
 	/** "Missa de Envio (21/11)" */
 	const eventoCurto = (e: EventoDoFormulario) => `${e.nome}${e.inicio ? ` (${diaEMes(e.inicio)})` : ''}`;
 
-	/** Uma linha por categoria, na ordem que o servidor manda (Mirim → Discipulados). */
-	let linhas = $derived.by(() => {
-		const porCategoria = new Map<number, { categoria: string; campista?: ResumoFormulario; servo?: ResumoFormulario }>();
+	/**
+	 * Uma linha por categoria, na ordem da tela Gestão › Categorias. As
+	 * arquivadas vão para o fim, separadas: os formulários e as respostas dos
+	 * acampamentos antigos continuam acessíveis.
+	 */
+	type Linha = { categoria: string; arquivada: boolean; campista?: ResumoFormulario; servo?: ResumoFormulario };
+	let todasAsLinhas = $derived.by(() => {
+		const porCategoria = new Map<number, Linha>();
 		for (const f of formularios) {
-			const linha = porCategoria.get(f.category_id) ?? { categoria: f.categoria };
+			const linha = porCategoria.get(f.category_id) ?? { categoria: f.categoria, arquivada: !!f.arquivada };
 			if (f.subscription_type === 'Campista') linha.campista = f;
 			else linha.servo = f;
 			porCategoria.set(f.category_id, linha);
 		}
 		return [...porCategoria.values()];
 	});
+	let linhas = $derived(todasAsLinhas.filter((l) => !l.arquivada));
+	let linhasArquivadas = $derived(todasAsLinhas.filter((l) => l.arquivada));
 
 	async function carregar() {
 		estado = 'carregando';
@@ -227,6 +234,18 @@
 								<td>{@render celula(linha.servo)}</td>
 							</tr>
 						{/each}
+						{#if linhasArquivadas.length}
+							<tr class="linha linha--grupo">
+								<th scope="colgroup" colspan="3">Categorias arquivadas</th>
+							</tr>
+							{#each linhasArquivadas as linha}
+								<tr class="linha linha--arquivada">
+									<th scope="row" class="categoria">{linha.categoria}<span class="selo-arquivada">Arquivada</span></th>
+									<td>{@render celula(linha.campista)}</td>
+									<td>{@render celula(linha.servo)}</td>
+								</tr>
+							{/each}
+						{/if}
 					</tbody>
 				</table>
 			{/if}
@@ -556,6 +575,38 @@
 		text-align: left;
 		font: 600 26px/1.1 'Cormorant Garamond', serif;
 		color: var(--tinta);
+	}
+
+	.linha--grupo {
+		display: block;
+		padding: 10px 24px;
+		background: var(--cabecalho-tabela);
+		border-top: 1px solid var(--borda-suave);
+	}
+
+	.linha--grupo th {
+		text-align: left;
+		font-size: 13px;
+		font-weight: 700;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: var(--ouro-texto);
+	}
+
+	.linha--arquivada .categoria {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 6px;
+		color: var(--tinta-3);
+	}
+
+	.selo-arquivada {
+		font: 600 12px 'Source Sans 3', sans-serif;
+		color: var(--tinta-3);
+		background: #efebe1;
+		border-radius: 999px;
+		padding: 2px 9px;
 	}
 
 	.carregando {

@@ -8,7 +8,7 @@
 	import { onDestroy, onMount, tick } from 'svelte';
 	import { apiFetch } from '$lib/api';
 	import Janela from '$lib/components/painel/Janela.svelte';
-	import { CATEGORIAS_DE_ACAMPAMENTO, plural } from '$lib/equipes';
+	import { plural } from '$lib/equipes';
 	import {
 		criarSetor,
 		editarSetor,
@@ -33,13 +33,8 @@
 			const [m, c] = await Promise.all([lerModelo(), apiFetch('/categories').then((r) => r.json())]);
 			if (!m.ok) throw new Error();
 			setores = m.data;
-			const ordem = (n: string) => {
-				const i = CATEGORIAS_DE_ACAMPAMENTO.indexOf(n);
-				return i < 0 ? 99 : i;
-			};
-			categorias = (c.data ?? [])
-				.filter((x: { type: string }) => x.type === 'Acampamento')
-				.sort((a: Categoria, b: Categoria) => ordem(a.name) - ordem(b.name));
+			// Já vem na ordem da tela Gestão › Categorias, sem as arquivadas.
+			categorias = (c.data ?? []).filter((x: { type: string }) => x.type === 'Acampamento');
 			estado = 'pronto';
 		} catch {
 			if (mostrar) estado = 'erro';

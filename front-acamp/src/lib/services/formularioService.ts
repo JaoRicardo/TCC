@@ -81,6 +81,8 @@ export interface AtividadeFormulario {
 	id: number;
 	nome: string;
 	categoria: string | null;
+	/** Regra da categoria: o responsável preenche, na conta da criança (os textos falam da criança). */
+	preenchidoPeloResponsavel?: boolean;
 	local: string | null;
 	inicio: string | null;
 	/** Último dia (YYYY-MM-DD). */

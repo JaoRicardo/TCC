@@ -9,7 +9,8 @@
 	 *   prazos às 23h59. A duração é último − primeiro + 1; o ano vem do primeiro dia.
 	 * - Sorteio só manual (Inscritos e Sorteios): a data aqui é a prevista.
 	 * - Um prazo só por trilha: o do formulário, que é também o do pagamento.
-	 * - Vagas do sorteio: no Casais só casais; nas outras, homens e mulheres.
+	 * - Vagas do sorteio: na categoria só de casais (Gestão › Categorias), só
+	 *   casais; nas outras, homens e mulheres.
 	 *   Indicações ficam fora da conta (não têm limite).
 	 * O servidor confere as mesmas regras (ActivitiesController::validarAcampamento).
 	 */
@@ -28,6 +29,7 @@
 		TEXTO_DA_FASE
 	} from '$lib/faseAtividade';
 	import logoAsas from '$lib/imgs/logo-asas.png';
+	import { textosDaCategoria, type RegrasDaCategoria } from '$lib/categorias';
 
 	let { activityId = null }: { activityId?: string | null } = $props();
 	let editando = $derived(activityId !== null);
@@ -41,7 +43,7 @@
 	type Estado = 'carregando' | 'normal' | 'salvando' | 'criado' | 'salvo' | 'erroServidor';
 	type Doc = 'notice' | 'term';
 	type Setor = { nome: string; vagas: number };
-	type CategoriaApoio = { id: number; nome: string; formularioCampista: boolean; formularioServo: boolean; setores: Setor[] };
+	type CategoriaApoio = RegrasDaCategoria & { formularioCampista: boolean; formularioServo: boolean; setores: Setor[] };
 	type Sorteio = { feito: boolean; em: string | null };
 
 	const ABAS: [Aba, string][] = [
@@ -94,23 +96,6 @@
 		servant_form_deadline: 'sPrazo',
 		servant_payment_date: 'sPrazo',
 		servant_fee: 'sValor'
-	};
-
-	/**
-	 * Linha da regra de cada categoria — as mesmas regras do servidor
-	 * (InscricoesController::checkAcampamentoEligibility). Servir numa categoria
-	 * pede ter sido campista nela ou numa acima (Mirim → FAC → Juvenil → Sênior).
-	 */
-	const REGRA: Record<string, [string, string]> = {
-		Mirim: ['Campistas de 10 a 12 anos, uma vez só nesta categoria.', 'Quem já foi campista no Mirim, no FAC, no Juvenil ou no Sênior.'],
-		FAC: ['Campistas de 14 a 17 anos, uma vez só nesta categoria.', 'Quem já foi campista no FAC, no Juvenil ou no Sênior.'],
-		Juvenil: ['Campistas de 18 a 24 anos, que não sejam casados, uma vez só nesta categoria.', 'Quem já foi campista no Juvenil ou no Sênior.'],
-		Sênior: ['Campistas de 25 a 60 anos, uma vez só nesta categoria.', 'Quem já foi campista no Sênior.'],
-		Casais: [
-			'Só pessoas casadas ou em união estável. Cada um se inscreve na própria conta, com o CPF do cônjuge, e o casal é sorteado junto. Uma vez só nesta categoria.',
-			'Quem já foi campista no Casais.'
-		],
-		Discipulados: ['Quem já foi campista no Sênior, uma vez só nesta categoria.', 'Quem já foi campista no Discipulados.']
 	};
 
 	const VAZIO = {
@@ -225,7 +210,14 @@
 	// ─── Derivados ────────────────────────────────────────────────────────
 	let categoriaApoio = $derived(categorias.find((c) => String(c.id) === f.categoria) ?? null);
 	let nomeCategoria = $derived(categoriaApoio?.nome ?? '');
-	let ehCasais = $derived(nomeCategoria === 'Casais');
+	let ehCasais = $derived(categoriaApoio?.soCasais ?? false);
+	/** "Quem pode participar", das regras da categoria (tela Gestão › Categorias). */
+	let regraDaCategoria = $derived.by(() => {
+		if (!categoriaApoio) return null;
+		return textosDaCategoria(categoriaApoio, categorias);
+	});
+	/** Arquivadas não recebem acampamento novo; só aparecem para o que já é delas. */
+	let categoriasDaLista = $derived(categorias.filter((c) => !c.arquivada || String(c.id) === categoriaOriginal));
 	let trocouCategoria = $derived(editando && !!categoriaOriginal && f.categoria !== categoriaOriginal);
 	let nomeCategoriaOriginal = $derived(categorias.find((c) => String(c.id) === categoriaOriginal)?.nome ?? '');
 
@@ -753,13 +745,13 @@
 									<label for="f-cat" class="rotulo">Categoria <span class="req" aria-hidden="true">*</span></label>
 									<select id="f-cat" class="campo" class:erro={erros.categoria} bind:value={f.categoria} aria-required="true" aria-invalid={!!erros.categoria} aria-describedby="e-cat">
 										<option value="" disabled>Selecione a categoria</option>
-										{#each categorias as c (c.id)}<option value={String(c.id)}>{c.nome}</option>{/each}
+										{#each categoriasDaLista as c (c.id)}<option value={String(c.id)}>{c.nome}{c.arquivada ? ' (arquivada)' : ''}</option>{/each}
 									</select>
 									{#if erros.categoria}<p id="e-cat" class="err"><i>!</i>{erros.categoria}</p>{/if}
 								</div>
 							</div>
-							{#if nomeCategoria && REGRA[nomeCategoria]}
-								<p class="aviso av-azul regra"><i></i><span><strong>{nomeCategoria}:</strong> {REGRA[nomeCategoria][0]} <strong>Servos:</strong> {REGRA[nomeCategoria][1]}</span></p>
+							{#if regraDaCategoria}
+								<p class="aviso av-azul regra"><i></i><span><strong>{nomeCategoria}:</strong> {regraDaCategoria.campista} <strong>Servos:</strong> {regraDaCategoria.servo}</span></p>
 							{/if}
 							<div class="campo-bloco">
 								<label for="f-local" class="rotulo">Local <span class="req" aria-hidden="true">*</span></label>

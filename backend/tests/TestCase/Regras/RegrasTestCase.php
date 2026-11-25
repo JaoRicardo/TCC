@@ -3,6 +3,7 @@ declare(strict_types=1);
 
 namespace App\Test\TestCase\Regras;
 
+use App\Service\CategoriasService;
 use App\Service\JwtService;
 use App\Service\PermissoesService;
 use Cake\Database\Connection;
@@ -19,7 +20,8 @@ use Cake\TestSuite\TestCase;
  * banco de teste volta vazio ao fim de cada um e um teste nunca enxerga os dados
  * do outro. Os cadastros básicos (categorias, estados civis, formas de seleção)
  * são criados a cada teste com os mesmos nomes dos seeders, porque o código
- * procura esses registros pelo nome, nunca por id.
+ * procura esses registros pelo nome, nunca por id. As categorias levam as
+ * regras nas colunas, como no seed.
  */
 abstract class RegrasTestCase extends TestCase
 {
@@ -60,8 +62,17 @@ abstract class RegrasTestCase extends TestCase
 
     private function criarCadastrosBasicos(): void
     {
-        foreach (['Mirim', 'FAC', 'Juvenil', 'Sênior', 'Casais', 'Discipulados'] as $nome) {
-            $this->categorias[$nome] = $this->salvar('Categories', ['name' => $nome, 'type' => 'Acampamento'])->id;
+        // As categorias de sempre, com as regras do seed (CategoriasService::ORIGINAIS).
+        $posicao = 0;
+        foreach (CategoriasService::ORIGINAIS as $nome => $regras) {
+            $requer = $regras['requer'] ?? null;
+            unset($regras['requer']);
+            $this->categorias[$nome] = $this->salvar('Categories', $regras + [
+                'name' => $nome,
+                'type' => 'Acampamento',
+                'position' => ++$posicao,
+                'required_category_id' => $requer === null ? null : $this->categorias[$requer],
+            ])->id;
         }
         foreach (['Solteiro', 'Namorando', 'União estável', 'Casado'] as $titulo) {
             $this->estadosCivis[$titulo] = $this->salvar('MaritalStatuses', ['title' => $titulo])->id;
