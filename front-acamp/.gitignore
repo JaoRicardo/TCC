@@ -21,3 +21,6 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Varredura (npm run varredura): fotos e relatório de cada execução
+/varredura/
