@@ -110,6 +110,21 @@ class RetiradaDoSorteioTest extends RegrasTestCase
         $this->assertSame('Retirado do sorteio', $minhas[$juvenil->id]);
     }
 
+    /** A idade que tira do sorteio também é a do primeiro dia do acampamento. */
+    public function testNascimentoUsaAIdadeNoPrimeiroDiaDoAcampamento(): void
+    {
+        $ana = $this->criarUsuario('Ana Souza', idade: 20, sexo: 'F');
+        $juvenil = $this->inscrever($ana, $this->criarAcampamento('Juvenil', [], [
+            'start_date' => date('Y-m-d 08:00:00', strtotime('+20 days')),
+        ]));
+
+        // 24 hoje, mas faz 25 daqui a 5 dias, antes do acampamento (Juvenil vai até 24).
+        $faz25 = (new \DateTime('today'))->modify('+5 days -25 years')->format('Y-m-d');
+        $previa = $this->previa($ana, ['birthday' => $faz25]);
+        $this->assertSame([$juvenil->id], array_column($previa['afetadas'], 'id'));
+        $this->assertSame('idade', $previa['afetadas'][0]['motivo']);
+    }
+
     public function testSexoContinuaPelasVagasDoOutroSexoSeElasExistem(): void
     {
         $ana = $this->criarUsuario('Ana Souza', idade: 20, sexo: 'F');

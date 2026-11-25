@@ -50,7 +50,6 @@ class RetiradaDoSorteioService
             return $resultado;
         }
 
-        $idade = self::idade($depois['birthday']);
         $hoje = (new \DateTimeImmutable('today'))->format('Y-m-d');
 
         $inscricoes = $this->PreRegistrations->find()
@@ -88,6 +87,8 @@ class RetiradaDoSorteioService
                 // Idade do campista: a da categoria (tela Gestão › Categorias).
                 $min = $atividade->category->min_age ?? null;
                 $max = $atividade->category->max_age ?? null;
+                // Contada no primeiro dia deste acampamento, como na inscrição.
+                $idade = CategoriasService::idadeNoAcampamento($depois['birthday'] ?? null, $atividade->start_date);
                 $foraDaIdade = $idade !== null && (($min !== null && $idade < $min) || ($max !== null && $idade > $max));
                 if ($mudouNascimento && $foraDaIdade) {
                     $motivo = 'idade';
@@ -125,18 +126,5 @@ class RetiradaDoSorteioService
         $vagas = $sexo === 'M' ? $acampamento->raffle_man_vacancies : $acampamento->raffle_woman_vacancies;
 
         return (int)$vagas <= 0;
-    }
-
-    /** Idade hoje, a partir de 'Y-m-d'. */
-    public static function idade(mixed $nascimento): ?int
-    {
-        if (!$nascimento) return null;
-        try {
-            $data = new \DateTimeImmutable(is_object($nascimento) ? $nascimento->format('Y-m-d') : (string)$nascimento);
-
-            return $data->diff(new \DateTimeImmutable('today'))->y;
-        } catch (\Exception) {
-            return null;
-        }
     }
 }

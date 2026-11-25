@@ -111,6 +111,32 @@ class ElegibilidadeInscricaoTest extends RegrasTestCase
         $this->assertResponseCode(201);
     }
 
+    /**
+     * A idade é a do primeiro dia do acampamento, não a do dia da inscrição
+     * (é o que a tela de Categorias promete). Acampamento Juvenil (18 a 24)
+     * daqui a 20 dias; as duas pessoas fazem aniversário daqui a 5 dias.
+     */
+    public function testIdadeDaCategoriaEContadaNoPrimeiroDiaDoAcampamento(): void
+    {
+        $juvenil = $this->criarAcampamento('Juvenil', dadosAtividade: [
+            'start_date' => date('Y-m-d 08:00:00', strtotime('+20 days')),
+        ]);
+        $aniversario = fn(int $anos) => (new \DateTime('today'))->modify("+5 days -{$anos} years")->format('Y-m-d');
+        $usuarios = $this->getTableLocator()->get('Users');
+
+        // 17 hoje, 18 no primeiro dia: pode.
+        $quaseDezoito = $this->criarUsuario('Faz 18 antes', idade: 17);
+        $usuarios->updateAll(['birthday' => $aniversario(18)], ['id' => $quaseDezoito->id]);
+        $this->inscreverPelaApi($quaseDezoito, $juvenil, 'Campista');
+        $this->assertResponseCode(201);
+
+        // 24 hoje, 25 no primeiro dia: não pode, e a mensagem diz a idade no acampamento.
+        $quaseVinteECinco = $this->criarUsuario('Faz 25 antes', idade: 24);
+        $usuarios->updateAll(['birthday' => $aniversario(25)], ['id' => $quaseVinteECinco->id]);
+        $this->inscreverPelaApi($quaseVinteECinco, $juvenil, 'Campista');
+        $this->assertRecusada('no primeiro dia do acampamento você terá 25 anos');
+    }
+
     public function testCasadoNaoPodeSerCampistaNoJuvenil(): void
     {
         $pessoa = $this->criarUsuario('Casado jovem', idade: 20, estadoCivil: 'Casado');

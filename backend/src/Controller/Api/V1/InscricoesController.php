@@ -1471,14 +1471,15 @@ class InscricoesController extends ApiController
 
         $min = $categoria->min_age;
         $max = $categoria->max_age;
-        $age = $this->calcularIdade($identity->birthday);
+        // Idade no primeiro dia do acampamento (não no dia da inscrição).
+        $age = CategoriasService::idadeNoAcampamento($identity->birthday, $activity->start_date ?? null);
         if ($age !== null && (($min !== null && $age < $min) || ($max !== null && $age > $max))) {
             $faixa = match (true) {
                 $min !== null && $max !== null => "de {$min} a {$max} anos",
                 $min !== null                  => "a partir de {$min} anos",
                 default                        => "de até {$max} anos",
             };
-            return $nao('idade', "A categoria {$categoryName} é para campistas {$faixa}.");
+            return $nao('idade', "A categoria {$categoryName} é para campistas {$faixa}, e no primeiro dia do acampamento você terá {$age} anos.");
         }
 
         $casado = null;
@@ -1515,19 +1516,6 @@ class InscricoesController extends ApiController
         }
 
         return null;
-    }
-
-    private function calcularIdade(mixed $birthday): ?int
-    {
-        if (!$birthday) return null;
-        try {
-            $bdate = $birthday instanceof \DateTimeInterface
-                ? \DateTime::createFromInterface($birthday)
-                : new \DateTime($birthday instanceof \Cake\I18n\Date ? $birthday->format('Y-m-d') : (string)$birthday);
-            return (int)$bdate->diff(new \DateTime('today'))->y;
-        } catch (\Exception $e) {
-            return null;
-        }
     }
 
     /** Inscrição em evento (atividade sem acampamento). */

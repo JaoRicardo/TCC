@@ -73,7 +73,7 @@ class CategoriasTest extends RegrasTestCase
 
         $novo = $this->criarUsuario('Novo demais', idade: 25);
         $this->inscreverPelaApi($novo, $this->criarAcampamento('Jovens Adultos'), 'Campista');
-        $this->assertRecusada('A categoria Jovens Adultos é para campistas de 30 a 40 anos.');
+        $this->assertRecusada('A categoria Jovens Adultos é para campistas de 30 a 40 anos, e no primeiro dia do acampamento você terá 25 anos.');
 
         $certo = $this->criarUsuario('Na idade', idade: 35);
         $this->inscreverPelaApi($certo, $this->criarAcampamento('Jovens Adultos'), 'Campista');

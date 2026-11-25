@@ -17,7 +17,8 @@ use Cake\ORM\Locator\TableLocator;
  *   ter sido campista num degrau deixa servir nele e em todos os de baixo
  *   (position menor). Fora da escada, só na própria. A arquivada continua no
  *   lugar dela na sequência — e na regra de servir.
- * - min_age/max_age: idade do campista (contada no dia da inscrição).
+ * - min_age/max_age: idade do campista, contada no primeiro dia do acampamento
+ *   (idadeNoAcampamento), como diz a tela de Categorias e como nos eventos.
  * - required_category_id: precisa ter sido campista nela antes.
  * - couples_only: só vagas de casais (o casal é sorteado junto) — e por isso
  *   só aceita casados/união estável.
@@ -68,6 +69,29 @@ class CategoriasService
         return $this->Categories->find()
             ->where(['id' => $id, 'type' => 'Acampamento', 'deleted IS' => null])
             ->first();
+    }
+
+    /**
+     * Idade da pessoa no primeiro dia do acampamento: é ela que a faixa de
+     * idade da categoria confere. Sem primeiro dia, conta hoje; sem
+     * nascimento (ou data inválida), null.
+     */
+    public static function idadeNoAcampamento(mixed $nascimento, mixed $primeiroDia): ?int
+    {
+        if (!$nascimento) {
+            return null;
+        }
+        try {
+            $paraDia = fn(mixed $d) => new \DateTimeImmutable(
+                // Cake\I18n\Date não é DateTimeInterface, mas tem format().
+                is_object($d) && method_exists($d, 'format') ? $d->format('Y-m-d') : substr((string)$d, 0, 10),
+            );
+            $dia = $primeiroDia ? $paraDia($primeiroDia) : new \DateTimeImmutable('today');
+
+            return $paraDia($nascimento)->diff($dia)->y;
+        } catch (\Exception) {
+            return null;
+        }
     }
 
     public static function soCasais(?object $categoria): bool
