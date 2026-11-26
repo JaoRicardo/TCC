@@ -299,7 +299,7 @@ class ParticipacoesService
 
         if ($cpf === '') {
             $erros['cpf'] = 'Informe o CPF.';
-        } elseif (!$this->Users->isValidCpf($cpf)) {
+        } elseif (!$this->Users->isValidCpf((string)($dados['cpf'] ?? ''))) {
             $erros['cpf'] = 'CPF inválido. Confira os números.';
         }
 

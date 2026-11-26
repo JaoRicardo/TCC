@@ -172,6 +172,9 @@ class InscricoesController extends ApiController
 
         $spouseId = null;
         if ($spouseCpf) {
+            if (!$this->fetchTable('Users')->isValidCpf($spouseCpf)) {
+                return $this->apiError('CPF do(a) cônjuge inválido. Confira os números.', 422);
+            }
             $spouseCpfClean = preg_replace('/\D/', '', $spouseCpf);
             $spouse = $this->fetchTable('Users')->find()->where(['cpf' => $spouseCpfClean, 'deleted IS' => null])->first();
             if ($spouse) {

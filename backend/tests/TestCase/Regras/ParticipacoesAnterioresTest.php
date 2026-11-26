@@ -181,7 +181,15 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
         $this->assertResponseCode(422);
         $this->assertSame(['cpf', 'nome', 'categoriaId', 'ano'], array_keys($r['erros']));
 
-        $dados = ['cpf' => $this->cpfValido(901), 'nome' => 'João', 'categoriaId' => $this->categorias['FAC'], 'ano' => '2018'];
+        // Letras ou números a mais não viram CPF válido tirando o que sobra.
+        $valido = $this->cpfValido(902);
+        foreach ([substr($valido, 0, 3) . 'abc' . substr($valido, 3), $valido . '9', $valido . '#'] as $cpf) {
+            $r = $this->adicionar($admin, ['cpf' => $cpf, 'nome' => 'João', 'categoriaId' => $this->categorias['FAC'], 'ano' => '']);
+            $this->assertResponseCode(422);
+            $this->assertSame(['cpf'], array_keys($r['erros']), $cpf);
+        }
+
+        $dados =['cpf' => $this->cpfValido(901), 'nome' => 'João', 'categoriaId' => $this->categorias['FAC'], 'ano' => '2018'];
         $this->adicionar($admin, $dados);
         $this->assertResponseCode(201);
         $r = $this->adicionar($admin, $dados);

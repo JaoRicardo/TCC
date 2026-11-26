@@ -14,6 +14,7 @@
 	import '$lib/styles/inscritos.css';
 	import { pode } from '$lib/permissoes';
 	import { semAcento, digitosDeCpf, cpfContem } from '$lib/busca';
+	import { cpfValido } from '$lib/mascaras';
 	import {
 		adicionarParticipacao,
 		consultarCpf,
@@ -57,10 +58,16 @@
 
 	let ultimoConsultado = '';
 	async function aoDigitarCpf(e: Event) {
-		cpf = mascararCpf((e.currentTarget as HTMLInputElement).value);
+		const campo = e.currentTarget as HTMLInputElement;
+		cpf = mascararCpf(campo.value);
+		// Letra, símbolo ou 12º número deixam o valor mascarado igual ao de antes;
+		// sem mudança de estado o Svelte não redesenha o campo, então ele
+		// mostraria o que foi digitado. Por isso se escreve direto no campo.
+		if (campo.value !== cpf) campo.value = cpf;
 		delete erros.cpf;
 		const digitos = cpf.replace(/\D/g, '');
-		if (digitos.length < 11) {
+		// Incompleto ou com os dígitos verificadores errados: nada a consultar.
+		if (!cpfValido(digitos)) {
 			consulta = null;
 			ultimoConsultado = '';
 			if (nomeDaConta) {
@@ -94,7 +101,10 @@
 		return m;
 	});
 
-	const categoriasEmUso = $derived(categorias.filter((c) => !c.arquivada));
+	/** Com os 11 números a tela diz se o CPF é válido (antes disso, nada). */
+	const cpfCompleto = $derived(cpf.replace(/\D/g, '').length === 11);
+
+	const categoriasEmUso =$derived(categorias.filter((c) => !c.arquivada));
 	const categoriasArquivadas = $derived(categorias.filter((c) => c.arquivada));
 
 	function limpar() {
@@ -116,6 +126,7 @@
 		// Os mesmos avisos do servidor, sem esperar a volta.
 		const locais: Record<string, string> = {};
 		if (cpf.replace(/\D/g, '').length !== 11) locais.cpf = cpf ? 'O CPF tem 11 números.' : 'Informe o CPF.';
+		else if (!cpfValido(cpf)) locais.cpf = 'CPF inválido. Confira os números.';
 		if (!nome.trim()) locais.nome = 'Informe o nome.';
 		if (!categoriaId) locais.categoriaId = 'Escolha a categoria.';
 		if (ano && !/^\d{4}$/.test(ano)) locais.ano = 'Ano com 4 números, ou deixe em branco.';
@@ -286,6 +297,7 @@
 						value={cpf}
 						oninput={aoDigitarCpf}
 						inputmode="numeric"
+						maxlength="14"
 						autocomplete="off"
 						placeholder="000.000.000-00"
 						aria-invalid={!!erros.cpf}
@@ -362,16 +374,18 @@
 						{/each}
 					</ul>
 				{/if}
+				{#if cpfCompleto && !erros.cpf}
+					<p class="info">
+						{#if cpfValido(cpf)}
+							<span class="ins-pill ins-pill--mini ok">CPF válido</span>
+						{:else}
+							<span class="ins-pill ins-pill--mini can">CPF inválido</span> Confira os números.
+						{/if}
+					</p>
+				{/if}
 				{#if consultando}
 					<p class="info"><span class="fm-spinner fm-spinner--pequeno"></span>Conferindo o CPF…</p>
 				{:else if consulta}
-					<p class="info">
-						{#if consulta.conta}
-							<span class="ins-pill ins-pill--mini ok">Tem conta</span> {consulta.conta.nome}
-						{:else}
-							<span class="ins-pill ins-pill--mini neutro">Sem conta</span> A participação vale quando a pessoa criar a conta com este CPF.
-						{/if}
-					</p>
 					{#if consulta.sistema.length || consulta.cadastradas.length}
 						<p class="info info--ja">
 							Já conta como campista em:

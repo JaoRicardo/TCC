@@ -135,6 +135,14 @@ class FichaPessoaTest extends RegrasTestCase
         $this->assertSame('Ana Souza', $this->fetchTable('Users')->get($this->pessoa->id)->name);
     }
 
+    public function testCpfComLetrasERecusado(): void
+    {
+        // 529.982.247-25 é válido; com letras no meio não pode passar.
+        $resposta = $this->salvarFicha($this->admin, $this->dadosValidos(['cpf' => '529abc98224725']));
+        $this->assertResponseCode(422);
+        $this->assertSame('CPF inválido. Confira os números.', $resposta['errors']['cpf']['_']);
+    }
+
     public function testCpfDeOutraContaDizDeQuemE(): void
     {
         $outra = $this->criarUsuario('Maria Aparecida');

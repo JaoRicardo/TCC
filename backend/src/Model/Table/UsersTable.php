@@ -78,8 +78,15 @@ class UsersTable extends Table
         return $validator;
     }
 
+    /**
+     * Aceita o CPF com ou sem pontuação, mas só números e a pontuação do CPF:
+     * "123abc456..." não vira CPF válido tirando as letras.
+     */
     public function isValidCpf(mixed $cpf): bool
     {
+        if (!preg_match('/^[\d.\-\s]*$/', (string)$cpf)) {
+            return false;
+        }
         $cpf = preg_replace('/\D/', '', (string)$cpf);
 
         if (strlen($cpf) !== 11 || preg_match('/(\d)\1{10}/', $cpf)) {

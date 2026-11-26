@@ -473,7 +473,8 @@ class UsersController extends ApiController
         if ($dados['name'] === '') $erros['name'] = ['_' => 'Escreva o nome completo.'];
 
         $outraConta = null;
-        if ($dados['cpf'] !== '' && !$this->Users->isValidCpf($dados['cpf'])) {
+        // Confere o que foi digitado, não só os números (letras no meio = inválido).
+        if ($dados['cpf'] !== '' && !$this->Users->isValidCpf((string)($data['cpf'] ?? ''))) {
             $erro('cpf', 'CPF inválido. Confira os números.');
         } elseif ($dados['cpf'] !== '') {
             $dono = $this->Users->find()
