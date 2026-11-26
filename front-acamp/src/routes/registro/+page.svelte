@@ -5,7 +5,7 @@
 	import { page } from "$app/stores";
 	import { auth } from "$lib/stores/auth.svelte";
 	import { atividadeDaInscricao, destinoSeguro, loginUrl } from "$lib/redirect";
-	import { dataParaIso, mascaraCpf, mascaraData, mascaraTelefone } from "$lib/mascaras";
+	import { dataParaIso, mascaraCpf, mascaraData, mascaraNome, mascaraTelefone } from "$lib/mascaras";
 	import AcessoLayout from "$lib/components/AcessoLayout.svelte";
 
 	// Veio do "Inscrever-se" de uma atividade: depois de criar a conta, já entra
@@ -61,6 +61,7 @@
 	});
 
 	const MASCARAS: Partial<Record<Campo, (v: string) => string>> = {
+		name: mascaraNome,
 		cpf: mascaraCpf,
 		birthday: mascaraData,
 		phone: mascaraTelefone,

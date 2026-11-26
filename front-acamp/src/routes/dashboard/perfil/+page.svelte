@@ -10,7 +10,7 @@
 	import CabecalhoSite from '$lib/components/CabecalhoSite.svelte';
 	import Janela from '$lib/components/painel/Janela.svelte';
 	import '$lib/styles/formularios.css';
-	import { mascaraCep, mascaraTelefone } from '$lib/mascaras';
+	import { mascaraCep, mascaraNome, mascaraTelefone } from '$lib/mascaras';
 	import {
 		getMeuCadastro,
 		salvarMeuCadastro,
@@ -227,7 +227,11 @@
 							<input
 								class="campo"
 								class:com-erro={erros.name}
-								bind:value={dados.name}
+								value={dados.name}
+								oninput={(e) => {
+									dados.name = mascaraNome(e.currentTarget.value);
+									e.currentTarget.value = dados.name;
+								}}
 								autocomplete="name"
 								aria-invalid={!!erros.name}
 								aria-describedby={erros.name ? 'erro-name' : undefined}

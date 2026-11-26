@@ -108,7 +108,10 @@ abstract class RegrasTestCase extends TestCase
         bool $admin = false,
     ): EntityInterface {
         $n = ++$this->sequencia;
-        $usuario = $this->salvar('Users', [
+        // Sem validação: os testes numeram as pessoas ("Servo 3"), e a regra
+        // "nome sem números" vale para o que é digitado nas telas.
+        $users = $this->fetchTable('Users');
+        $usuario = $users->saveOrFail($users->newEntity([
             'cpf' => $this->cpfValido($n),
             'name' => $nome,
             'birthday' => (new \DateTime('today'))->modify("-{$idade} years -10 days")->format('Y-m-d'),
@@ -117,7 +120,7 @@ abstract class RegrasTestCase extends TestCase
             'email' => "teste{$n}@exemplo.com",
             'password' => 'senha123',
             'marital_status_id' => $this->estadosCivis[$estadoCivil],
-        ]);
+        ], ['accessibleFields' => ['*' => true], 'validate' => false]));
 
         // Administrador acessa todas as telas do painel, como no sistema de verdade.
         if ($admin) {

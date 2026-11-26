@@ -2,6 +2,14 @@
 
 const digitos = (valor: string, max: number) => valor.replace(/\D/g, '').slice(0, max);
 
+/**
+ * Nome de pessoa: tira os números (digitados ou colados) e junta os espaços
+ * repetidos. O espaço do fim fica, para a pessoa continuar digitando.
+ */
+export function mascaraNome(valor: string): string {
+	return valor.replace(/\d/g, '').replace(/\s{2,}/g, ' ');
+}
+
 /** 000.000.000-00 */
 export function mascaraCpf(valor: string): string {
 	return digitos(valor, 11)

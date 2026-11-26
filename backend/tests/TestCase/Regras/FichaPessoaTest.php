@@ -143,6 +143,13 @@ class FichaPessoaTest extends RegrasTestCase
         $this->assertSame('CPF inválido. Confira os números.', $resposta['errors']['cpf']['_']);
     }
 
+    public function testNomeComNumeroERecusado(): void
+    {
+        $resposta = $this->salvarFicha($this->admin, $this->dadosValidos(['name' => 'Ana Souza 3']));
+        $this->assertResponseCode(422);
+        $this->assertSame('O nome não pode ter números.', $resposta['errors']['name']['_']);
+    }
+
     public function testCpfDeOutraContaDizDeQuemE(): void
     {
         $outra = $this->criarUsuario('Maria Aparecida');

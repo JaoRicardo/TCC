@@ -445,7 +445,7 @@ class UsersController extends ApiController
         $digitos = fn(string $valor) => preg_replace('/\D/', '', $valor);
 
         $dados = [
-            'name'              => $texto('name'),
+            'name'              => (string)preg_replace('/\s+/u', ' ', $texto('name')),
             'cpf'               => $digitos($texto('cpf')),
             'birthday'          => $texto('birthday'),
             'sex'               => $texto('sex'),
@@ -471,6 +471,7 @@ class UsersController extends ApiController
             if ($valor === '') $erro("address.{$campo}", 'Preencha este campo.');
         }
         if ($dados['name'] === '') $erros['name'] = ['_' => 'Escreva o nome completo.'];
+        elseif ($this->Users->nomeTemNumero($dados['name'])) $erros['name'] = ['_' => 'O nome não pode ter números.'];
 
         $outraConta = null;
         // Confere o que foi digitado, não só os números (letras no meio = inválido).

@@ -23,6 +23,7 @@
 		mascaraCep,
 		mascaraCpf,
 		mascaraData,
+		mascaraNome,
 		mascaraTelefoneOuFixo,
 		cpfValido,
 		dataParaIso
@@ -656,7 +657,7 @@
 								class:erro={erros.nome}
 								class:mudou={alterado('nome') && !erros.nome}
 								value={f.nome}
-								oninput={digitar('nome')}
+								oninput={digitar('nome', mascaraNome)}
 								autocomplete="off"
 								aria-invalid={erros.nome ? 'true' : undefined}
 								aria-describedby={erros.nome ? 'e-nome' : undefined}

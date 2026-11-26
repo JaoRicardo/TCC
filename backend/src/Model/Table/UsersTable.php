@@ -38,7 +38,11 @@ class UsersTable extends Table
 
         $validator
             ->notEmptyString('name', 'Nome é obrigatório')
-            ->maxLength('name', 255);
+            ->maxLength('name', 255)
+            ->add('name', 'semNumeros', [
+                'rule' => fn($nome) => !$this->nomeTemNumero($nome),
+                'message' => 'O nome não pode ter números.',
+            ]);
 
         $validator
             ->notEmptyString('password', 'Senha é obrigatória')
@@ -76,6 +80,12 @@ class UsersTable extends Table
             ->greaterThan('marital_status_id', 0, 'Estado civil inválido');
 
         return $validator;
+    }
+
+    /** Nome de pessoa não leva número (cadastro, Meu cadastro e ficha no painel). */
+    public function nomeTemNumero(mixed $nome): bool
+    {
+        return (bool)preg_match('/\d/', (string)$nome);
     }
 
     /**

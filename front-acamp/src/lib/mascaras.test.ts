@@ -5,6 +5,7 @@ import {
 	mascaraCep,
 	mascaraCpf,
 	mascaraData,
+	mascaraNome,
 	mascaraTelefone,
 	mascaraTelefoneOuFixo
 } from './mascaras';
@@ -25,7 +26,19 @@ describe('mascaraCpf', () => {
 	])('"%s" → "%s"', (entrada, saida) => expect(mascaraCpf(entrada)).toBe(saida));
 });
 
-describe('mascaraTelefone / mascaraTelefoneOuFixo', () => {
+describe('mascaraNome', () => {
+	it.each([
+		['Maria José', 'Maria José'],
+		['João 2', 'João '], // o espaço fica: a pessoa pode continuar digitando
+		['Ana123 Souza', 'Ana Souza'],
+		['Maria 123 Souza', 'Maria Souza'], // não sobra espaço duplo
+		['Maria   Souza', 'Maria Souza'],
+		["D'Ávila-Neto", "D'Ávila-Neto"],
+		['123', '']
+	])('"%s" → "%s"', (entrada, saida) => expect(mascaraNome(entrada)).toBe(saida));
+});
+
+describe('mascaraTelefone /mascaraTelefoneOuFixo', () => {
 	it('celular', () => expect(mascaraTelefone('66999998888')).toBe('(66) 99999-8888'));
 	it('fixo com 10 números', () => expect(mascaraTelefoneOuFixo('6634981234')).toBe('(66) 3498-1234'));
 	it('celular com 11 números', () => expect(mascaraTelefoneOuFixo('66999998888')).toBe('(66) 99999-8888'));

@@ -69,6 +69,37 @@ class MeuCadastroTest extends RegrasTestCase
         $this->assertSame('Ana Souza', $this->fetchTable('Users')->get($this->pessoa->id)->name);
     }
 
+    public function testEspacosDoNomeSaoJuntados(): void
+    {
+        $resposta = $this->atualizar(['name' => '  Ana   Souza  Lima ']);
+        $this->assertResponseOk();
+        $this->assertSame('Ana Souza Lima', $resposta['user']['name']);
+    }
+
+    public function testNomeComNumeroERecusado(): void
+    {
+        $resposta = $this->atualizar(['name' => 'Ana Souza 2']);
+        $this->assertResponseCode(422);
+        $this->assertSame('O nome não pode ter números.', $resposta['errors']['name']['semNumeros']);
+        $this->assertSame('Ana Souza', $this->fetchTable('Users')->get($this->pessoa->id)->name);
+
+        // No cadastro da conta também.
+        $this->post('/api/v1/users', [
+            'name' => 'J0ão Pedro',
+            'cpf' => '52998224725',
+            'birthday' => '2000-01-01',
+            'sex' => 'M',
+            'marital_status_id' => $this->estadosCivis['Solteiro'],
+            'email' => 'joao.novo@exemplo.com',
+            'phone' => '66999998888',
+            'password' => 'senha123',
+            'password_confirmation' => 'senha123',
+        ]);
+        $this->assertResponseCode(422);
+        $this->assertArrayHasKey('name', $this->respostaJson()['errors']);
+        $this->assertSame(0, $this->fetchTable('Users')->find()->where(['cpf' => '52998224725'])->count());
+    }
+
     public function testTrocaASenhaConferindoAAtual(): void
     {
         $this->autenticarComo($this->pessoa);

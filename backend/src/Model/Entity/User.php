@@ -28,6 +28,12 @@ class User extends Entity
         return password_hash($password, PASSWORD_BCRYPT);
     }
 
+    /** Sem espaços nas pontas nem repetidos ("Maria  Souza" → "Maria Souza"). */
+    protected function _setName(string $name): string
+    {
+        return trim((string)preg_replace('/\s+/u', ' ', $name));
+    }
+
     protected function _setCpf(string $cpf): string
     {
         return preg_replace('/\D/', '', $cpf);
