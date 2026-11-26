@@ -297,7 +297,6 @@
 						value={cpf}
 						oninput={aoDigitarCpf}
 						inputmode="numeric"
-						maxlength="14"
 						autocomplete="off"
 						placeholder="000.000.000-00"
 						aria-invalid={!!erros.cpf}
