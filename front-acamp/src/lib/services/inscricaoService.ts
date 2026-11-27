@@ -21,6 +21,10 @@ export interface MinhaInscricao {
         | 'Cancelada pela organização'
         /** Correção não feita no prazo. */
         | 'Recusada'
+        /** Acampamento de Casais: o cônjuge ainda não confirmou (não concorre). */
+        | 'Aguardando cônjuge'
+        /** O sorteio foi feito sem o cônjuge ter confirmado. */
+        | 'Casal não confirmado'
         | string;
     dataInscricao?: string;
     isPago?: boolean;
@@ -46,6 +50,8 @@ export interface MinhaInscricao {
     pagamento?: ResumoPagamento | null;
     /** Acampamento: continua "Inscrito" depois da data do sorteio (não foi sorteado nem ficou de suplente). */
     naoSorteado?: boolean;
+    /** Acampamento de Casais esperando o cônjuge: quem é e se é esta pessoa quem confirma. */
+    casal?: { conjuge: string | null; euConfirmo: boolean } | null;
     activity: { id: number; nome: string; categoria?: string; tipo?: string } | null;
 }
 

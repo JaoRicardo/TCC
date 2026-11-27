@@ -183,9 +183,7 @@
 					</strong>
 					{#if a.proximo}
 						<span>
-							Próximo da fila: <strong>{a.proximo.nome}</strong> (1º da fila, {a.proximo.pessoas.every((p) => p.formularioEnviado)
-								? 'já enviou o formulário'
-								: 'ainda não enviou o formulário'})
+							Próximo da fila: <strong>{a.proximo.nome}</strong> (1º da fila)
 						</span>
 					{/if}
 				</span>
@@ -291,7 +289,8 @@
 						<span class="ins-pos">{u.rot}</span>
 						<span class="ins-item-corpo">
 							<span class="ins-item-nome">{u.nome}</span>
-							<span class="ins-pill ins-pill--mini {tag.tom} alinhar">{tag.texto}</span>
+							<!-- Suplente na fila não responde o formulário: só mostra se já pagou (adiantado). -->
+							{#if tag.texto !== 'Sem formulário'}<span class="ins-pill ins-pill--mini {tag.tom} alinhar">{tag.texto}</span>{/if}
 						</span>
 					</div>
 				{:else}

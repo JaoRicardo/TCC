@@ -282,6 +282,12 @@
 				}),
 			'chamar',
 			(dados) => {
+				// Entrou na vaga de quem já tinha pagado: não precisa pagar (o pagamento fica na vaga).
+				const semPagar: string[] = dados.semPagar ?? [];
+				if (semPagar.length) {
+					const varios = semPagar.length > 1;
+					return `${alvo.nome} ${alvo.pessoas > 1 ? 'foram chamados' : 'foi chamado(a)'}. A vaga já estava paga por quem saiu: ${semPagar.join(' e ')} não ${varios ? 'precisam' : 'precisa'} pagar.`;
+				}
 				const verbo = alvo.pessoas > 1 ? 'foram chamados e têm' : 'foi chamado(a) e tem';
 				return dados.prazo
 					? `${alvo.nome} ${verbo} até ${dma(dados.prazo)} para enviar o formulário e pagar.`
@@ -304,7 +310,8 @@
 	/** O mesmo cálculo do servidor: o maior entre o prazo da trilha e hoje + 3 dias, sem passar do primeiro dia. */
 	function novoPrazo(tipo: 'Campista' | 'Servo'): Date | null {
 		const base = tipo === 'Servo' ? atividade?.prazoPagamentoServo : atividade?.prazoPagamentoParticipante;
-		const tres = new Date(agora.getTime() + 3 * 86400000);
+		// Até 23h59 do 3º dia depois de hoje (PagamentoService::prazoDoChamado).
+		const tres = new Date(agora.getFullYear(), agora.getMonth(), agora.getDate() + 3, 23, 59);
 		let prazo = base ? new Date(base) : null;
 		if (!prazo || tres > prazo) prazo = tres;
 		if (atividade?.inicioEvento) {
@@ -595,10 +602,10 @@
 		</p>
 		<dl class="ins-resumo"><dt>Novo prazo</dt><dd>{dataLonga(novoPrazo(alvo.tipo))}, para enviar o formulário e pagar</dd></dl>
 		<p class="ins-ajuda">
-			São 3 dias a partir de hoje, sem passar do primeiro dia do acampamento. Se o prazo do acampamento for mais tarde, vale o do
-			acampamento.
+			O formulário abre para {alvo.pessoas > 1 ? 'eles' : 'a pessoa'} agora: suplente na fila não responde. São 3 dias a partir de
+			hoje, sem passar do primeiro dia do acampamento. Se o prazo do acampamento for mais tarde, vale o do acampamento.
 		</p>
-		{#if alvo.formulario}<p class="ins-aviso azul"><span>Já enviou o formulário enquanto estava na fila: falta só o pagamento.</span></p>{/if}
+		{#if alvo.formulario}<p class="ins-aviso azul"><span>Já tinha enviado o formulário: falta só o pagamento.</span></p>{/if}
 		{#if erroJanela}<p class="ins-aviso verm" role="alert"><span>{erroJanela}</span></p>{/if}
 		<div class="fm-janela-acoes">
 			<button type="button" class="fm-btn fm-btn--contorno fm-btn--grande" onclick={fechar} disabled={enviando}>Cancelar</button>

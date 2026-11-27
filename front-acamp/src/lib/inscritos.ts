@@ -115,6 +115,8 @@ export type Sit =
 	| 'cancel'
 	| 'recus'
 	| 'retirado'
+	| 'conj'
+	| 'naoConf'
 	| 'andam'
 	| 'evInsc'
 	| 'equipe'
@@ -135,6 +137,8 @@ export const SIT: Record<Sit, [string, Tom]> = {
 	cancel: ['Cancelada pela organização', 'can'],
 	recus: ['Recusada', 'can'],
 	retirado: ['Retirado do sorteio', 'can'],
+	conj: ['Aguardando cônjuge', 'esp'],
+	naoConf: ['Casal não confirmado', 'neu'],
 	andam: ['Inscrição em andamento', 'esp'],
 	evInsc: ['Inscrito', 'ok'],
 	equipe: ['Na equipe', 'ok'],
@@ -175,6 +179,10 @@ export function situacaoDe(i: Inscricao, evento: boolean, feito: { Campista: boo
 			return 'retirado';
 		case 'Inscrição em andamento':
 			return 'andam';
+		case 'Aguardando cônjuge':
+			return 'conj';
+		case 'Casal não confirmado':
+			return 'naoConf';
 	}
 	if (evento) return 'evInsc';
 	if (i.subscription_type === 'Servo') {
@@ -202,6 +210,8 @@ export function motivoDe(i: Inscricao, sit: Sit): string {
 	}
 	if (i.motivo) return sit === 'corr' ? `Correção: ${i.motivo}` : i.motivo;
 	if (sit === 'recus') return 'Correção não feita até o prazo.';
+	if (sit === 'conj') return 'Não concorre até o cônjuge confirmar a inscrição do casal.';
+	if (sit === 'naoConf') return 'O cônjuge não confirmou antes do sorteio.';
 	if ((sit === 'insc' || sit === 'nao') && !i.daArea) {
 		return i.cidade ? `Não concorre: mora em ${i.cidade}.` : 'Não concorre: sem cidade no cadastro.';
 	}

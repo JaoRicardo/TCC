@@ -477,7 +477,6 @@
 		}
 		if (prazo.vencido) return `O prazo terminou em ${diaMes(prazo.limite)}. As respostas não podem mais ser alteradas.`;
 		if (form?.respondido) return `Dá para alterar as respostas até ${diaEHora(prazo.limite)}.`;
-		if (prazo.eh_suplente) return `Envie até ${diaEHora(prazo.limite)}: só é chamado para uma vaga quem já enviou.`;
 		return `Envie até ${diaEHora(prazo.limite)}. Quem não enviar até lá perde a vaga.`;
 	});
 

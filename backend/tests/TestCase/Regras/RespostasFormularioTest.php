@@ -92,7 +92,9 @@ class RespostasFormularioTest extends RegrasTestCase
         $enviou = $this->inscrever($this->criarUsuario('Ana'), $aberto, 'Campista', ['selection_method_id' => $sorteio, 'form_submitted' => true]);
         $this->salvar('Answers', ['pre_registration_id' => $enviou->id, 'question_id' => $alergia->id, 'answer' => (string)$sim->id]);
         $this->salvar('Answers', ['pre_registration_id' => $enviou->id, 'question_id' => $qual->id, 'answer' => 'Amendoim']);
-        $this->inscrever($this->criarUsuario('Bia'), $aberto, 'Campista', ['substitute_position' => 1]);
+        $this->inscrever($this->criarUsuario('Bia'), $aberto, 'Campista', ['selection_method_id' => $sorteio]);
+        // Suplente na fila não responde o formulário (decisão de 2026-11-26): fica fora da aba.
+        $this->inscrever($this->criarUsuario('Na fila'), $aberto, 'Campista', ['substitute_position' => 1]);
         $this->inscrever($this->criarUsuario('Desistiu'), $aberto, 'Campista', ['selection_method_id' => $sorteio, 'is_quitter' => true]);
         // Enviou, mas perdeu a vaga depois (prazo do pagamento): sai da aba e da contagem.
         $this->inscrever($this->criarUsuario('Perdeu a vaga'), $aberto, 'Campista', [
@@ -111,13 +113,13 @@ class RespostasFormularioTest extends RegrasTestCase
         $this->assertSame(['Tem alergia?', 'Qual?'], array_column($dados['perguntas'], 'text'));
 
         $pessoas = array_column($dados['pessoas'], null, 'nome');
-        $this->assertSame(['Ana', 'Bia'], array_keys($pessoas), 'Só quem precisa enviar: nem desistentes, nem quem perdeu a vaga, nem não sorteados, nem servos.');
+        $this->assertSame(['Ana', 'Bia'], array_keys($pessoas), 'Só quem precisa enviar: nem suplentes na fila, nem desistentes, nem quem perdeu a vaga, nem não sorteados, nem servos.');
         $this->assertTrue($pessoas['Ana']['enviou']);
         $this->assertSame('Sorteado', $pessoas['Ana']['situacao']);
         $this->assertSame((string)$sim->id, $pessoas['Ana']['respostas'][(string)$alergia->id]);
         $this->assertSame('Amendoim', $pessoas['Ana']['respostas'][(string)$qual->id]);
         $this->assertFalse($pessoas['Bia']['enviou']);
-        $this->assertSame('Suplente', $pessoas['Bia']['situacao']);
+        $this->assertSame('Sorteado', $pessoas['Bia']['situacao']);
 
         // O número da lista de formulários bate com quem aparece na aba.
         $this->autenticarComo($this->comPermissoes('Organização', ['formularios']));

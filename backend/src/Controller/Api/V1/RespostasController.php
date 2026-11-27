@@ -191,7 +191,7 @@ class RespostasController extends ApiController
     }
 
     /**
-     * No acampamento: quem precisa enviar (sorteados, indicados, suplentes). No
+     * No acampamento: quem precisa enviar (sorteados, indicados, suplentes já chamados). No
      * evento (sem sorteio): todos os inscritos — quem não enviou ainda está com
      * a inscrição em andamento.
      */
@@ -209,9 +209,14 @@ class RespostasController extends ApiController
             ]]],
         ];
         if (!$evento) {
+            // Quem tem vaga. Suplente na fila não responde (decisão de 2026-11-26);
+            // só aparece quem enviou antes dessa mudança.
             $onde['AND'][] = ['OR' => [
                 'PreRegistrations.selection_method_id IS NOT' => null,
-                'PreRegistrations.substitute_position IS NOT' => null,
+                'AND' => [
+                    'PreRegistrations.substitute_position IS NOT' => null,
+                    'PreRegistrations.form_submitted'             => true,
+                ],
             ]];
         }
         $inscricoes = $this->fetchTable('PreRegistrations')->find()

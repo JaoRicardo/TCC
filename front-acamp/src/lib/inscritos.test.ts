@@ -52,7 +52,9 @@ describe('situacaoDe', () => {
 		['Prazo Perdido', 'prazo'],
 		['Cancelada pela organização', 'cancel'],
 		['Recusada', 'recus'],
-		['Inscrição em andamento', 'andam']
+		['Inscrição em andamento', 'andam'],
+		['Aguardando cônjuge', 'conj'],
+		['Casal não confirmado', 'naoConf']
 	])('status "%s" → %s', (status, sit) => {
 		expect(situacaoDe(inscricao({ status }), false, nada)).toBe(sit);
 	});

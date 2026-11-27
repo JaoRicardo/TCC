@@ -228,6 +228,6 @@ class PagamentoManualTest extends RegrasTestCase
 
         $linha = $this->naLista($fac, $inscricao)['pagamento'];
         $this->assertSame('pago', $linha['situacao']);
-        $this->assertSame(date('Y-m-d'), $linha['canceladaEm']);
+        $this->assertSame(date('Y-m-d'), $linha['saiuEm']);
     }
 }

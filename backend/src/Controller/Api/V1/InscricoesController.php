@@ -7,6 +7,7 @@ use AllowDynamicProperties;
 use App\Controller\Api\ApiController;
 use App\Model\Table\FormCorrectionsTable;
 use App\Model\Table\UserDocumentsTable;
+use App\Service\CasalService;
 use App\Service\CategoriasService;
 use App\Service\FormulariosService;
 use App\Service\PagamentoService;
@@ -35,11 +36,12 @@ class InscricoesController extends ApiController
     }
 
     /**
-     * Status em que a pessoa tem formulário para responder. Suplente entra na lista
-     * de propósito: ele também precisa entregar o formulário dentro do prazo, e é
-     * isso que o habilita a assumir uma vaga liberada sem prazo extra.
+     * Status de acampamento em que a pessoa tem formulário para responder: só
+     * quem tem vaga (decisão do usuário em 2026-11-26). O suplente na fila não
+     * responde; recebe o formulário quando é chamado (vira "Sorteado"), com
+     * prazo contado da chamada.
      */
-    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Suplente', 'Formulário Enviado', 'Correção pedida'];
+    private const STATUS_COM_FORMULARIO = ['Sorteado', 'Indicado', 'Formulário Enviado', 'Correção pedida'];
 
     /** Situações em que a organização pediu correção do formulário enviado. */
     private const STATUS_CORRECAO = ['Correção pedida'];
@@ -170,7 +172,15 @@ class InscricoesController extends ApiController
             return $this->apiError("Como seu estado civil é \"{$maritalTitle}\", é necessário informar o CPF do(a) cônjuge para se inscrever.", 422);
         }
 
+        // Campista no acampamento de Casais: o casal se inscreve junto e o
+        // cônjuge confirma depois (CasalService).
+        $doCasal = $activity->camping_id !== null && $tipo === 'Campista' && CategoriasService::soCasais($activity->category);
+        if ($doCasal && !$spouseCpf) {
+            return $this->apiError('Informe o CPF do(a) seu cônjuge: no acampamento de Casais, vocês se inscrevem juntos.', 422);
+        }
+
         $spouseId = null;
+        $spouse = null;
         if ($spouseCpf) {
             if (!$this->fetchTable('Users')->isValidCpf($spouseCpf)) {
                 return $this->apiError('CPF do(a) cônjuge inválido. Confira os números.', 422);
@@ -179,8 +189,15 @@ class InscricoesController extends ApiController
             $spouse = $this->fetchTable('Users')->find()->where(['cpf' => $spouseCpfClean, 'deleted IS' => null])->first();
             if ($spouse) {
                 $spouseId = $spouse->id;
-            } elseif ($exigeConjuge) {
+            } elseif ($exigeConjuge || $doCasal) {
                 return $this->apiError('CPF do(a) cônjuge não encontrado. Ele(a) precisa estar cadastrado(a) no sistema antes da inscrição.', 422);
+            }
+        }
+
+        if ($doCasal) {
+            $erroDoConjuge = $this->conjugeNaoPodeEntrar($identity, $spouse, $activity);
+            if ($erroDoConjuge !== null) {
+                return $this->apiError($erroDoConjuge, 422);
             }
         }
 
@@ -205,17 +222,21 @@ class InscricoesController extends ApiController
             }
         }
 
-        $preReg = $this->PreRegistrations->newEntity([
-            'subscription_type' => $tipo,
-            'is_fee_paid'       => false,
-            'is_quitter'        => false,
-            'user_id'           => $identity->id,
-            'activity_id'       => $activityId,
-            'spouse_id'         => $spouseId,
-        ]);
+        if ($doCasal) {
+            $preReg = (new CasalService())->inscrever((int)$identity->id, (int)$spouseId, $activityId);
+        } else {
+            $preReg = $this->PreRegistrations->newEntity([
+                'subscription_type' => $tipo,
+                'is_fee_paid'       => false,
+                'is_quitter'        => false,
+                'user_id'           => $identity->id,
+                'activity_id'       => $activityId,
+                'spouse_id'         => $spouseId,
+            ]);
 
-        if (!$this->PreRegistrations->save($preReg)) {
-            return $this->apiResponse(['error' => 'Erro ao salvar inscrição', 'errors' => $preReg->getErrors()], 422);
+            if (!$this->PreRegistrations->save($preReg)) {
+                return $this->apiResponse(['error' => 'Erro ao salvar inscrição', 'errors' => $preReg->getErrors()], 422);
+            }
         }
 
         $preRegFull = $this->PreRegistrations->find()
@@ -358,6 +379,9 @@ class InscricoesController extends ApiController
             ->where(['id' => $preRegId, 'activity_id' => $activityId, 'deleted IS' => null])
             ->first();
         if (!$preReg) return $this->apiError('Inscrição não encontrada', 404);
+        if ($preReg->awaiting_spouse) {
+            return $this->apiError('Este casal ainda não confirmou a inscrição: o cônjuge precisa confirmar antes.', 422);
+        }
 
         // Indicação vale para qualquer cidade (decisão do usuário, 2026-11-22):
         // só o sorteio fica restrito a Primavera do Leste e Poxoréu.
@@ -494,6 +518,19 @@ class InscricoesController extends ApiController
             return $this->apiError('Inscrição não encontrada', 404);
         }
 
+        // Casal esperando a confirmação: cancelar pelo cônjuge é dizer que não
+        // está ciente; cancelar por quem inscreveu leva a do cônjuge junto.
+        if ($preReg->awaiting_spouse) {
+            $casal = new CasalService();
+            if ($preReg->added_by_spouse) {
+                $nome = $this->Activities->get($preReg->activity_id)->name;
+                $casal->recusar($preReg, $casal->outraDoCasal($preReg), $nome);
+
+                return $this->apiResponse(['deleted' => true]);
+            }
+            $casal->cancelarJunto($preReg);
+        }
+
         $this->PreRegistrations->updateAll(
             ['deleted' => date('Y-m-d H:i:s')],
             ['id' => $id]
@@ -574,7 +611,7 @@ class InscricoesController extends ApiController
                 'motivo'    => $this->motivoDaSituacao($preReg, $status),
                 'andamento' => $fim === null || $fim->format('Y-m-d') >= $hoje->format('Y-m-d'),
                 // "Pago em {data} · {forma} · registrado por {nome}".
-                'pagamento' => $preReg->is_fee_paid ? $this->pagamentoService->resumo($preReg, $activity) : null,
+                'pagamento' => $preReg->is_fee_paid ? $this->resumoParaAPessoa($preReg, $activity) : null,
             ];
         }
 
@@ -624,8 +661,8 @@ class InscricoesController extends ApiController
         // (2) existe formulário montado para o acampamento dela, e
         // (3) o prazo ainda está aberto para mexer nas respostas.
         //
-        // Suplente responde o formulário junto dos sorteados, no mesmo prazo: é o
-        // que permite chamá-lo na hora em que uma vaga é liberada.
+        // Suplente na fila não responde: o formulário abre quando ele é chamado
+        // para uma vaga, com prazo contado da chamada (PrazoFormularioService).
         $statusPermite     = $this->statusPermiteFormulario($preReg, $status);
         $formularioMontado = !empty($questions);
         $temFormulario     = $statusPermite && $formularioMontado;
@@ -751,8 +788,11 @@ class InscricoesController extends ApiController
             if ($status === 'Retirado do sorteio') {
                 return 'Seus dados foram corrigidos e você não pode mais participar deste sorteio. Fale com a organização.';
             }
+            if ($status === 'Suplente') {
+                return 'Você está na lista de suplentes. O formulário abre se você for chamado(a) para uma vaga.';
+            }
 
-            return 'O formulário fica disponível depois que você for sorteado, indicado ou entrar na lista de suplentes deste acampamento.';
+            return 'O formulário fica disponível depois que você for sorteado ou indicado neste acampamento.';
         }
 
         if (!$formularioMontado) {
@@ -859,13 +899,25 @@ class InscricoesController extends ApiController
      * Bloco de pagamento exibido no fim do formulário.
      *
      * Duas regras do processo ficam aqui:
-     * - **Suplente não paga.** Ele responde o formulário, mas a taxa só é cobrada de
-     *   quem tem vaga de verdade. Se ele for chamado para uma vaga, o pagamento
-     *   aparece liberado nesta mesma tela.
+     * - **Suplente não paga.** A taxa só é cobrada de quem tem vaga de verdade.
+     *   Se ele for chamado para uma vaga, o formulário abre e o pagamento
+     *   aparece nesta mesma tela.
      * - Pagar vem **depois** do formulário enviado, e dentro da data de pagamento
      *   cadastrada na atividade. A pessoa paga direto com a organização, que
      *   registra no painel (PagamentoService).
      */
+    /**
+     * O resumo do pagamento para a própria pessoa: sem o nome de quem saiu da
+     * vaga nem de quem entrou nela (são de outros participantes).
+     */
+    private function resumoParaAPessoa(object $preReg, object $activity): array
+    {
+        $resumo = $this->pagamentoService->resumo($preReg, $activity);
+        unset($resumo['herdadoDe'], $resumo['passouPara']);
+
+        return $resumo;
+    }
+
     private function serializePagamento(object $preReg, object $activity): array
     {
         $valor    = $this->pagamentoService->valor($preReg, $activity);
@@ -1521,6 +1573,177 @@ class InscricoesController extends ApiController
         return null;
     }
 
+    /**
+     * Acampamento de Casais: o cônjuge informado pode entrar junto? O estado
+     * civil dele não conta aqui — ele corrige ao confirmar (CasalService).
+     * Devolve a mensagem para quem está inscrevendo, ou null.
+     */
+    private function conjugeNaoPodeEntrar(object $identity, ?object $conjuge, object $activity): ?string
+    {
+        if ($conjuge === null) return null;
+        if ((int)$conjuge->id === (int)$identity->id) {
+            return 'Informe o CPF do(a) seu cônjuge, não o seu.';
+        }
+        $nome = $conjuge->name;
+        $jaInscrito = $this->PreRegistrations->find()
+            ->where(['user_id' => $conjuge->id, 'activity_id' => $activity->id, 'deleted IS' => null])
+            ->count();
+        if ($jaInscrito > 0) {
+            return "{$nome} já está inscrito(a) neste acampamento.";
+        }
+
+        $erro = $this->checkAcampamentoEligibility($conjuge, $activity, 'Campista');
+        if ($erro === null || $erro['codigo'] === 'so_casados') return null;
+
+        $categoria = $activity->category->name ?? '';
+
+        return 'Não foi possível inscrever o casal: ' . match ($erro['codigo']) {
+            'ja_campista'       => "{$nome} já participou como campista em {$categoria}.",
+            'inscrito_em_outro' => "{$nome} já está inscrito(a) como campista em outro acampamento {$categoria}.",
+            'idade'             => "{$nome} não está na faixa de idade da categoria {$categoria}.",
+            'pre_requisito'     => "{$nome} ainda não cumpre o pré-requisito da categoria {$categoria}.",
+            default             => "{$nome} não pode se inscrever neste acampamento.",
+        };
+    }
+
+    /**
+     * GET /me/casal — para a janela que aparece em qualquer tela: inscrições do
+     * casal que esperam a confirmação desta pessoa, e avisos de que o cônjuge
+     * recusou uma inscrição feita por ela.
+     */
+    public function casal(): Response
+    {
+        $this->request->allowMethod(['get']);
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $casal = new CasalService();
+        $users = $this->fetchTable('Users');
+        $eu = $users->get($identity->id);
+        $temEndereco = $this->Addresses->find()->where(['user_id' => $identity->id, 'deleted IS' => null])->count() > 0;
+
+        $pendentes = [];
+        foreach ($casal->pendentesDe((int)$identity->id) as $p) {
+            $outra = $casal->outraDoCasal($p);
+            if ($outra === null) continue;
+            $quem = $users->get($outra->user_id);
+            $estadoNovo = null;
+            if (!$casal->ehCasado($eu->marital_status_id)) {
+                $estadoNovo = $casal->ehCasado($quem->marital_status_id) ? $casal->tituloDoEstadoCivil($quem->marital_status_id) : 'Casado';
+            }
+            $a = $p->activity;
+            $pendentes[] = [
+                'id'          => $p->id,
+                'conjuge'     => $quem->name,
+                'atividade'   => [
+                    'id'     => $a->id,
+                    'nome'   => $a->name,
+                    'inicio' => $a->start_date?->format('Y-m-d'),
+                    'fim'    => $a->start_date?->modify('+' . max(0, (int)$a->duration_days - 1) . ' days')->format('Y-m-d'),
+                ],
+                // Ao confirmar, o estado civil passa a ser este (null = não muda).
+                'estadoCivil' => $estadoNovo === null ? null : [
+                    'atual' => $casal->tituloDoEstadoCivil($eu->marital_status_id),
+                    'novo'  => $estadoNovo,
+                ],
+                // Sem cidade e CEP no cadastro: a janela pede (o sorteio precisa da cidade).
+                'precisaEndereco' => !$temEndereco,
+            ];
+        }
+
+        $recusas = [];
+        foreach ($casal->recusasNaoVistasDe((int)$identity->id) as $r) {
+            $recusas[] = [
+                'id'        => $r->id,
+                'conjuge'   => $r->spouse_id ? $users->find()->where(['id' => $r->spouse_id])->first()?->name : null,
+                'atividade' => ['id' => $r->activity->id, 'nome' => $r->activity->name],
+            ];
+        }
+
+        return $this->apiResponse(['data' => ['pendentes' => $pendentes, 'recusas' => $recusas]]);
+    }
+
+    /**
+     * POST /inscricoes/{id}/casal — o cônjuge responde: `resposta` = "confirmar"
+     * (com `city` e `cep` se ainda não tem endereço) ou "recusar".
+     */
+    public function responderCasal(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        $p = $this->PreRegistrations->find()
+            ->contain(['Activities' => ['Categories']])
+            ->where([
+                'PreRegistrations.id'              => $id,
+                'PreRegistrations.user_id'         => $identity->id,
+                'PreRegistrations.deleted IS'      => null,
+                'PreRegistrations.awaiting_spouse' => true,
+                'PreRegistrations.added_by_spouse' => true,
+            ])
+            ->first();
+        if (!$p) return $this->apiError('Inscrição não encontrada', 404);
+
+        $casal = new CasalService();
+        if ($casal->sorteioFeito((int)$p->activity_id)) {
+            return $this->apiError('O sorteio deste acampamento já foi feito: não é mais possível responder.', 422);
+        }
+        $outra = $casal->outraDoCasal($p);
+        $atividade = $p->activity->name;
+
+        $resposta = (string)$this->request->getData('resposta');
+        if ($resposta === 'recusar') {
+            $casal->recusar($p, $outra, $atividade);
+
+            return $this->apiResponse(['data' => ['resposta' => 'recusada']]);
+        }
+        if ($resposta !== 'confirmar') return $this->apiError('Resposta inválida.', 422);
+        if ($outra === null) return $this->apiError('A inscrição do seu cônjuge não existe mais.', 422);
+
+        // Sem endereço: a cidade decide o sorteio, então pede aqui.
+        $temEndereco = $this->Addresses->find()->where(['user_id' => $identity->id, 'deleted IS' => null])->count() > 0;
+        if (!$temEndereco) {
+            $endereco = [
+                'city' => trim((string)$this->request->getData('city')),
+                'cep'  => preg_replace('/\D/', '', (string)$this->request->getData('cep')),
+            ];
+            $erros = [];
+            if ($endereco['city'] === '') $erros['city'] = 'Informe a cidade.';
+            if (strlen($endereco['cep']) !== 8) $erros['cep'] = $endereco['cep'] === '' ? 'Informe o CEP.' : 'O CEP tem 8 números.';
+            if ($erros) return $this->apiResponse(['error' => 'Confira os campos marcados.', 'errors' => $erros], 422);
+        }
+
+        // As regras do acampamento continuam valendo para quem confirma (o estado
+        // civil é corrigido na confirmação).
+        $eu = $this->fetchTable('Users')->get($identity->id);
+        $erro = $this->checkAcampamentoEligibility($eu, $p->activity, 'Campista');
+        if ($erro !== null && $erro['codigo'] !== 'so_casados') {
+            return $this->apiError($erro['mensagem'], 422);
+        }
+
+        if (!$temEndereco) {
+            $this->Addresses->saveOrFail($this->Addresses->newEntity($endereco + ['user_id' => $identity->id]));
+        }
+        $novoEstado = $casal->confirmar($p, $outra, $atividade);
+
+        return $this->apiResponse(['data' => ['resposta' => 'confirmada', 'estadoCivil' => $novoEstado]]);
+    }
+
+    /** POST /inscricoes/{id}/casal/visto — quem inscreveu viu que o cônjuge recusou. */
+    public function recusaVista(int $id): Response
+    {
+        $this->request->allowMethod(['post']);
+        $identity = $this->requireIdentity();
+        if ($identity instanceof Response) return $identity;
+
+        if (!(new CasalService())->marcarRecusaVista($id, (int)$identity->id)) {
+            return $this->apiError('Aviso não encontrado', 404);
+        }
+
+        return $this->apiResponse(['ok' => true]);
+    }
+
     /** Inscrição em evento (atividade sem acampamento). */
     private function ehEvento(object $preReg): bool
     {
@@ -1685,6 +1908,11 @@ class InscricoesController extends ApiController
             if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CANCELADA) return 'Cancelada pela organização';
             if ($preReg->disqualification_reason === PrazoFormularioService::MOTIVO_CORRECAO) return 'Recusada';
         }
+        // Casal do acampamento de Casais esperando o cônjuge confirmar: não
+        // concorre. Com o sorteio feito, ficou de fora.
+        if ($preReg->awaiting_spouse) {
+            return $this->sorteioJaPassou($preReg) ? 'Casal não confirmado' : 'Aguardando cônjuge';
+        }
         // A organização pediu correção do formulário enviado: a vaga continua
         // até o prazo da correção (depois dele, a varredura recusa a inscrição).
         $correcao = $preReg->form_submitted && $preReg->disqualified_at === null ? $this->correcaoDa($preReg) : null;
@@ -1734,7 +1962,7 @@ class InscricoesController extends ApiController
             // Prazo e pendências do formulário, para o painel avisar antes de vencer.
             'prazoFormulario'    => $prazoFormulario?->format('Y-m-d\TH:i'),
             'formularioEnviado'  => (bool)$preReg->form_submitted,
-            'formularioPendente' => (in_array($status, ['Sorteado', 'Indicado', 'Suplente', 'Inscrição em andamento'], true)
+            'formularioPendente' => (in_array($status, ['Sorteado', 'Indicado', 'Inscrição em andamento'], true)
                 && !$preReg->form_submitted) || in_array($status, self::STATUS_CORRECAO, true),
             // Correção pedida, cancelada ou recusada pela organização: o motivo que a pessoa lê.
             'motivoOrganizacao'  => $this->motivoDaSituacao($preReg, $status),
@@ -1747,12 +1975,20 @@ class InscricoesController extends ApiController
                 : null,
             'pagoEm'             => $this->pagamentoService->pagoEm($preReg),
             // Pagamento direto com a organização: valor, prazo e se já precisa pagar.
-            'pagamento'          => $activity ? $this->pagamentoService->resumo($preReg, $activity) : null,
+            'pagamento'          => $activity ? $this->resumoParaAPessoa($preReg, $activity) : null,
             'naoSorteado'        => $status === 'Inscrito' && $this->sorteioJaPassou($preReg),
             // Existe formulário montado para a categoria/tipo desta inscrição? Sem
             // isso a tela "Meus Formulários" listaria inscrição que não tem o que responder.
             'temFormulario'      => $this->temFormularioMontado($preReg),
             'perdeuPrazo'        => $preReg->disqualified_at !== null,
+            // Acampamento de Casais esperando a confirmação do cônjuge: quem é o
+            // cônjuge e se é esta pessoa quem precisa confirmar.
+            'casal'              => $preReg->awaiting_spouse ? [
+                'conjuge'      => $preReg->spouse_id
+                    ? $this->fetchTable('Users')->find()->select(['name'])->where(['id' => $preReg->spouse_id])->first()?->name
+                    : null,
+                'euConfirmo'   => (bool)$preReg->added_by_spouse,
+            ] : null,
             'activity'     => $activity ? [
                 'id'           => $activity->id,
                 'nome'         => $activity->name,

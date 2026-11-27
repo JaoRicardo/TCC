@@ -195,6 +195,10 @@ return function (RouteBuilder $routes): void {
             $builder->post('/activities/{id}/inscricoes', ['controller' => 'Inscricoes', 'action' => 'subscribe'])->setPass(['id']);
             $builder->delete('/inscricoes/{id}', ['controller' => 'Inscricoes', 'action' => 'cancel'])->setPass(['id']);
             $builder->get('/me/inscricoes', ['controller' => 'Inscricoes', 'action' => 'minhas']);
+            // Casal no acampamento de Casais: o cônjuge confirma (CasalService).
+            $builder->get('/me/casal', ['controller' => 'Inscricoes', 'action' => 'casal']);
+            $builder->post('/inscricoes/{id}/casal', ['controller' => 'Inscricoes', 'action' => 'responderCasal'])->setPass(['id']);
+            $builder->post('/inscricoes/{id}/casal/visto', ['controller' => 'Inscricoes', 'action' => 'recusaVista'])->setPass(['id']);
             $builder->get('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'formulario'])->setPass(['id']);
             $builder->post('/inscricoes/{id}/formulario', ['controller' => 'Inscricoes', 'action' => 'salvarFormulario'])->setPass(['id']);
             $builder->post('/inscricoes/{id}/arquivo', ['controller' => 'Inscricoes', 'action' => 'enviarArquivo'])->setPass(['id']);

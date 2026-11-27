@@ -8,9 +8,10 @@
 	 * servidor: aqui só se escolhe o que mostrar.
 	 */
 	import { page } from '$app/stores';
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { apiFetch } from '$lib/api';
 	import { auth } from '$lib/stores/auth.svelte';
+	import { casal } from '$lib/stores/casal.svelte';
 	import {
 		getElegibilidade,
 		getMinhasInscricoes,
@@ -110,6 +111,11 @@
 		minhaInscricao = inscricoes.find((i) => i.activity?.id === id) ?? null;
 		elegibilidade = eleg;
 	}
+
+	// A pessoa respondeu a janela do casal: a inscrição mudou (ou foi cancelada).
+	$effect(() => {
+		if (casal.respostas > 0 && untrack(() => pessoaCarregada)) carregarPessoa();
+	});
 
 	// Espera a sessão salva ser conferida: visitante não tem inscrição para buscar
 	// (e levaria um 401). `?inscrever=1` chega do cartão do Início ou da volta do login.
@@ -322,6 +328,10 @@
 				return 'desistencia';
 			case 'Inscrição em andamento':
 				return 'evAndamento';
+			case 'Aguardando cônjuge':
+				return m.casal?.euConfirmo ? 'casalConfirmar' : 'casalAguardando';
+			case 'Casal não confirmado':
+				return 'casalNaoConfirmado';
 			default:
 				return 'inscrito';
 		}
@@ -333,6 +343,8 @@
 	let gratis = $derived(minhaTaxa <= 0);
 	let pago = $derived(!!minhaInscricao?.isPago);
 	let pagoEm = $derived(minhaInscricao?.pagoEm ? fData(diaLocal(minhaInscricao.pagoEm)) : '');
+	/** Suplente chamado para a vaga de quem pagou e saiu: não precisa pagar (o pagamento fica na vaga). */
+	let vagaJaPaga = $derived(!!minhaInscricao?.pagamento?.herdado);
 	let faltaPagar = $derived(!gratis && !pago);
 	/** Já precisa pagar: formulário enviado (acampamento) ou inscrição concluída (evento). */
 	let situacaoPaga = $derived(sit === 'enviado' || sit === 'evInscrito');
@@ -488,6 +500,34 @@
 					passo: passo(t === 'servo' ? 'Sorteio de servos (previsto)' : 'Sorteio (previsto)', sorteio)
 				});
 				break;
+			case 'casalAguardando':
+				Object.assign(B, {
+					tom: 'espera',
+					selo: 'Aguardando cônjuge',
+					titulo: `Falta ${m?.casal?.conjuge ?? 'seu cônjuge'} confirmar a inscrição do casal.`,
+					texto: 'Quando entrar no site, aparece um aviso para confirmar. Enquanto não confirmar, vocês ainda não concorrem ao sorteio.',
+					passo: passo('Sorteio (previsto)', sorteio, 'Sem a confirmação até o sorteio, o casal fica de fora.', true)
+				});
+				break;
+			case 'casalConfirmar':
+				Object.assign(B, {
+					tom: 'espera',
+					selo: 'Falta você confirmar',
+					titulo: `${m?.casal?.conjuge ?? 'Seu cônjuge'} inscreveu vocês dois como casal.`,
+					texto: 'Confirme que está ciente para a inscrição valer. Sem isso, o casal não concorre ao sorteio.',
+					// A janela do casal (JanelaCasal) fica aberta por cima até a pessoa responder.
+					passo: passo('Sorteio (previsto)', sorteio, 'Dá para confirmar até a organização fazer o sorteio.', true)
+				});
+				break;
+			case 'casalNaoConfirmado':
+				Object.assign(B, {
+					tom: 'cinza',
+					selo: 'Casal não confirmado',
+					titulo: 'A inscrição do casal não foi confirmada antes do sorteio.',
+					texto: 'Por isso, vocês não concorreram às vagas.',
+					acoes: [{ label: 'Ver outros acampamentos e eventos', ouro: false, href: '/dashboard' }]
+				});
+				break;
 			case 'naoSorteado':
 				Object.assign(B, {
 					tom: 'cinza',
@@ -533,9 +573,8 @@
 					selo: 'Suplente',
 					titulo: 'Você está na lista de suplentes.',
 					texto:
-						'Se alguém desistir ou perder o prazo, você pode ser chamado(a) para a vaga. Para estar pronto(a), responda o formulário no mesmo prazo de quem foi sorteado.',
-					passo: passo(rotuloPrazo, prazoForm, '', true),
-					acoes: m?.temFormulario && !m.formularioEnviado ? formAcao('Responder formulário') : m?.temFormulario ? formAcao('Ver ou editar formulário', false) : []
+						'Se alguém desistir ou perder o prazo, você pode ser chamado(a) para a vaga. Aí o formulário abre para você, com pelo menos 3 dias para responder e pagar. Enquanto estiver na fila, não precisa fazer nada.',
+					acoes: []
 				});
 				break;
 			case 'correcao':
@@ -642,7 +681,11 @@
 		if (pago)
 			return {
 				valor: brl(minhaTaxa),
-				linha: pagoEm ? `Pago em ${pagoEm}.` : 'Pagamento confirmado.',
+				linha: vagaJaPaga
+					? 'Você entrou numa vaga que já estava paga: não precisa pagar.'
+					: pagoEm
+						? `Pago em ${pagoEm}.`
+						: 'Pagamento confirmado.',
 				selo: 'Pago',
 				tom: 'ok'
 			};
@@ -928,7 +971,9 @@
 			avisar(
 				data.data?.status === 'Inscrição em andamento'
 					? 'Inscrição iniciada. Falta responder o formulário.'
-					: ehEvento
+					: data.data?.status === 'Aguardando cônjuge'
+						? 'Inscrição feita! Agora falta seu cônjuge confirmar.'
+						: ehEvento
 						? 'Inscrição feita!'
 						: 'Inscrição feita! Agora é aguardar o sorteio.'
 			);
@@ -1074,14 +1119,18 @@
 								{#if bloco.acoes.length || bloco.criarConta}
 									<div class="acoes">
 										{#each bloco.acoes as a (a.label)}
-											<a
-												href={a.href}
-												class="btn"
-												class:b-ouro={a.ouro}
-												class:b-azul={!a.ouro}
-												target={a.fora ? '_blank' : undefined}
-												rel={a.fora ? 'noopener noreferrer' : undefined}>{a.label}</a
-											>
+											{#if a.onclick}
+												<button type="button" class="btn" class:b-ouro={a.ouro} class:b-azul={!a.ouro} onclick={a.onclick}>{a.label}</button>
+											{:else}
+												<a
+													href={a.href}
+													class="btn"
+													class:b-ouro={a.ouro}
+													class:b-azul={!a.ouro}
+													target={a.fora ? '_blank' : undefined}
+													rel={a.fora ? 'noopener noreferrer' : undefined}>{a.label}</a
+												>
+											{/if}
 										{/each}
 										{#if bloco.criarConta}
 											<span class="criar-conta"
@@ -1186,7 +1235,7 @@
 							<p class="ajuda">Pagamento até <strong>{prazoDosValores}</strong>.</p>
 						{/if}
 						{#if pago && !gratis}
-							<span class="pill t-ok pill-sozinha"><i></i>{pagoEm ? `Pago em ${pagoEm}` : 'Pago'}</span>
+							<span class="pill t-ok pill-sozinha"><i></i>{vagaJaPaga ? 'Vaga já paga' : pagoEm ? `Pago em ${pagoEm}` : 'Pago'}</span>
 						{/if}
 						{#if notaValores}<p class="ajuda">{notaValores}</p>{/if}
 					</section>
@@ -1268,7 +1317,7 @@
 							/>
 							<span class="ajuda ajuda-normal">
 								{ehCasais && janelaTrilha !== 'servo'
-									? 'No acampamento de Casais, vocês se inscrevem juntos.'
+									? 'No acampamento de Casais, vocês se inscrevem juntos: seu cônjuge recebe um aviso no site para confirmar.'
 									: 'Como você é casado(a) ou vive em união estável, informe o CPF do cônjuge.'} Seu cônjuge precisa ter uma conta no site.
 							</span>
 						</label>

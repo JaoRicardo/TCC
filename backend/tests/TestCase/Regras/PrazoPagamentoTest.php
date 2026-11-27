@@ -106,7 +106,8 @@ class PrazoPagamentoTest extends RegrasTestCase
         $chamado = $this->recarregar($suplente);
         $this->assertNull($chamado->disqualified_at, 'Quem foi chamado não pode entrar com o prazo de pagamento já vencido.');
         $prazo = (new PagamentoService())->prazo($chamado, $fac);
-        $this->assertEqualsWithDelta($chamado->promoted_at->addDays(3)->getTimestamp(), $prazo->getTimestamp(), 1);
+        // Até 23h59 do 3º dia depois da chamada (vale também para o formulário).
+        $this->assertSame($chamado->promoted_at->addDays(3)->format('Y-m-d') . ' 23:59', $prazo->format('Y-m-d H:i'));
 
         // Passados os 3 dias (e os 2 de folga) sem pagar, perde a vaga e ela abre de novo.
         $chamado->promoted_at = DateTime::now()->subDays(6);

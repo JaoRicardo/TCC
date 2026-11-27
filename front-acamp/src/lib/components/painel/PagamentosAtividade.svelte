@@ -10,14 +10,17 @@
 	import { auth } from '$lib/stores/auth.svelte';
 	import Janela from '$lib/components/painel/Janela.svelte';
 	import {
+		avisoDeQuemSaiu,
 		dm,
 		dma,
 		FORMAS,
 		linhaDoPago,
 		naFolga,
 		paraData,
+		podeDesfazer,
 		reais,
 		SITUACAO,
+		totaisDosPagamentos,
 		type ResumoPagamento
 	} from '$lib/pagamentos';
 	import '$lib/styles/formularios.css';
@@ -73,12 +76,7 @@
 		todos: comPagamento.length
 	});
 
-	let totais = $derived({
-		recebido: comPagamento
-			.filter((i) => i.pagamento.situacao === 'pago' && !i.pagamento.canceladaEm)
-			.reduce((s, i) => s + i.pagamento.valor, 0),
-		aReceber: comPagamento.filter((i) => i.pagamento.situacao === 'nao_pago').reduce((s, i) => s + i.pagamento.valor, 0)
-	});
+	let totais = $derived(totaisDosPagamentos(comPagamento.map((i) => i.pagamento)));
 
 	let prazoDaAtividade = $derived.by(() => {
 		const campista = atividade?.prazoPagamentoParticipante;
@@ -120,8 +118,8 @@
 	}
 
 	function notaDe(p: ResumoPagamento): { texto: string; tom: 'azul' | 'ambar' } | null {
-		if (p.situacao === 'pago' && p.canceladaEm)
-			return { texto: `Inscrição cancelada pela organização em ${dma(p.canceladaEm)}. Veja se é preciso devolver o valor.`, tom: 'ambar' };
+		const saiu = avisoDeQuemSaiu(p, evento);
+		if (saiu) return { texto: saiu, tom: 'azul' };
 		if (p.situacao !== 'nao_pago') return null;
 		if (!p.precisaPagar)
 			return {
@@ -299,11 +297,11 @@
 							{#if p.observacao}<span class="obs">“{p.observacao}”</span>{/if}
 						</div>
 					{/if}
-					{#if p.situacao !== 'perdeu_vaga'}
+					{#if p.situacao === 'nao_pago' || podeDesfazer(p)}
 						<div class="pessoa-acoes">
 							{#if p.situacao === 'nao_pago'}
 								<button type="button" class="fm-btn fm-btn--contorno" onclick={() => abrirMarcar(i)}>Marcar como pago</button>
-							{:else}
+							{:else if podeDesfazer(p)}
 								<button type="button" class="fm-link desfazer" onclick={() => abrirDesfazer(i)}>Desfazer pagamento</button>
 							{/if}
 						</div>

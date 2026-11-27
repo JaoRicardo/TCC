@@ -43,7 +43,6 @@
 	const STATUS_COM_FORMULARIO = [
 		'Sorteado',
 		'Indicado',
-		'Suplente',
 		'Formulário Enviado',
 		'Inscrição em andamento',
 		'Inscrito',
@@ -108,8 +107,9 @@
 		if (i.status === 'Cancelada pela organização' || i.status === 'Recusada') return 'Esta inscrição foi encerrada pela organização.';
 		if (i.status === 'Retirado do sorteio') return 'Você não concorre mais neste sorteio.';
 		if (i.naoSorteado) return 'Você não foi sorteado desta vez.';
+		if (i.status === 'Suplente') return 'Você está na lista de suplentes: o formulário abre se você for chamado(a) para uma vaga.';
 		if (!i.temFormulario) return 'A organização ainda não montou o formulário.';
-		return 'O formulário abre quando você for sorteado, indicado ou ficar de suplente.';
+		return 'O formulário abre quando você for sorteado ou indicado.';
 	}
 </script>
 
@@ -129,7 +129,7 @@
 		<a href="/dashboard" class="voltar">← Voltar para o Início</a>
 		<div class="titulo">
 			<h1>Meus formulários</h1>
-			<p>A ficha de cada atividade em que você foi sorteado, indicado ou ficou de suplente.</p>
+			<p>A ficha de cada atividade em que você foi sorteado ou indicado. Suplente recebe a ficha quando é chamado para uma vaga.</p>
 		</div>
 
 		{#if estado === 'inicio' || estado === 'carregando'}
@@ -144,7 +144,7 @@
 			<section class="cartao vazio">
 				<img src={logoAsas} alt="" class="brasao" />
 				<p class="vazio-titulo">Nenhum formulário por enquanto.</p>
-				<p class="vazio-texto">Quando você for sorteado, indicado ou ficar de suplente, a ficha aparece aqui.</p>
+				<p class="vazio-texto">Quando você for sorteado, indicado ou chamado da fila de suplentes, a ficha aparece aqui.</p>
 				<a href="/dashboard" class="fm-btn fm-btn--contorno fm-btn--grande">Ver as atividades</a>
 			</section>
 		{:else}
@@ -162,8 +162,6 @@
 								<span class="item-prazo" class:item-prazo--urgente={urgente(i)}>{textoPrazo(i)}</span>
 								{#if correcao(i) && i.motivoOrganizacao}
 									<span class="item-obs">A organização pediu: “{i.motivoOrganizacao}”</span>
-								{:else if i.status === 'Suplente'}
-									<span class="item-obs">Suplente também responde: só é chamado quem já entregou a ficha.</span>
 								{/if}
 							</div>
 							<a href="/dashboard/formulario/{i.id}" class="fm-btn fm-btn--ouro fm-btn--grande">

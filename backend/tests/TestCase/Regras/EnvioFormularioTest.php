@@ -3,7 +3,10 @@ declare(strict_types=1);
 
 namespace App\Test\TestCase\Regras;
 
+use App\Service\PagamentoService;
+use App\Service\PrazoFormularioService;
 use Cake\Datasource\EntityInterface;
+use Cake\I18n\DateTime;
 
 /**
  * Envio do formulário pelo participante (POST /inscricoes/{id}/formulario).
@@ -17,6 +20,8 @@ class EnvioFormularioTest extends RegrasTestCase
     private EntityInterface $campista;
 
     private EntityInterface $inscricao;
+
+    private EntityInterface $acampamento;
 
     private int $alergia;
 
@@ -41,9 +46,9 @@ class EnvioFormularioTest extends RegrasTestCase
         $this->nao = (int)$this->salvar('Options', ['question_id' => $this->alergia, 'text' => 'Não', 'order' => 2])->id;
         $this->qual = $pergunta('Qual?', 'texto', $this->sim, 2);
 
-        $acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()]);
+        $this->acampamento = $this->criarAcampamento('FAC', ['camper_form_deadline' => $this->amanha()]);
         $this->campista = $this->criarUsuario('Ana');
-        $this->inscricao = $this->inscrever($this->campista, $acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
+        $this->inscricao = $this->inscrever($this->campista, $this->acampamento, 'Campista', ['selection_method_id' => $this->metodos['Sorteio']]);
     }
 
     private function enviar(array $respostas): void
@@ -100,6 +105,77 @@ class EnvioFormularioTest extends RegrasTestCase
         ]);
         $this->assertResponseCode(404);
         $this->assertFalse($this->fetchTable('PreRegistrations')->get($this->inscricao->id)->form_submitted);
+    }
+
+    /** Decisão do usuário em 2026-11-26: só quem tem vaga responde; suplente, quando chamado. */
+    public function testSuplenteNaFilaNaoRespondeOFormulario(): void
+    {
+        $suplente = $this->criarUsuario('Bruno');
+        $inscricao = $this->inscrever($suplente, $this->acampamento, 'Campista', ['substitute_position' => 1]);
+
+        $this->autenticarComo($suplente);
+        $this->get("/api/v1/inscricoes/{$inscricao->id}/formulario");
+        $dados = $this->respostaJson()['data'];
+        $this->assertSame('Suplente', $dados['status']);
+        $this->assertFalse($dados['formulario_disponivel']);
+        $this->assertStringContainsString('abre se você for chamado', $dados['motivo_indisponivel']);
+
+        $this->autenticarComo($suplente);
+        $this->post("/api/v1/inscricoes/{$inscricao->id}/formulario", [
+            'answers' => [['question_id' => $this->alergia, 'answer' => (string)$this->nao]],
+        ]);
+        $this->assertResponseCode(422);
+        $this->assertFalse($this->fetchTable('PreRegistrations')->get($inscricao->id)->form_submitted);
+
+        $this->autenticarComo($suplente);
+        $this->get('/api/v1/me/inscricoes');
+        $item = $this->respostaJson()['data'][0];
+        $this->assertFalse($item['formularioPendente'], 'Meus formulários não cobra o suplente.');
+    }
+
+    public function testSuplenteChamadoRecebeOFormularioComPrazoContadoDaChamada(): void
+    {
+        // O prazo geral do acampamento já passou quando ele é chamado.
+        $this->fetchTable('Campings')->updateAll(
+            ['camper_form_deadline' => $this->ontem()],
+            ['id' => $this->acampamento->camping_id]
+        );
+        $suplente = $this->criarUsuario('Bruno');
+        $inscricao = $this->inscrever($suplente, $this->acampamento, 'Campista', [
+            'selection_method_id' => $this->metodos['Sorteio'],
+            'promoted_at'         => DateTime::now(),
+        ]);
+
+        $this->autenticarComo($suplente);
+        $this->get("/api/v1/inscricoes/{$inscricao->id}/formulario");
+        $dados = $this->respostaJson()['data'];
+        $this->assertTrue($dados['formulario_disponivel']);
+        $this->assertTrue($dados['editavel'], 'O prazo geral passou, mas ele tem os dias contados da chamada.');
+        $esperado = DateTime::now()->addDays(PagamentoService::DIAS_PARA_PAGAR_APOS_CHAMADO)->format('Y-m-d') . 'T23:59';
+        $this->assertSame($esperado, $dados['prazo']['limite']);
+
+        // A varredura dos prazos não tira a vaga dele.
+        (new PrazoFormularioService())->executarPrazosVencidos();
+        $this->assertNull($this->fetchTable('PreRegistrations')->get($inscricao->id)->disqualified_at);
+
+        $this->autenticarComo($suplente);
+        $this->post("/api/v1/inscricoes/{$inscricao->id}/formulario", [
+            'answers' => [['question_id' => $this->alergia, 'answer' => (string)$this->nao]],
+        ]);
+        $this->assertResponseOk();
+    }
+
+    public function testAntesDoSorteioOFormularioNaoAbre(): void
+    {
+        $pessoa = $this->criarUsuario('Caio');
+        $inscricao = $this->inscrever($pessoa, $this->acampamento, 'Campista');
+
+        $this->autenticarComo($pessoa);
+        $this->post("/api/v1/inscricoes/{$inscricao->id}/formulario", [
+            'answers' => [['question_id' => $this->alergia, 'answer' => (string)$this->nao]],
+        ]);
+        $this->assertResponseCode(422);
+        $this->assertFalse($this->fetchTable('PreRegistrations')->get($inscricao->id)->form_submitted);
     }
 
     public function testGuardaQuandoEnviouEMandaParaATela(): void

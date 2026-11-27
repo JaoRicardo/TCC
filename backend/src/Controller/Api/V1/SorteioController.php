@@ -53,12 +53,14 @@ class SorteioController extends ApiController
         if ($tipo === 'Campista') {
             $resultado = $this->prazoFormularioService->chamarProximoCampista(
                 $activityId,
-                (string)$this->request->getData('grupo')
+                (string)$this->request->getData('grupo'),
+                (int)$identity->id
             );
         } elseif ($tipo === 'Servo') {
             $resultado = $this->prazoFormularioService->chamarProximoServo(
                 $activityId,
-                (int)$this->request->getData('setor')
+                (int)$this->request->getData('setor'),
+                (int)$identity->id
             );
         } else {
             return $this->apiError('Tipo inválido', 422);
@@ -68,7 +70,12 @@ class SorteioController extends ApiController
             return $this->apiError($resultado['error'], 422);
         }
 
-        return $this->apiResponse(['chamados' => $resultado['chamados'], 'prazo' => $resultado['prazo'] ?? null]);
+        return $this->apiResponse([
+            'chamados' => $resultado['chamados'],
+            'prazo'    => $resultado['prazo'] ?? null,
+            // Entraram numa vaga já paga por quem saiu: não precisam pagar.
+            'semPagar' => $resultado['semPagar'] ?? [],
+        ]);
     }
 
     /**

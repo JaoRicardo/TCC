@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { linhaCurta, linhaDoPago, naFolga, type ResumoPagamento } from './pagamentos';
+import { avisoDeQuemSaiu, linhaCurta, linhaDoPago, naFolga, podeDesfazer, totaisDosPagamentos, type ResumoPagamento } from './pagamentos';
 
 const resumo = (extra: Partial<ResumoPagamento> = {}): ResumoPagamento => ({
 	valor: 150,
 	situacao: 'nao_pago',
 	precisaPagar: true,
+	temVaga: true,
 	prazo: '2026-12-10T23:59',
 	limite: '2026-12-12T23:59', // prazo + 2 dias de folga
 	pagoEm: null,
@@ -12,7 +13,8 @@ const resumo = (extra: Partial<ResumoPagamento> = {}): ResumoPagamento => ({
 	registradoPor: null,
 	registradoEm: null,
 	observacao: null,
-	canceladaEm: null,
+	herdado: false,
+	saiuEm: null,
 	perdeuEm: null,
 	...extra
 });
@@ -53,4 +55,43 @@ describe('linhaDoPago', () => {
 		);
 	});
 	it('sem detalhes', () => expect(linhaDoPago(resumo({ situacao: 'pago' }))).toBe('Pago'));
+});
+
+describe('pagamento que fica na vaga', () => {
+	const herdado = resumo({ situacao: 'pago', herdado: true, herdadoDe: 'Pedro Alves', pagoEm: '2026-12-04', registradoPor: 'Ana' });
+	it('quem entrou: coluna e linha completa', () => {
+		expect(linhaCurta(herdado, false, em(5))).toBe('vaga paga por Pedro');
+		expect(linhaDoPago(herdado)).toBe('Vaga paga por Pedro Alves, que saiu · chamado(a) em 04/12/2026 · por Ana');
+	});
+	it('quem saiu: ainda sem ninguém chamado, já passou, evento', () => {
+		const saiu = resumo({ situacao: 'pago', saiuEm: '2026-12-02' });
+		expect(avisoDeQuemSaiu(saiu, false)).toBe('Saiu da vaga em 02/12/2026. O pagamento passa para o suplente que for chamado para a vaga.');
+		expect(avisoDeQuemSaiu({ ...saiu, passouPara: 'Lucas' }, false)).toBe(
+			'Saiu da vaga em 02/12/2026. O pagamento passou para Lucas, que entrou na vaga.'
+		);
+		expect(avisoDeQuemSaiu(saiu, true)).toBe('Saiu da vaga em 02/12/2026. O pagamento fica com a organização.');
+	});
+	it('quem não saiu não tem aviso', () => expect(avisoDeQuemSaiu(resumo({ situacao: 'pago' }), false)).toBeNull());
+});
+
+describe('totaisDosPagamentos', () => {
+	it('recebido sem o pagamento herdado; a receber só de quem tem vaga', () => {
+		const lista = [
+			resumo({ situacao: 'pago', saiuEm: '2026-11-26' }), // pagou e saiu: o dinheiro fica
+			resumo({ situacao: 'pago', herdado: true }), // entrou na vaga dele: não é dinheiro novo
+			resumo({ situacao: 'pago' }),
+			resumo({ situacao: 'nao_pago' }), // sorteado que ainda não pagou
+			resumo({ situacao: 'nao_pago', precisaPagar: false }), // sorteado sem formulário: ainda conta
+			resumo({ situacao: 'nao_pago', precisaPagar: false, temVaga: false }) // suplente na fila
+		];
+		expect(totaisDosPagamentos(lista)).toEqual({ recebido: 300, aReceber: 300 });
+	});
+});
+
+describe('podeDesfazer', () => {
+	it('não desfaz o pagamento que já passou para quem entrou na vaga', () => {
+		expect(podeDesfazer(resumo({ situacao: 'pago' }))).toBe(true);
+		expect(podeDesfazer(resumo({ situacao: 'pago', saiuEm: '2026-11-26' }))).toBe(true);
+		expect(podeDesfazer(resumo({ situacao: 'pago', saiuEm: '2026-11-26', passouPara: 'Lucas' }))).toBe(false);
+	});
 });

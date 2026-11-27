@@ -549,6 +549,8 @@
 		'Prazo Perdido': 'can',
 		'Desistência': 'can',
 		'Retirado do sorteio': 'can',
+		'Aguardando cônjuge': 'esp',
+		'Casal não confirmado': 'can',
 		'Correção pedida': 'esp',
 		'Cancelada pela organização': 'can',
 		'Recusada': 'can'

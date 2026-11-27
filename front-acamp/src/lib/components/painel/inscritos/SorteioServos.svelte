@@ -175,7 +175,8 @@
 						<div class="ins-item centro">
 							<span class="ins-pos">{n + 1}º</span>
 							<span class="ins-item-nome cresce">{x.nome}</span>
-							<span class="ins-pill ins-pill--mini {tag.tom}">{tag.texto}</span>
+							<!-- Suplente na fila não responde o formulário: só mostra se já pagou (adiantado). -->
+							{#if tag.texto !== 'Sem formulário'}<span class="ins-pill ins-pill--mini {tag.tom}">{tag.texto}</span>{/if}
 						</div>
 					{/each}
 				{/if}

@@ -32,8 +32,11 @@ use Cake\ORM\Locator\TableLocator;
  *   foi perdido.
  * - Casal é a unidade, igual no sorteio: se um dos dois perde o prazo, o casal
  *   inteiro sai e o próximo casal suplente entra completo.
- * - **Suplente também responde o formulário**, dentro do mesmo prazo do
- *   acampamento. Suplente que deixa o prazo passar sem responder sai da fila.
+ * - **Só quem tem vaga responde o formulário** (decisão do usuário em
+ *   2026-11-26, revendo a de antes): sorteados e indicados no prazo do
+ *   acampamento; o suplente só recebe o formulário quando é chamado, com pelo
+ *   menos alguns dias a partir da chamada (PagamentoService::prazoDoChamado).
+ *   Suplente na fila não tem prazo de formulário a perder.
  * - Suplente não paga enquanto é suplente (ver `PagamentosController`).
  * - **O próximo suplente não entra sozinho** (decisão do usuário em 2026-10-24):
  *   quem chama é o administrador ou conselheiro, sempre o próximo da fila do
@@ -89,12 +92,19 @@ class PrazoFormularioService
     // ─── Consulta de prazo (usada também pela tela do formulário) ───────────
 
     /**
-     * Prazo que vale para esta inscrição — o do acampamento, igual para sorteados,
-     * indicados e suplentes.
+     * Prazo que vale para esta inscrição: o do acampamento para sorteados e
+     * indicados; quem foi chamado da fila de suplentes ganha dias a partir da
+     * chamada (é só aí que o formulário abre para ele).
      */
     public function prazoDaInscricao(object $preReg, ?object $camping): ?DateTime
     {
-        return $this->prazoGeral($camping, (string)$preReg->subscription_type);
+        $prazo = $this->prazoGeral($camping, (string)$preReg->subscription_type);
+        if ($prazo === null || ($preReg->promoted_at ?? null) === null) {
+            return $prazo;
+        }
+        $activity = $this->Activities->find()->where(['id' => $preReg->activity_id])->first();
+
+        return $activity ? PagamentoService::prazoDoChamado($prazo, $preReg, $activity) : $prazo;
     }
 
     /** Prazo cadastrado no acampamento para o tipo de inscrição informado. */
@@ -270,21 +280,19 @@ class PrazoFormularioService
             return;
         }
 
-        // Candidatos: todo mundo que tinha formulário para entregar e não entregou —
-        // titulares (sorteados/indicados) e suplentes.
+        // Candidatos: quem tem vaga (sorteado, indicado ou suplente já chamado) e
+        // não entregou. Suplente na fila não responde o formulário, então não perde nada aqui.
         $pendentes = $this->PreRegistrations->find()
             ->contain(['Users'])
             ->where([
-                'PreRegistrations.activity_id'        => $activity->id,
-                'PreRegistrations.subscription_type'  => $tipo,
-                'PreRegistrations.deleted IS'         => null,
-                'PreRegistrations.is_quitter'         => false,
-                'PreRegistrations.disqualified_at IS' => null,
-                'PreRegistrations.form_submitted'     => false,
-                'OR' => [
-                    'PreRegistrations.selection_method_id IS NOT' => null,
-                    'PreRegistrations.substitute_position IS NOT' => null,
-                ],
+                'PreRegistrations.activity_id'                => $activity->id,
+                'PreRegistrations.subscription_type'          => $tipo,
+                'PreRegistrations.deleted IS'                 => null,
+                'PreRegistrations.is_quitter'                 => false,
+                'PreRegistrations.disqualified_at IS'         => null,
+                'PreRegistrations.form_submitted'             => false,
+                'PreRegistrations.selection_method_id IS NOT' => null,
+                'PreRegistrations.substitute_position IS'     => null,
             ])
             ->all()
             ->toArray();
@@ -294,13 +302,6 @@ class PrazoFormularioService
         foreach ($pendentes as $preReg) {
             if (isset($jaTratados[$preReg->id])) continue;
             if (!$this->prazoVencido($preReg, $camping)) continue;
-
-            // Suplente que não respondeu perde o lugar na fila, mas não libera vaga
-            // nenhuma — ele ainda não tinha vaga.
-            if ($preReg->substitute_position !== null) {
-                $this->tirarSuplenteDaFila($activity, $preReg, $tipo, $jaTratados, $log);
-                continue;
-            }
 
             $this->tirarVaga($activity, $preReg, self::MOTIVO_PRAZO_FORMULARIO, $jaTratados, $log);
         }
@@ -378,6 +379,18 @@ class PrazoFormularioService
         $acsIds = $tipo === 'Servo' ? $this->acsIdsDaAtividade((int)$activity->id) : [];
 
         foreach ($doGrupo as $pr) {
+            if (!empty($acsIds)) {
+                // A vaga de servo é do setor: guarda de qual setor ele saiu, para o
+                // pagamento (se pagou) passar para quem for chamado nesse setor.
+                $pr->vacancy_sector_id = $this->AcsSectorsUsers->find()
+                    ->where([
+                        'activities_categories_sector_id IN' => $acsIds,
+                        'user_id'                            => $pr->user_id,
+                        'is_coordinator'                     => false,
+                        'OR' => ['is_substitute IS' => null, 'is_substitute' => false],
+                    ])
+                    ->first()?->activities_categories_sector_id;
+            }
             $this->desclassificar($pr, $motivo, $por, $nota);
             $jaTratados[$pr->id] = true;
 
@@ -519,7 +532,7 @@ class PrazoFormularioService
         return $this->pagamentos->prazo($pr, $activity)?->format('Y-m-d\TH:i');
     }
 
-    public function chamarProximoCampista(int $activityId, string $grupo): array
+    public function chamarProximoCampista(int $activityId, string $grupo, ?int $por = null): array
     {
         if (!in_array($grupo, self::GRUPOS_CAMPISTA, true)) {
             return ['ok' => false, 'error' => 'Grupo inválido'];
@@ -568,7 +581,49 @@ class PrazoFormularioService
             $nomes[] = $pr->user->name ?? "usuário #{$pr->user_id}";
         }
 
-        return ['ok' => true, 'chamados' => $nomes, 'prazo' => $this->prazoDoChamado($chamar[0])];
+        // Quem saiu de uma vaga deste grupo depois de pagar deixa o pagamento
+        // para quem entra (casal: um pagamento para cada um dos dois).
+        $semPagar = $this->passarPagamentos(
+            $activityId,
+            $chamar,
+            fn($credito) => $this->grupoDoCampista($credito) === $grupo,
+            $por
+        );
+
+        return [
+            'ok'       => true,
+            'chamados' => $nomes,
+            'prazo'    => $this->prazoDoChamado($chamar[0]),
+            'semPagar' => $semPagar,
+        ];
+    }
+
+    /**
+     * O pagamento fica na vaga (PagamentoService): cada chamado que ainda não
+     * pagou recebe o pagamento livre mais antigo de quem saiu da mesma vaga.
+     *
+     * @param list<object> $chamados
+     * @param callable(object): bool $daMesmaVaga
+     * @return list<string> nomes de quem entrou sem precisar pagar
+     */
+    private function passarPagamentos(int $activityId, array $chamados, callable $daMesmaVaga, ?int $por): array
+    {
+        $activity = $this->Activities->get($activityId);
+        $nomes = [];
+        foreach ($chamados as $pr) {
+            if ($pr->is_fee_paid || $this->pagamentos->valor($pr, $activity) <= 0) continue;
+
+            $creditos = array_values(array_filter(
+                $this->pagamentos->creditosLivres($activityId, (string)$pr->subscription_type),
+                $daMesmaVaga
+            ));
+            if (empty($creditos)) continue;
+
+            $this->pagamentos->passarPagamento($creditos[0], $pr, $activity, $por);
+            $nomes[] = $pr->user->name ?? "usuário #{$pr->user_id}";
+        }
+
+        return $nomes;
     }
 
     /**
@@ -576,7 +631,7 @@ class PrazoFormularioService
      *
      * @return array{ok: bool, error?: string, chamados?: string[]}
      */
-    public function chamarProximoServo(int $activityId, int $acsId): array
+    public function chamarProximoServo(int $activityId, int $acsId, ?int $por = null): array
     {
         $acs = $this->AcsSectors->find()
             ->where(['id' => $acsId, 'activity_id' => $activityId, 'deleted IS' => null])
@@ -620,7 +675,20 @@ class PrazoFormularioService
             $linha->is_substitute = false;
             $this->AcsSectorsUsers->save($linha);
 
-            return ['ok' => true, 'chamados' => [$pr->user->name ?? "usuário #{$pr->user_id}"], 'prazo' => $this->prazoDoChamado($pr)];
+            // Servo que saiu deste setor depois de pagar deixa o pagamento para quem entra.
+            $semPagar = $this->passarPagamentos(
+                $activityId,
+                [$pr],
+                fn($credito) => (int)$credito->vacancy_sector_id === $acsId,
+                $por
+            );
+
+            return [
+                'ok'       => true,
+                'chamados' => [$pr->user->name ?? "usuário #{$pr->user_id}"],
+                'prazo'    => $this->prazoDoChamado($pr),
+                'semPagar' => $semPagar,
+            ];
         }
 
         return ['ok' => false, 'error' => 'Não há suplente na fila deste setor.'];

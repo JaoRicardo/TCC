@@ -9,8 +9,9 @@ use Cake\Datasource\EntityInterface;
 /**
  * Prazo do formulário: quem foi selecionado e não enviou o formulário até a data
  * do acampamento perde a vaga sozinho. A vaga fica aberta até um administrador ou
- * conselheiro chamar o próximo suplente do mesmo grupo. Suplente sem formulário
- * sai da fila.
+ * conselheiro chamar o próximo suplente do mesmo grupo. Suplente na fila não
+ * responde o formulário (decisão do usuário em 2026-11-26): o prazo não tira
+ * ninguém da fila, e o chamado é sempre o próximo, com formulário ou não.
  */
 class PrazoFormularioTest extends RegrasTestCase
 {
@@ -65,23 +66,27 @@ class PrazoFormularioTest extends RegrasTestCase
         $this->assertNull($manteve->disqualified_at);
         $this->assertSame($this->metodos['Sorteio'], $manteve->selection_method_id);
 
-        // 1º da fila sem formulário: sai da fila e não é chamado.
+        // 1º da fila sem formulário: suplente não responde, então continua na fila.
         $suplente1 = $this->recarregar($p['suplente1SemFormulario']);
-        $this->assertNotNull($suplente1->disqualified_at);
-        $this->assertNull($suplente1->selection_method_id);
+        $this->assertNull($suplente1->disqualified_at);
+        $this->assertSame(1, $suplente1->substitute_position);
 
         // Ninguém entra sozinho: a vaga de Homem fica aberta.
-        $this->assertSame(3, $this->recarregar($p['suplenteHomemComFormulario'])->substitute_position);
         $atividade = $this->fetchTable('Activities')->get($perdeu->activity_id);
         $this->assertSame(['Homem' => 1, 'Mulher' => 0, 'Casado' => 0], $prazos->vagasAbertasCampistas((int)$atividade->id));
 
-        // Chamado pelo botão: entra o próximo homem da fila.
+        // Chamado pelo botão: entra o próximo homem da fila, sem ter respondido.
         $this->chamarProximo($atividade, 'Homem');
-        $promovido = $this->recarregar($p['suplenteHomemComFormulario']);
+        $promovido = $this->recarregar($p['suplente1SemFormulario']);
         $this->assertSame($this->metodos['Sorteio'], $promovido->selection_method_id);
         $this->assertNull($promovido->substitute_position);
         $this->assertNotNull($promovido->promoted_at);
         $this->assertNull($promovido->disqualified_at);
+
+        // O prazo geral já passou, mas ele tem os dias contados da chamada para responder.
+        $prazos->executarPrazosVencidos();
+        $this->assertNull($this->recarregar($p['suplente1SemFormulario'])->disqualified_at);
+        $this->assertSame(3, $this->recarregar($p['suplenteHomemComFormulario'])->substitute_position);
 
         // Suplente de outro grupo (Mulher) não pega a vaga de um Homem, mesmo estando na frente.
         $mulher = $this->recarregar($p['suplenteMulher']);
@@ -139,11 +144,11 @@ class PrazoFormularioTest extends RegrasTestCase
         $titularMarido = $this->inscrever($marido, $casais, 'Campista', ['selection_method_id' => $sorteio, 'form_submitted' => true, 'spouse_id' => $esposa->id]);
         $titularEsposa = $this->inscrever($esposa, $casais, 'Campista', ['selection_method_id' => $sorteio]);
 
-        // Casal suplente (os dois na posição 1), ambos com formulário.
+        // Casal suplente (os dois na posição 1): suplente na fila não responde o formulário.
         $supMarido = $this->criarUsuario('Marido suplente', idade: 35, sexo: 'M', estadoCivil: 'Casado');
         $supEsposa = $this->criarUsuario('Esposa suplente', idade: 33, sexo: 'F', estadoCivil: 'Casado');
-        $suplenteMarido = $this->inscrever($supMarido, $casais, 'Campista', ['substitute_position' => 1, 'form_submitted' => true, 'spouse_id' => $supEsposa->id]);
-        $suplenteEsposa = $this->inscrever($supEsposa, $casais, 'Campista', ['substitute_position' => 1, 'form_submitted' => true]);
+        $suplenteMarido = $this->inscrever($supMarido, $casais, 'Campista', ['substitute_position' => 1, 'spouse_id' => $supEsposa->id]);
+        $suplenteEsposa = $this->inscrever($supEsposa, $casais, 'Campista', ['substitute_position' => 1]);
 
         (new PrazoFormularioService())->executarPrazosVencidos();
 

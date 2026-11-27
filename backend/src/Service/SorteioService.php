@@ -190,6 +190,8 @@ class SorteioService
                 'PreRegistrations.removed_from_raffle_at IS' => null,
                 // Cancelado pela organização ou recusado: não concorre de novo.
                 'PreRegistrations.disqualified_at IS'        => null,
+                // Casal de Casais que o cônjuge ainda não confirmou (CasalService).
+                'PreRegistrations.awaiting_spouse'           => false,
                 'Users.deleted IS'                           => null,
             ])
             ->all()
@@ -327,7 +329,9 @@ class SorteioService
 
         // Casais: o casal é a unidade do sorteio — nunca separa os dois entre
         // titular, suplente e não sorteado. Agrupa em pares antes de sortear.
-        $pares = $this->pairUpCasais($grupos['Casado']);
+        // Só casal completo concorre: quem ficou sem o par (cônjuge de fora da
+        // área, que desistiu ou não se inscreveu) não ocupa uma vaga de casal.
+        $pares = array_values(array_filter($this->pairUpCasais($grupos['Casado']), fn($par) => count($par) === 2));
         shuffle($pares);
         foreach ($pares as $idx => $par) {
             if ($idx < $casado) {
@@ -948,8 +952,7 @@ class SorteioService
             $csMap[$cs->id] = $cs->sector?->name ?? "Setor #{$cs->id}";
         }
 
-        // Quem já entregou o formulário, para marcar na lista de suplentes: suplente
-        // sem formulário entregue não pode ser chamado para uma vaga liberada.
+        // Quem já entregou o formulário (titular; suplente na fila não responde).
         $formEnviadoPorUsuario = [];
         $desclassificadoPorUsuario = [];
         foreach (

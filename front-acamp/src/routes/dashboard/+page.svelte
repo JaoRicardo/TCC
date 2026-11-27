@@ -131,6 +131,7 @@
 		"Prazo Perdido": "Prazo perdido",
 		"Desistência": "Você desistiu desta inscrição",
 		"Retirado do sorteio": "Retirado do sorteio",
+		"Casal não confirmado": "Casal não confirmado antes do sorteio",
 	};
 
 	/** "2026-11-18" → "18/11". */
@@ -140,8 +141,8 @@
 	function avisoDoCartao(i: MinhaInscricao): { tom: string; antes: string; forte: string; depois: string } {
 		const aviso = avisoSemPagamento(i);
 		// Qualquer inscrição ativa com pagamento registrado (até adiantado) mostra a data.
-		if (i.pagoEm && aviso.tom !== "cancelled" && !aviso.depois.includes("pago em"))
-			aviso.depois += ` · pago em ${diaMesDe(i.pagoEm)}`;
+		if (i.pagoEm && aviso.tom !== "cancelled" && !aviso.depois.includes("pago em") && !aviso.depois.includes("vaga já paga"))
+			aviso.depois += i.pagamento?.herdado ? " · vaga já paga" : ` · pago em ${diaMesDe(i.pagoEm)}`;
 		return aviso;
 	}
 
@@ -153,7 +154,13 @@
 			return { tom: "waiting", antes: "", forte: "Falta o pagamento", depois: p.prazo ? ` · pague até ${diaMesDe(p.prazo)}` : "" };
 		const garantida = (evento && i.status === "Inscrito") || i.status === "Formulário Enviado";
 		if (garantida)
-			return { tom: "confirmed", antes: "", forte: "Vaga garantida", depois: i.pagoEm ? ` · pago em ${diaMesDe(i.pagoEm)}` : "" };
+			return {
+				tom: "confirmed",
+				antes: "",
+				forte: "Vaga garantida",
+				// Suplente chamado para a vaga de quem pagou e saiu: não pagou nada.
+				depois: i.pagamento?.herdado ? " · vaga já paga" : i.pagoEm ? ` · pago em ${diaMesDe(i.pagoEm)}` : ""
+			};
 		if (ENCERRADAS[i.status]) return { tom: "cancelled", antes: "", forte: ENCERRADAS[i.status], depois: "" };
 		if (i.status === "Correção pedida") {
 			const ate = i.prazoCorrecao ? new Date(i.prazoCorrecao) : null;
@@ -161,6 +168,10 @@
 			return { tom: "waiting", antes: "", forte: "Correção pedida", depois: dm ? ` · corrija até ${dm}` : "" };
 		}
 		if (i.status === "Inscrição em andamento") return { tom: "waiting", antes: "", forte: "Falta concluir a inscrição", depois: "" };
+		if (i.status === "Aguardando cônjuge")
+			return i.casal?.euConfirmo
+				? { tom: "waiting", antes: "", forte: "Falta você confirmar a inscrição do casal", depois: "" }
+				: { tom: "waiting", antes: "Inscrição do casal · ", forte: "aguardando o cônjuge confirmar", depois: "" };
 		if (i.status === "Inscrito") {
 			if (evento) return { tom: "confirmed", antes: "", forte: "Você está inscrito(a)", depois: "" };
 			if (i.naoSorteado) return { tom: "cinza", antes: "", forte: "Não sorteado(a) desta vez", depois: "" };

@@ -6,6 +6,8 @@
 	import { goto } from '$app/navigation';
 	import { auth } from '$lib/stores/auth.svelte';
 	import { TELA_CRIAR_SENHA, criarSenhaUrl } from '$lib/redirect';
+	import { casal } from '$lib/stores/casal.svelte';
+	import JanelaCasal from '$lib/components/JanelaCasal.svelte';
 
 	let { children } = $props();
 
@@ -20,6 +22,14 @@
 	$effect(() => {
 		if (presoNaSenha) goto(criarSenhaUrl($page.url.pathname + $page.url.search), { replaceState: true });
 	});
+
+	// Casal do acampamento de Casais: a janela de confirmação aparece em
+	// qualquer tela assim que a pessoa entra (JanelaCasal).
+	let idDoUsuario = $derived<number | null>(auth.user?.id ?? null);
+	$effect(() => {
+		if (idDoUsuario) casal.carregar();
+		else casal.limpar();
+	});
 </script>
 
 <svelte:head>
@@ -28,4 +38,5 @@
 
 {#if !presoNaSenha}
 	{@render children()}
+	<JanelaCasal />
 {/if}

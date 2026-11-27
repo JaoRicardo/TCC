@@ -45,6 +45,9 @@ class PreRegistration extends Entity
         'fee_registered_by'  => true,
         'fee_registered_at'  => true,
         'fee_note'           => true,
+        // Pagamento de quem saiu da vaga, passado para o suplente chamado (PagamentoService).
+        'fee_inherited_from_id' => true,
+        'vacancy_sector_id'  => true,
         'qrcode_data'        => true,
         'is_qrcode_used'     => true,
         'user_id'            => true,
@@ -59,6 +62,12 @@ class PreRegistration extends Entity
         'promoted_at'        => true,
         'selection_method_id' => true,
         'spouse_id'          => true,
+        // Casal no acampamento de Casais: confirmação do cônjuge (CasalService).
+        'awaiting_spouse'    => true,
+        'added_by_spouse'    => true,
+        'spouse_confirmed_at' => true,
+        'spouse_refused_at'  => true,
+        'refusal_seen_at'    => true,
         'sector_id'          => true,
         'sector2_id'         => true,
         'created'            => true,
