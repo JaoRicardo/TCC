@@ -9,8 +9,9 @@ use Cake\Http\Response;
 
 /**
  * Gestão › Participações anteriores (permissão `participacoes`): quem já foi
- * campista numa categoria antes do sistema, cadastrado pelo CPF. As regras
- * ficam em ParticipacoesService.
+ * campista numa categoria antes do sistema. Só de quem já tem conta (LGPD): o
+ * CPF digitado serve para achar a conta e não é guardado. As regras ficam em
+ * ParticipacoesService.
  */
 class ParticipacoesController extends ApiController
 {

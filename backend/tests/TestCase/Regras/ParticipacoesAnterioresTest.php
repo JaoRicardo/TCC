@@ -13,7 +13,8 @@ use Cake\Datasource\EntityInterface;
  *   sorteado ou indicado, enviou o formulário, pagou, não desistiu nem foi
  *   tirado (inclusive no próprio dia, quando entra o próximo suplente).
  *   Inscrito não sorteado e suplente que não foi chamado não contam.
- * - Gestão › Participações anteriores: cadastro pelo CPF, mesmo sem conta.
+ * - Gestão › Participações anteriores: só de quem já tem conta (LGPD, 2026-11-26);
+ *   o CPF digitado acha a conta e não é guardado.
  */
 class ParticipacoesAnterioresTest extends RegrasTestCase
 {
@@ -133,15 +134,21 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
 
     // ─── Cadastro à mão ─────────────────────────────────────────────────────
 
-    public function testCadastradaPeloCpfContaComoCampista(): void
+    public function testCadastradaNaContaContaComoCampista(): void
     {
         $admin = $this->criarUsuario('Admin', admin: true);
         $pessoa = $this->criarUsuario('Fez em 2015', idade: 30);
 
-        $r = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'nome' => '', 'categoriaId' => $this->categorias['Juvenil'], 'ano' => '2015']);
+        $r = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'categoriaId' => $this->categorias['Juvenil'], 'ano' => '2015']);
         $this->assertResponseCode(201);
-        $this->assertSame('Fez em 2015', $r['data']['nome'], 'Sem nome e com conta, usa o nome da conta.');
+        $this->assertSame('Fez em 2015', $r['data']['nome'], 'O nome vem da conta.');
         $this->assertSame((int)$pessoa->id, $r['data']['contaId']);
+
+        // Guarda a conta, nunca o CPF nem o nome.
+        $linha = $this->fetchTable('PreviousCampers')->get($r['data']['id']);
+        $this->assertSame((int)$pessoa->id, (int)$linha->user_id);
+        $this->assertFalse($linha->has('cpf'));
+        $this->assertFalse($linha->has('name'));
 
         $this->assertFoiCampista($pessoa, 'Juvenil');
         // Na escada, serve também nos degraus de baixo.
@@ -151,22 +158,28 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
         $this->assertContains('Participação anterior cadastrada: campista em Juvenil (2015).', $log);
     }
 
-    public function testSemContaValeQuandoAPessoaCriaAContaDepois(): void
+    /** LGPD (decisão do usuário em 2026-11-26): sem conta, o CPF não é guardado nem usado. */
+    public function testSemContaNaoCadastra(): void
     {
         $admin = $this->criarUsuario('Admin', admin: true);
         $cpf = $this->cpfValido(900);
-        $formatado = substr($cpf, 0, 3) . '.' . substr($cpf, 3, 3) . '.' . substr($cpf, 6, 3) . '-' . substr($cpf, 9, 2);
 
-        $r = $this->adicionar($admin, ['cpf' => $formatado, 'nome' => '  Maria   da Silva ', 'categoriaId' => $this->categorias['Sênior'], 'ano' => '']);
-        $this->assertResponseCode(201);
-        $this->assertSame('Maria da Silva', $r['data']['nome']);
-        $this->assertNull($r['data']['contaId']);
-        $this->assertNull($r['data']['ano']);
+        $r = $this->adicionar($admin, ['cpf' => $cpf, 'categoriaId' => $this->categorias['Sênior'], 'ano' => '']);
+        $this->assertResponseCode(422);
+        $this->assertStringContainsString('não tem conta', $r['erros']['cpf']);
+        $this->assertSame(0, $this->fetchTable('PreviousCampers')->find()->count());
 
-        // Criou a conta depois, com o mesmo CPF.
+        $this->autenticarComo($admin);
+        $this->get('/api/v1/admin/participacoes/cpf/' . $cpf);
+        $this->assertSame(['conta' => null, 'sistema' => [], 'cadastradas' => []], $this->respostaJson()['data']);
+
+        // Depois de criar a conta, aí sim.
         $maria = $this->criarUsuario('Maria da Silva', idade: 40, sexo: 'F');
         $this->fetchTable('Users')->updateAll(['cpf' => $cpf], ['id' => $maria->id]);
         $maria = $this->fetchTable('Users')->get($maria->id);
+        $formatado = substr($cpf, 0, 3) . '.' . substr($cpf, 3, 3) . '.' . substr($cpf, 6, 3) . '-' . substr($cpf, 9, 2);
+        $this->adicionar($admin, ['cpf' => $formatado, 'categoriaId' => $this->categorias['Sênior'], 'ano' => '']);
+        $this->assertResponseCode(201);
 
         $this->assertFoiCampista($maria, 'Sênior');
         // Cumpre o pré-requisito do Discipulados (precisa ter feito Sênior).
@@ -177,29 +190,31 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
     {
         $admin = $this->criarUsuario('Admin', admin: true);
 
-        $r = $this->adicionar($admin, ['cpf' => '111.111.111-11', 'nome' => '', 'categoriaId' => 0, 'ano' => '1890']);
+        $r = $this->adicionar($admin, ['cpf' => '111.111.111-11', 'categoriaId' => 0, 'ano' => '1890']);
         $this->assertResponseCode(422);
-        $this->assertSame(['cpf', 'nome', 'categoriaId', 'ano'], array_keys($r['erros']));
+        $this->assertSame(['cpf', 'categoriaId', 'ano'], array_keys($r['erros']));
 
         // Letras ou números a mais não viram CPF válido tirando o que sobra.
-        $valido = $this->cpfValido(902);
+        $joao = $this->criarUsuario('João', idade: 30);
+        $valido = $this->fetchTable('Users')->get($joao->id)->cpf;
+        $valido = preg_replace('/\D/', '', (string)$valido);
         foreach ([substr($valido, 0, 3) . 'abc' . substr($valido, 3), $valido . '9', $valido . '#'] as $cpf) {
-            $r = $this->adicionar($admin, ['cpf' => $cpf, 'nome' => 'João', 'categoriaId' => $this->categorias['FAC'], 'ano' => '']);
+            $r = $this->adicionar($admin, ['cpf' => $cpf, 'categoriaId' => $this->categorias['FAC'], 'ano' => '']);
             $this->assertResponseCode(422);
             $this->assertSame(['cpf'], array_keys($r['erros']), $cpf);
         }
 
-        $dados =['cpf' => $this->cpfValido(901), 'nome' => 'João', 'categoriaId' => $this->categorias['FAC'], 'ano' => '2018'];
+        $dados = ['cpf' => $valido, 'categoriaId' => $this->categorias['FAC'], 'ano' => '2018'];
         $this->adicionar($admin, $dados);
         $this->assertResponseCode(201);
         $r = $this->adicionar($admin, $dados);
         $this->assertResponseCode(422);
-        $this->assertStringContainsString('já está cadastrado como campista em FAC', $r['erros']['categoriaId']);
+        $this->assertStringContainsString('já está cadastrada como campista em FAC', $r['erros']['categoriaId']);
 
         // Já concluiu pelo sistema: não precisa cadastrar.
         $pessoa = $this->criarUsuario('Pelo sistema', idade: 16);
         $this->jaFoiCampista($pessoa, 'FAC');
-        $r = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'nome' => '', 'categoriaId' => $this->categorias['FAC'], 'ano' => '']);
+        $r = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'categoriaId' => $this->categorias['FAC'], 'ano' => '']);
         $this->assertResponseCode(422);
         $this->assertStringContainsString('Pelo sistema', $r['erros']['categoriaId']);
     }
@@ -208,7 +223,7 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
     {
         $admin = $this->criarUsuario('Admin', admin: true);
         $pessoa = $this->criarUsuario('Cadastrada errado', idade: 16);
-        $id = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'nome' => '', 'categoriaId' => $this->categorias['FAC'], 'ano' => ''])['data']['id'];
+        $id = $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'categoriaId' => $this->categorias['FAC'], 'ano' => ''])['data']['id'];
         $this->assertFoiCampista($pessoa);
 
         $this->autenticarComo($admin);
@@ -226,7 +241,7 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
         $admin = $this->criarUsuario('Admin', admin: true);
         $pessoa = $this->criarUsuario('Com histórico', idade: 20);
         $this->jaFoiCampista($pessoa, 'FAC');
-        $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'nome' => '', 'categoriaId' => $this->categorias['Mirim'], 'ano' => '2016']);
+        $this->adicionar($admin, ['cpf' => $pessoa->cpf, 'categoriaId' => $this->categorias['Mirim'], 'ano' => '2016']);
 
         $this->autenticarComo($admin);
         $this->get('/api/v1/admin/participacoes/cpf/' . $pessoa->cpf);
@@ -243,7 +258,7 @@ class ParticipacoesAnterioresTest extends RegrasTestCase
         $this->get('/api/v1/admin/participacoes');
         $this->assertResponseCode(403);
 
-        $this->adicionar($pessoa, ['cpf' => $this->cpfValido(902), 'nome' => 'X', 'categoriaId' => $this->categorias['FAC']]);
+        $this->adicionar($pessoa, ['cpf' => $this->cpfValido(902), 'categoriaId' => $this->categorias['FAC']]);
         $this->assertResponseCode(403);
     }
 }

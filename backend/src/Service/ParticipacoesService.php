@@ -23,8 +23,10 @@ use Cake\ORM\Locator\TableLocator;
  *   Inscrito não sorteado, suplente que não foi chamado e quem perdeu a vaga
  *   não contam.
  * - Cadastro à mão (Gestão › Participações anteriores, tabela
- *   previous_campers): pelo CPF, para quem fez acampamentos antes do sistema,
- *   mesmo sem conta. A ligação com a conta é pelo CPF, na hora.
+ *   previous_campers): para quem fez acampamentos antes do sistema. **Só de
+ *   quem já tem conta** (decisão do usuário em 2026-11-26, LGPD: não se guarda
+ *   nem se usa o CPF de quem não se cadastrou). O CPF digitado só serve para
+ *   achar a conta; o registro guarda o `user_id`.
  */
 class ParticipacoesService
 {
@@ -65,7 +67,7 @@ class ParticipacoesService
 
     /**
      * Ids das categorias em que a pessoa já foi campista (pelo sistema ou
-     * cadastro à mão pelo CPF dela).
+     * cadastro à mão na conta dela).
      *
      * @return int[]
      */
@@ -73,8 +75,7 @@ class ParticipacoesService
     {
         $ids = array_column($this->peloSistema((int)$usuario->id), 'categoria_id');
 
-        $cpf = self::digitos($usuario->cpf ?? $this->Users->find()->select(['cpf'])->where(['id' => $usuario->id])->first()?->cpf);
-        foreach ($this->cadastradasDoCpf($cpf) as $p) {
+        foreach ($this->cadastradasDa((int)$usuario->id) as $p) {
             $ids[] = (int)$p->category_id;
         }
 
@@ -184,12 +185,10 @@ class ParticipacoesService
     // ─── Cadastro à mão ─────────────────────────────────────────────────────
 
     /** @return list<object> */
-    private function cadastradasDoCpf(string $cpf): array
+    private function cadastradasDa(int $userId): array
     {
-        if ($cpf === '') return [];
-
         return $this->PreviousCampers->find()
-            ->where(['cpf' => $cpf, 'deleted IS' => null])
+            ->where(['user_id' => $userId, 'deleted IS' => null])
             ->all()
             ->toList();
     }
@@ -218,34 +217,26 @@ class ParticipacoesService
     public function listar(): array
     {
         $linhas = $this->PreviousCampers->find()
-            ->contain(['Categories', 'Registradores'])
-            ->where(['PreviousCampers.deleted IS' => null])
+            ->contain(['Users', 'Categories', 'Registradores'])
+            ->where(['PreviousCampers.deleted IS' => null, 'Users.deleted IS' => null])
             ->orderBy(['PreviousCampers.created' => 'DESC', 'PreviousCampers.id' => 'DESC'])
             ->all()
             ->toList();
 
-        $cpfs = array_values(array_unique(array_map(fn($l) => (string)$l->cpf, $linhas)));
-        $contas = [];
-        if ($cpfs) {
-            $formatados = array_map(fn($c) => self::formatarCpf($c), $cpfs);
-            foreach ($this->Users->find()->select(['id', 'cpf'])->where(['cpf IN' => array_merge($cpfs, $formatados), 'deleted IS' => null])->all() as $u) {
-                $contas[self::digitos($u->cpf)] = (int)$u->id;
-            }
-        }
-
-        return array_map(fn($l) => $this->serializar($l, $contas[(string)$l->cpf] ?? null), $linhas);
+        return array_map(fn($l) => $this->serializar($l), $linhas);
     }
 
-    private function serializar(object $l, ?int $contaId): array
+    /** Nome e CPF vêm da conta (a participação não guarda nenhum dos dois). */
+    private function serializar(object $l): array
     {
         return [
             'id'           => (int)$l->id,
-            'cpf'          => self::formatarCpf((string)$l->cpf),
-            'nome'         => (string)$l->name,
+            'cpf'          => self::formatarCpf(self::digitos($l->user->cpf ?? '')),
+            'nome'         => (string)($l->user->name ?? ''),
             'categoriaId'  => (int)$l->category_id,
             'categoria'    => (string)($l->category->name ?? ''),
             'ano'          => $l->year !== null ? (int)$l->year : null,
-            'contaId'      => $contaId,
+            'contaId'      => (int)$l->user_id,
             'registradoPor' => $l->registrador->name ?? null,
             'registradoEm' => $l->created?->format('Y-m-d\TH:i'),
         ];
@@ -253,38 +244,45 @@ class ParticipacoesService
 
     /**
      * O que já se sabe de um CPF, para a tela avisar enquanto se digita: a conta
-     * (se tem) e as categorias em que já conta como campista.
+     * e as categorias em que ela já conta como campista. Sem conta, nada — e
+     * nada se cadastra (LGPD).
      */
     public function consultar(string $cpf): array
     {
         $conta = $this->contaDoCpf($cpf);
+        if ($conta === null) {
+            return ['conta' => null, 'sistema' => [], 'cadastradas' => []];
+        }
         $nomes = [];
         foreach ($this->categorias() as $c) $nomes[$c['id']] = $c['nome'];
 
-        $sistema = $conta ? array_map(fn($p) => [
+        $sistema = array_map(fn($p) => [
             'categoriaId' => $p['categoria_id'],
             'categoria'   => $nomes[$p['categoria_id']] ?? '',
             'atividade'   => $p['atividade'],
             'ano'         => $p['ano'],
-        ], $this->peloSistema((int)$conta->id)) : [];
+        ], $this->peloSistema((int)$conta->id));
 
         $cadastradas = array_map(fn($p) => [
             'id'          => (int)$p->id,
             'categoriaId' => (int)$p->category_id,
             'categoria'   => $nomes[(int)$p->category_id] ?? '',
             'ano'         => $p->year !== null ? (int)$p->year : null,
-            'nome'        => (string)$p->name,
-        ], $this->cadastradasDoCpf($cpf));
+        ], $this->cadastradasDa((int)$conta->id));
 
         return [
-            'conta'       => $conta ? ['id' => (int)$conta->id, 'nome' => (string)$conta->name] : null,
+            'conta'       => ['id' => (int)$conta->id, 'nome' => (string)$conta->name],
             'sistema'     => $sistema,
             'cadastradas' => $cadastradas,
         ];
     }
 
+    /** Erro do CPF de quem ainda não tem conta (o mesmo texto que a tela mostra). */
+    public const SEM_CONTA = 'Este CPF não tem conta no sistema. Pela LGPD, só dá para cadastrar a participação '
+        . 'depois que a pessoa criar a conta no site.';
+
     /**
-     * Cadastra uma participação. Sem nome e com conta, usa o nome da conta.
+     * Cadastra uma participação na conta do CPF informado (o CPF não é guardado).
      *
      * @return array{0: ?array, 1: array<string, string>}
      */
@@ -292,20 +290,19 @@ class ParticipacoesService
     {
         $erros = [];
         $cpf = self::digitos($dados['cpf'] ?? '');
-        $nome = trim(preg_replace('/\s+/', ' ', (string)($dados['nome'] ?? '')) ?? '');
         $categoriaId = (int)($dados['categoriaId'] ?? 0);
         $anoTexto = trim((string)($dados['ano'] ?? ''));
         $ano = $anoTexto === '' ? null : (int)$anoTexto;
 
+        $conta = null;
         if ($cpf === '') {
             $erros['cpf'] = 'Informe o CPF.';
         } elseif (!$this->Users->isValidCpf((string)($dados['cpf'] ?? ''))) {
             $erros['cpf'] = 'CPF inválido. Confira os números.';
+        } else {
+            $conta = $this->contaDoCpf($cpf);
+            if ($conta === null) $erros['cpf'] = self::SEM_CONTA;
         }
-
-        $conta = isset($erros['cpf']) ? null : $this->contaDoCpf($cpf);
-        if ($nome === '' && $conta) $nome = (string)$conta->name;
-        if ($nome === '') $erros['nome'] = 'Informe o nome.';
 
         $categoria = $categoriaId > 0 ? (new CategoriasService())->buscar($categoriaId) : null;
         if ($categoria === null) $erros['categoriaId'] = 'Escolha a categoria.';
@@ -315,13 +312,13 @@ class ParticipacoesService
             $erros['ano'] = "Ano entre 1950 e {$anoAtual}, ou deixe em branco.";
         }
 
-        if (!isset($erros['cpf']) && $categoria !== null) {
-            foreach ($this->cadastradasDoCpf($cpf) as $p) {
+        if ($conta !== null && $categoria !== null) {
+            foreach ($this->cadastradasDa((int)$conta->id) as $p) {
                 if ((int)$p->category_id === (int)$categoria->id) {
-                    $erros['categoriaId'] = "Este CPF já está cadastrado como campista em {$categoria->name}.";
+                    $erros['categoriaId'] = "Essa pessoa já está cadastrada como campista em {$categoria->name}.";
                 }
             }
-            if (!isset($erros['categoriaId']) && $conta) {
+            if (!isset($erros['categoriaId'])) {
                 foreach ($this->peloSistema((int)$conta->id) as $p) {
                     if ($p['categoria_id'] === (int)$categoria->id) {
                         $erros['categoriaId'] = "Pelo sistema, essa pessoa já foi campista em {$categoria->name} ({$p['atividade']}). Não precisa cadastrar.";
@@ -334,20 +331,20 @@ class ParticipacoesService
         if ($erros) return [null, $erros];
 
         $registro = $this->PreviousCampers->saveOrFail($this->PreviousCampers->newEntity([
-            'cpf'           => $cpf,
-            'name'          => mb_substr($nome, 0, 255),
+            'user_id'       => (int)$conta->id,
             'category_id'   => (int)$categoria->id,
             'year'          => $ano,
             'registered_by' => $por,
         ], ['accessibleFields' => ['*' => true]]));
 
-        if ($conta) {
-            $this->UserChangeLogs->registrar((int)$conta->id, $por, 'Participação anterior cadastrada: campista em ' . $categoria->name . ($ano ? " ({$ano})" : '') . '.');
-        }
+        $this->UserChangeLogs->registrar((int)$conta->id, $por, 'Participação anterior cadastrada: campista em ' . $categoria->name . ($ano ? " ({$ano})" : '') . '.');
 
-        $registro = $this->PreviousCampers->find()->contain(['Categories', 'Registradores'])->where(['PreviousCampers.id' => $registro->id])->firstOrFail();
+        $registro = $this->PreviousCampers->find()
+            ->contain(['Users', 'Categories', 'Registradores'])
+            ->where(['PreviousCampers.id' => $registro->id])
+            ->firstOrFail();
 
-        return [$this->serializar($registro, $conta ? (int)$conta->id : null), []];
+        return [$this->serializar($registro), []];
     }
 
     /** Remove (soft delete). False se não existe. */
@@ -361,10 +358,7 @@ class ParticipacoesService
 
         $this->PreviousCampers->updateAll(['deleted' => DateTime::now()], ['id' => $id]);
 
-        $conta = $this->contaDoCpf((string)$registro->cpf);
-        if ($conta) {
-            $this->UserChangeLogs->registrar((int)$conta->id, $por, 'Participação anterior removida: campista em ' . ($registro->category->name ?? '') . ($registro->year ? " ({$registro->year})" : '') . '.');
-        }
+        $this->UserChangeLogs->registrar((int)$registro->user_id, $por, 'Participação anterior removida: campista em ' . ($registro->category->name ?? '') . ($registro->year ? " ({$registro->year})" : '') . '.');
 
         return true;
     }

@@ -1,8 +1,9 @@
 <script lang="ts">
 	/**
 	 * Gestão › Participações anteriores (permissão "participacoes"): quem já foi
-	 * campista numa categoria antes do sistema existir, cadastrado pelo CPF —
-	 * mesmo sem conta. Vale igual a um acampamento concluído pelo sistema: não
+	 * campista numa categoria antes do sistema existir. Só de quem já tem conta
+	 * (LGPD, decisão do usuário em 2026-11-26): o CPF digitado acha a conta e não
+	 * é guardado; nome e CPF da lista vêm da conta. Vale igual a um acampamento concluído pelo sistema: não
 	 * deixa ser campista de novo na categoria, libera servir (nela e nos degraus
 	 * de baixo) e cumpre o pré-requisito de outra categoria.
 	 *
@@ -35,7 +36,6 @@
 
 	// ─── Formulário ─────────────────────────────────────────────────
 	let cpf = $state('');
-	let nome = $state('');
 	let categoriaId: number | null = $state(null);
 	let ano = $state('');
 	let erros: Record<string, string> = $state({});
@@ -45,8 +45,13 @@
 	/** O que já se sabe do CPF digitado (conta e onde já conta como campista). */
 	let consulta: ConsultaCpf | null = $state(null);
 	let consultando = $state(false);
-	/** O nome veio da conta (e não foi digitado): some se o CPF mudar. */
-	let nomeDaConta = $state(false);
+	/** CPF válido, conferido, e sem conta: não dá para cadastrar (LGPD). */
+	const semConta = $derived.by(() => {
+		if (!consulta) return false;
+		return consulta.conta === null;
+	});
+	const SEM_CONTA =
+		'Este CPF não tem conta no sistema. Pela LGPD, só dá para cadastrar a participação depois que a pessoa criar a conta no site.';
 
 	function mascararCpf(valor: string): string {
 		const d = valor.replace(/\D/g, '').slice(0, 11);
@@ -70,10 +75,6 @@
 		if (!cpfValido(digitos)) {
 			consulta = null;
 			ultimoConsultado = '';
-			if (nomeDaConta) {
-				nome = '';
-				nomeDaConta = false;
-			}
 			return;
 		}
 		if (digitos === ultimoConsultado) return;
@@ -83,13 +84,6 @@
 		if (digitos !== cpf.replace(/\D/g, '')) return; // já mudou
 		consultando = false;
 		consulta = r.ok ? r.data : null;
-		// Nome da conta ou, sem conta, o de um cadastro anterior deste CPF.
-		const nomeConhecido = consulta?.conta?.nome ?? consulta?.cadastradas[0]?.nome;
-		if (nomeConhecido && (nome.trim() === '' || nomeDaConta)) {
-			nome = nomeConhecido;
-			nomeDaConta = true;
-			delete erros.nome;
-		}
 	}
 
 	/** Categorias em que este CPF já conta como campista: aparecem marcadas no campo. */
@@ -109,25 +103,23 @@
 
 	function limpar() {
 		cpf = '';
-		nome = '';
 		categoriaId = null;
 		ano = '';
 		erros = {};
 		consulta = null;
 		ultimoConsultado = '';
-		nomeDaConta = false;
 	}
 
 	async function adicionar(e?: SubmitEvent) {
 		e?.preventDefault();
 		if (enviando) return;
-		const dados: NovaParticipacao = { cpf, nome, categoriaId, ano };
+		const dados: NovaParticipacao = { cpf, categoriaId, ano };
 
 		// Os mesmos avisos do servidor, sem esperar a volta.
 		const locais: Record<string, string> = {};
 		if (cpf.replace(/\D/g, '').length !== 11) locais.cpf = cpf ? 'O CPF tem 11 números.' : 'Informe o CPF.';
 		else if (!cpfValido(cpf)) locais.cpf = 'CPF inválido. Confira os números.';
-		if (!nome.trim()) locais.nome = 'Informe o nome.';
+		else if (semConta) locais.cpf = SEM_CONTA;
 		if (!categoriaId) locais.categoriaId = 'Escolha a categoria.';
 		if (ano && !/^\d{4}$/.test(ano)) locais.ano = 'Ano com 4 números, ou deixe em branco.';
 		if (Object.keys(locais).length) {
@@ -156,7 +148,7 @@
 
 	async function focarPrimeiroErro() {
 		await tick();
-		const ordem = ['cpf', 'nome', 'categoriaId', 'ano'];
+		const ordem = ['cpf', 'categoriaId', 'ano'];
 		const primeiro = ordem.find((c) => erros[c]);
 		if (primeiro) document.getElementById(`pa-${primeiro}`)?.focus();
 	}
@@ -187,7 +179,7 @@
 	/** "Desfazer" da remoção: cadastra de novo com os mesmos dados. */
 	async function refazer(p: Participacao) {
 		aviso = null;
-		const r = await adicionarParticipacao({ cpf: p.cpf, nome: p.nome, categoriaId: p.categoriaId, ano: p.ano ? String(p.ano) : '' });
+		const r = await adicionarParticipacao({ cpf: p.cpf, categoriaId: p.categoriaId, ano: p.ano ? String(p.ano) : '' });
 		if (!r.ok) return avisar(r.error || 'Não foi possível desfazer.', true);
 		participacoes = [r.data, ...participacoes].sort((a, b) => (b.registradoEm ?? '').localeCompare(a.registradoEm ?? '') || b.id - a.id);
 		avisar(`${p.nome} voltou para a lista.`);
@@ -259,8 +251,9 @@
 	<div class="cabeca">
 		<h1 class="fm-h1">Participações anteriores</h1>
 		<p class="fm-sub">
-			Quem já foi campista antes do sistema. Basta o CPF, mesmo que a pessoa ainda não tenha conta: quando ela se inscrever, o
-			sistema já sabe em que categoria ela foi campista — não deixa repetir como campista e libera servir.
+			Quem já foi campista antes do sistema. A pessoa precisa ter conta no site: pela LGPD, o CPF de quem não se cadastrou não
+			pode ser guardado nem usado. Com a participação cadastrada, o sistema não deixa repetir como campista na categoria e libera
+			servir.
 		</p>
 	</div>
 
@@ -305,20 +298,11 @@
 				</div>
 
 				<div class="campo campo--nome">
-					<label class="fm-rotulo" for="pa-nome">Nome</label>
-					<input
-						id="pa-nome"
-						class="fm-campo"
-						class:com-erro={erros.nome}
-						bind:value={nome}
-						oninput={() => {
-							nomeDaConta = false;
-							delete erros.nome;
-						}}
-						autocomplete="off"
-						placeholder="Nome completo"
-						aria-invalid={!!erros.nome}
-					/>
+					<span class="fm-rotulo" id="pa-pessoa-rot">Pessoa</span>
+					<!-- O nome vem da conta do CPF: não se digita (a participação só guarda a conta). -->
+					<div class="fm-campo pessoa" class:pessoa--vazia={!consulta?.conta} aria-labelledby="pa-pessoa-rot" aria-live="polite">
+						{#if consultando}Conferindo…{:else if consulta?.conta}{consulta.conta.nome}{:else if semConta}Sem conta no sistema{:else}Aparece ao digitar o CPF{/if}
+					</div>
 				</div>
 
 				<div class="campo campo--categoria">
@@ -368,7 +352,7 @@
 			<div class="sob-form" id="pa-cpf-info" aria-live="polite">
 				{#if Object.keys(erros).length}
 					<ul class="erros">
-						{#each ['cpf', 'nome', 'categoriaId', 'ano'] as c (c)}
+						{#each ['cpf', 'categoriaId', 'ano'] as c (c)}
 							{#if erros[c]}<li class="fm-erro-linha">{erros[c]}</li>{/if}
 						{/each}
 					</ul>
@@ -384,6 +368,8 @@
 				{/if}
 				{#if consultando}
 					<p class="info"><span class="fm-spinner fm-spinner--pequeno"></span>Conferindo o CPF…</p>
+				{:else if semConta && !erros.cpf}
+					<p class="info info--sem-conta" role="alert">{SEM_CONTA}</p>
 				{:else if consulta}
 					{#if consulta.sistema.length || consulta.cadastradas.length}
 						<p class="info info--ja">
@@ -431,7 +417,6 @@
 							<th scope="col">CPF</th>
 							<th scope="col">Categoria</th>
 							<th scope="col">Ano</th>
-							<th scope="col">Conta</th>
 							<th scope="col">Cadastrada</th>
 							<th scope="col"><span class="ins-sr">Ações</span></th>
 						</tr>
@@ -440,14 +425,11 @@
 						{#each filtradas.slice(0, mostrando) as p (p.id)}
 							<tr>
 								<td class="nome">
-									{#if p.contaId && veFichas}<a href="/admin/pessoas/{p.contaId}">{p.nome}</a>{:else}{p.nome}{/if}
+									{#if veFichas}<a href="/admin/pessoas/{p.contaId}">{p.nome}</a>{:else}{p.nome}{/if}
 								</td>
 								<td class="cpf">{p.cpf}</td>
 								<td>{p.categoria}</td>
 								<td>{p.ano ?? '—'}</td>
-								<td>
-									{#if p.contaId}<span class="ins-pill ins-pill--mini ok">Tem conta</span>{:else}<span class="ins-pill ins-pill--mini neutro">Sem conta</span>{/if}
-								</td>
 								<td class="quem">{dataCurta(p.registradoEm)}{p.registradoPor ? ` · ${p.registradoPor.split(' ')[0]}` : ''}</td>
 								<td class="acoes">
 									<button type="button" class="fm-btn fm-btn--perigo" onclick={() => remover(p)} aria-label="Remover {p.nome}, campista em {p.categoria}">Remover</button>
@@ -567,13 +549,23 @@
 		display: block;
 		color: var(--aviso-tx);
 	}
-	:global(.ins-pill.neutro) {
-		color: #4f5468;
-		background: #efebe1;
-		border-color: #d9d2bf;
+	.info--sem-conta {
+		display: block;
+		color: var(--vermelho);
 	}
-	:global(.ins-pill.neutro::before) {
-		background: #9a937f;
+	.pessoa {
+		display: flex;
+		align-items: center;
+		font-weight: 600;
+		color: var(--azul);
+		background: var(--marfim);
+		overflow: hidden;
+		white-space: nowrap;
+		text-overflow: ellipsis;
+	}
+	.pessoa--vazia {
+		font-weight: 400;
+		color: var(--tinta-3);
 	}
 
 	/* ─── Lista ─── */

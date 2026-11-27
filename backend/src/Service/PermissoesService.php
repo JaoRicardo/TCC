@@ -41,7 +41,7 @@ class PermissoesService
         'usuarios'           => ['Pessoas e acessos', 'Ver e desativar contas de usuários.', 'pessoas'],
         'permissoes'         => ['Cargos e permissões', 'Tornar alguém administrador ou conselheiro e escolher o que cada um acessa.', 'pessoas'],
         'categorias'         => ['Categorias', 'Criar, editar, ordenar e arquivar as categorias dos acampamentos e as regras de quem participa de cada uma.', 'gestao'],
-        'participacoes'      => ['Participações anteriores', 'Cadastrar pelo CPF quem já foi campista numa categoria antes do sistema.', 'gestao'],
+        'participacoes'      => ['Participações anteriores', 'Cadastrar quem já foi campista numa categoria antes do sistema (só quem já tem conta).', 'gestao'],
     ];
 
     /** Área => [nome, nome curto (usado no selo da lista de pessoas)]. */

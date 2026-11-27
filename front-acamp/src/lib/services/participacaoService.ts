@@ -3,7 +3,8 @@ import { apiFetch } from '$lib/api';
 /**
  * Gestão › Participações anteriores (permissão "participacoes",
  * `ParticipacoesController` no servidor): quem já foi campista numa categoria
- * antes do sistema, cadastrado pelo CPF — mesmo sem conta.
+ * antes do sistema. Só de quem já tem conta (LGPD): o CPF digitado acha a conta
+ * e não é guardado.
  */
 
 export type Resultado<T = any> =
@@ -23,14 +24,15 @@ async function chamar<T = any>(caminho: string, opcoes: RequestInit = {}): Promi
 
 export interface Participacao {
 	id: number;
-	/** 000.000.000-00 */
+	/** 000.000.000-00, da conta. */
 	cpf: string;
+	/** Nome da conta. */
 	nome: string;
 	categoriaId: number;
 	categoria: string;
 	ano: number | null;
-	/** Id da conta com este CPF, se a pessoa já tem. */
-	contaId: number | null;
+	/** A conta da pessoa (toda participação é de uma conta). */
+	contaId: number;
 	registradoPor: string | null;
 	registradoEm: string | null;
 }
@@ -41,16 +43,15 @@ export interface CategoriaDoCampo {
 	arquivada: boolean;
 }
 
-/** O que o sistema já sabe de um CPF. */
+/** O que o sistema já sabe de um CPF. Sem conta, tudo vazio. */
 export interface ConsultaCpf {
 	conta: { id: number; nome: string } | null;
 	sistema: { categoriaId: number; categoria: string; atividade: string; ano: number | null }[];
-	cadastradas: { id: number; categoriaId: number; categoria: string; ano: number | null; nome: string }[];
+	cadastradas: { id: number; categoriaId: number; categoria: string; ano: number | null }[];
 }
 
 export interface NovaParticipacao {
 	cpf: string;
-	nome: string;
 	categoriaId: number | null;
 	ano: string;
 }

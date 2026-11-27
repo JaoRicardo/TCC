@@ -6,8 +6,9 @@ namespace App\Model\Table;
 use Cake\ORM\Table;
 
 /**
- * Participações anteriores como campista, cadastradas à mão pelo CPF (ver a
- * migração CreatePreviousCampers e ParticipacoesService).
+ * Participações anteriores como campista, cadastradas à mão para quem já tem
+ * conta (LGPD: não se guarda CPF de quem não se cadastrou). Ver as migrações
+ * CreatePreviousCampers e LigarParticipacoesAConta e o ParticipacoesService.
  */
 class PreviousCampersTable extends Table
 {
@@ -19,6 +20,7 @@ class PreviousCampersTable extends Table
         $this->setPrimaryKey('id');
         $this->addBehavior('Timestamp');
 
+        $this->belongsTo('Users', ['foreignKey' => 'user_id', 'joinType' => 'INNER']);
         $this->belongsTo('Categories', ['foreignKey' => 'category_id', 'joinType' => 'INNER']);
         $this->belongsTo('Registradores', ['className' => 'Users', 'foreignKey' => 'registered_by', 'propertyName' => 'registrador']);
     }
